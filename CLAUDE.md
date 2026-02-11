@@ -37,6 +37,23 @@ playwright-cli close                         # clean up
 
 **Config**: `playwright-cli.json` at project root (`.playwright-cli/` output, 30s nav timeout for Docker cold starts).
 
+### E2E Testing Tips
+
+**Workflow per page**: `snapshot` → interact → `console error` → `screenshot` → read outputs. Always check console errors after navigation to catch regressions early.
+
+**Datastar + Playwright interop**: Playwright's `fill` and `keyboard.type()` do NOT update Datastar signal bindings (`data-bind-*`). To test form submission, use `run-code` with `page.evaluate` to call `fetch()` directly:
+```bash
+playwright-cli run-code "async page => { await page.evaluate(async () => { await fetch('/api/chat', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({chat_text: 'test'})}); }); }"
+```
+
+**Verifying SSE connections**: `playwright-cli network` shows active SSE streams as `[GET] /events => [200] OK`. Check this after page load to confirm `data-init` attributes are working.
+
+**Cookie management for auth testing**: Use `cookie-delete session` to simulate logged-out state, then navigate to verify middleware redirects. With `--persistent`, GitHub OAuth auto-completes on re-login, so you can't easily observe the login page after middleware redirects — delete cookies and navigate to `/` directly instead.
+
+**Reading snapshots**: Element refs like `[ref=e15]` are stable within a snapshot but change between snapshots. Always `snapshot` before interacting. The `[active]` annotation on elements indicates CSS active state (e.g., selected tab).
+
+**Screenshots are images**: `playwright-cli screenshot` saves a PNG. Use the Read tool on the PNG path to view it — Claude Code is multimodal and can visually inspect screenshots.
+
 ## Build & Check
 
 ```bash

@@ -2,12 +2,31 @@ package login
 
 import "creative-mode/harness/views/layout"
 
-templ Page() {
+templ Page(devMode bool) {
 	@layout.Base("Login") {
 		<div class="login-container">
 			<h1>Creative Mode</h1>
 			<p>Collaborative game development with AI</p>
 			<a href="/auth/github/login" class="btn btn-primary">Sign in with GitHub</a>
+			if devMode {
+				@DevLoginForm()
+			}
 		</div>
 	}
+}
+
+templ DevLoginForm() {
+	<div class="dev-login">
+		<h3>Dev Login</h3>
+		<hr class="dev-divider"/>
+		<form class="dev-login-form" action="/dev/auth/login" method="POST">
+			<input class="dev-input" type="text" name="username" placeholder="Username" required/>
+			<select class="dev-select" name="role">
+				<option value="user">user</option>
+				<option value="admin">admin</option>
+				<option value="pending">pending</option>
+			</select>
+			<button class="btn btn-primary" type="submit">Dev Sign In</button>
+		</form>
+	</div>
 }

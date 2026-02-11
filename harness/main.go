@@ -81,19 +81,25 @@ func main() {
 	ghClientID := os.Getenv("GITHUB_CLIENT_ID")
 	ghClientSecret := os.Getenv("GITHUB_CLIENT_SECRET")
 
-	if ghClientID != "" && ghClientSecret != "" {
-		baseURL := os.Getenv("HARNESS_URL")
-		if baseURL == "" {
-			baseURL = "http://localhost:8080"
-		}
+	baseURL := os.Getenv("HARNESS_URL")
+	if baseURL == "" {
+		baseURL = "http://localhost:8080"
+	}
 
+	switch {
+	case ghClientID != "" && ghClientSecret != "":
 		authHandler = auth.NewHandler(database, &auth.Config{
 			GitHubClientID:     ghClientID,
 			GitHubClientSecret: ghClientSecret,
 			BaseURL:            baseURL,
 		}, logger)
 		logger.Info("GitHub OAuth enabled")
-	} else {
+	case os.Getenv("DEV_MODE") == "true":
+		authHandler = auth.NewHandler(database, &auth.Config{
+			BaseURL: baseURL,
+		}, logger)
+		logger.Info("Dev auth enabled (no GitHub OAuth)")
+	default:
 		logger.Warn(
 			"GitHub OAuth disabled (GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET not set)",
 		)
@@ -106,14 +112,9 @@ func main() {
 	eventBus := events.NewEventBus()
 
 	// Set up Claude Code orchestrator.
-	harnessURL := os.Getenv("HARNESS_URL")
-	if harnessURL == "" {
-		harnessURL = "http://localhost:8080"
-	}
-
 	orchestrator := claude.NewOrchestrator(
 		database, logger, worldManager, worldManager.Builder, eventBus,
-		filepath.Join(dataDir, "logs"), harnessURL,
+		filepath.Join(dataDir, "logs"), baseURL,
 	)
 
 	// Set up Echo server.

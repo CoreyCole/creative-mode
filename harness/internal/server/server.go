@@ -52,22 +52,22 @@ func New(database *db.DB, logger *slog.Logger) *Server {
 func (s *Server) handleRoot(c echo.Context) error {
 	cookie, err := c.Cookie("session")
 	if err != nil || cookie.Value == "" {
-		return render(c, login.Page())
+		return render(c, login.Page(s.dev != nil))
 	}
 
 	ctx := c.Request().Context()
 
 	session, err := s.DB.GetSession(ctx, cookie.Value)
 	if err != nil {
-		return render(c, login.Page())
+		return render(c, login.Page(s.dev != nil))
 	}
 
 	user, err := s.DB.GetUserByID(ctx, session.UserID)
 	if err != nil {
-		return render(c, login.Page())
+		return render(c, login.Page(s.dev != nil))
 	}
 
-	if user.Role == "pending" {
+	if user.Role == auth.RolePending {
 		return render(c, pending.Page(&user))
 	}
 
@@ -106,6 +106,9 @@ func (s *Server) RegisterRoutes(e *echo.Echo) {
 		e.GET("/dev/sse", s.handleDevSSE)
 		e.POST("/dev/rebuild", s.handleDevRebuild)
 		e.POST("/dev/reload-static", s.handleDevReloadStatic)
+		if s.AuthHandler != nil {
+			e.POST("/dev/auth/login", s.AuthHandler.HandleDevLogin)
+		}
 	}
 
 	// Health check endpoint.

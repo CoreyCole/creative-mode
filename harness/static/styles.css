@@ -52,6 +52,16 @@ a:hover { text-decoration: underline; }
 .login-container h1 { font-size: 2rem; }
 .login-container p { color: #888; }
 
+/* Dev Login */
+.dev-login { margin-top: 24px; padding: 20px; border: 1px dashed #f59e0b; border-radius: 8px; text-align: center; }
+.dev-login h3 { color: #f59e0b; font-size: 0.9rem; margin-bottom: 12px; }
+.dev-divider { border: none; border-top: 1px solid #333; margin-bottom: 16px; }
+.dev-login-form { display: flex; flex-direction: column; gap: 8px; }
+.dev-input, .dev-select {
+    padding: 8px 12px; border: 1px solid #333; border-radius: 6px;
+    background: #1a1a1a; color: #e0e0e0; font-size: 14px;
+}
+
 /* Pending */
 .pending-container {
     display: flex;

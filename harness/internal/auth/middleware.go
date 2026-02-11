@@ -63,7 +63,7 @@ func ApprovedMiddleware() echo.MiddlewareFunc {
 			if !ok {
 				return c.Redirect(http.StatusTemporaryRedirect, "/auth/github/login")
 			}
-			if user.Role == "pending" {
+			if user.Role == RolePending {
 				return c.Redirect(http.StatusTemporaryRedirect, "/auth/pending")
 			}
 
@@ -80,7 +80,7 @@ func AdminMiddleware() echo.MiddlewareFunc {
 			if !ok {
 				return echo.NewHTTPError(http.StatusForbidden, "forbidden")
 			}
-			if user.Role != "admin" {
+			if user.Role != RoleAdmin {
 				return echo.NewHTTPError(http.StatusForbidden, "admin access required")
 			}
 

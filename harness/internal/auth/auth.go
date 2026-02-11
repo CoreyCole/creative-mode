@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"log/slog"
 	"net/http"
@@ -30,6 +31,10 @@ const (
 	sessionTTLDays   = 7
 	sessionMaxAgeSec = sessionTTLDays * 24 * 3600
 	sessionTTLHours  = sessionTTLDays * 24
+
+	RoleAdmin   = "admin"
+	RoleUser    = "user"
+	RolePending = "pending"
 )
 
 // Config holds GitHub OAuth configuration.
@@ -197,7 +202,7 @@ func (h *Handler) resolveUser(
 	}
 
 	// New user: determine role atomically (prevents two admins on race).
-	role := "pending"
+	role := RolePending
 
 	tx, txErr := h.db.BeginTx(ctx)
 	if txErr != nil {
@@ -212,7 +217,7 @@ func (h *Handler) resolveUser(
 		return "", fmt.Errorf("counting users: %w", countErr)
 	}
 	if count == 0 {
-		role = "admin"
+		role = RoleAdmin
 	}
 
 	userID := uuid.New().String()
@@ -272,7 +277,7 @@ func (h *Handler) HandleApproveUser(c echo.Context) error {
 	userID := c.Param("userID")
 
 	if _, err := h.db.UpdateUserRole(ctx, sqlc.UpdateUserRoleParams{
-		Role: "user",
+		Role: RoleUser,
 		ID:   userID,
 	}); err != nil {
 		return fmt.Errorf("approving user: %w", err)
@@ -411,6 +416,96 @@ func randomHex(n int) (string, error) {
 	}
 
 	return hex.EncodeToString(bytes), nil
+}
+
+// HandleDevLogin authenticates as an arbitrary user (dev mode only).
+// POST /dev/auth/login with form values: username (required), role (optional, default "user").
+func (h *Handler) HandleDevLogin(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	username := strings.TrimSpace(c.FormValue("username"))
+	if username == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "username is required")
+	}
+
+	role := c.FormValue("role")
+	if role == "" {
+		role = RoleUser
+	}
+	if role != RoleAdmin && role != RoleUser && role != RolePending {
+		return echo.NewHTTPError(
+			http.StatusBadRequest,
+			"role must be admin, user, or pending",
+		)
+	}
+
+	githubID := devGitHubID(username)
+
+	existingUser, err := h.db.GetUserByGitHubID(ctx, githubID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("checking existing user: %w", err)
+	}
+
+	var userID string
+	if errors.Is(err, sql.ErrNoRows) {
+		// New user.
+		userID = uuid.New().String()
+		if upsertErr := h.db.UpsertUser(ctx, sqlc.UpsertUserParams{
+			ID:             userID,
+			GitHubID:       githubID,
+			GitHubUsername: username,
+			Role:           role,
+		}); upsertErr != nil {
+			return fmt.Errorf("creating dev user: %w", upsertErr)
+		}
+	} else {
+		userID = existingUser.ID
+		// Update role if changed.
+		if existingUser.Role != role {
+			if _, updateErr := h.db.UpdateUserRole(ctx, sqlc.UpdateUserRoleParams{
+				Role: role,
+				ID:   existingUser.ID,
+			}); updateErr != nil {
+				return fmt.Errorf("updating dev user role: %w", updateErr)
+			}
+		}
+	}
+
+	sessionID, err := randomHex(sessionBytes)
+	if err != nil {
+		return fmt.Errorf("generating session ID: %w", err)
+	}
+
+	expiresAt := time.Now().Add(sessionTTLHours * time.Hour)
+	if err := h.db.CreateSession(ctx, sqlc.CreateSessionParams{
+		ID:        sessionID,
+		UserID:    userID,
+		ExpiresAt: expiresAt,
+	}); err != nil {
+		return fmt.Errorf("creating session: %w", err)
+	}
+
+	c.SetCookie(&http.Cookie{
+		Name:     "session",
+		Value:    sessionID,
+		Path:     "/",
+		MaxAge:   sessionMaxAgeSec,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   false, // dev-only
+	})
+
+	h.logger.Info("dev login", "userID", userID, "username", username, "role", role)
+
+	return c.Redirect(http.StatusSeeOther, "/")
+}
+
+// devGitHubID returns a deterministic negative GitHub ID for a dev username.
+// Negative IDs avoid collision with real GitHub user IDs.
+func devGitHubID(username string) int64 {
+	hasher := fnv.New32a()
+	_, _ = hasher.Write([]byte(username))
+	return -int64(hasher.Sum32())
 }
 
 // isLocalhost returns true if the base URL refers to localhost.

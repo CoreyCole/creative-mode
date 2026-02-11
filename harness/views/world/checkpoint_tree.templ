@@ -1,9 +1,12 @@
 package world
 
-import "creative-mode/harness/internal/db/sqlc"
+import (
+	"creative-mode/harness/internal/db/sqlc"
+	"creative-mode/harness/views/shared"
+)
 
 templ CheckpointTree(checkpoints []sqlc.Checkpoint, currentCPID string, worldID string) {
-	<div class="checkpoint-tree" data-show="$show_checkpoint_tree">
+	<div class="checkpoint-tree" data-show="$show_checkpoint_tree" style="display: none;">
 		<h3>Checkpoints</h3>
 		for _, cp := range checkpoints {
 			<div class={ "tree-node", templ.KV("tree-node-current", cp.ID == currentCPID) }>
@@ -16,12 +19,7 @@ templ CheckpointTree(checkpoints []sqlc.Checkpoint, currentCPID string, worldID 
 					<span class="node-name">Root</span>
 				}
 				if cp.ID != currentCPID && cp.Status == "ready" {
-					<button class="btn btn-xs"
-						data-world-id={ worldID }
-						data-cp-id={ cp.ID }
-						data-on-click="loadCheckpoint(evt.target.dataset.worldId, evt.target.dataset.cpId)">
-						Load
-					</button>
+					@shared.LoadCheckpointButton(worldID, cp.ID, "Load", "btn btn-xs")
 				}
 			</div>
 		}

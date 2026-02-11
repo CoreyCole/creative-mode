@@ -1,25 +1,22 @@
 package chat
 
-import "github.com/starfederation/datastar-go/datastar"
+import "creative-mode/harness/views/shared"
 
 // ChatPanel renders the tabbed chat UI for the world overlay.
 templ ChatPanel() {
 	<div class="chat-panel">
 		<div class="tab-bar">
-			<button data-on-click="$active_tab = 'global'"
-				data-class="{'tab-active': $active_tab === 'global'}">Global</button>
-			<button data-on-click="$active_tab = 'world'"
-				data-class="{'tab-active': $active_tab === 'world'}">World</button>
-			<button data-on-click="$active_tab = 'lineage'; loadLineage($current_world_id, $current_checkpoint_id)"
-				data-class="{'tab-active': $active_tab === 'lineage'}">Lineage</button>
+			<button data-on-click={ CE.SelectTab("global") }
+				data-class={ CE.TabActiveClass("global") }>Global</button>
+			<button data-on-click={ CE.SelectTab("world") }
+				data-class={ CE.TabActiveClass("world") }>World</button>
+			<button data-on-click={ CE.SelectLineageTab() }
+				data-class={ CE.TabActiveClass("lineage") }>Lineage</button>
 		</div>
 		<div id="chat-log" class="message-log"></div>
-		<div id="lineage-view" class="message-log" data-show="$active_tab === 'lineage'"></div>
+		<div id="lineage-view" class="message-log" data-show="$active_tab === 'lineage'" style="display: none;"></div>
 		<div class="chat-input-bar" data-show="$active_tab !== 'lineage'">
-			<input placeholder="Type a message..." data-bind-chat_text/>
-			<button data-on-click={ datastar.PostSSE("/api/chat") }
-				data-indicator-fetching
-				data-attr-disabled="$fetching">Send</button>
+			@ChatInputBar()
 		</div>
 	</div>
 }
@@ -49,11 +46,6 @@ templ BuildReadyNotification(worldID, cpID, worldName string) {
 	<div class="message system-notification build-ready">
 		<span class="sys-badge">[build]</span>
 		<span class="content">Build ready in { worldName }</span>
-		<button class="play-btn"
-			data-world-id={ worldID }
-			data-cp-id={ cpID }
-			data-on-click="loadCheckpoint(evt.target.dataset.worldId, evt.target.dataset.cpId)">
-			Play
-		</button>
+		@shared.LoadCheckpointButton(worldID, cpID, "Play", "play-btn")
 	</div>
 }

@@ -1,0 +1,11 @@
+package chat
+
+import "github.com/starfederation/datastar-go/datastar"
+
+// ChatInputBar is a reusable chat input with send button.
+templ ChatInputBar() {
+	<input placeholder="Type a message..." data-bind-chat_text/>
+	<button data-on-click={ datastar.PostSSE("/api/chat") }
+		data-indicator-fetching
+		data-attr-disabled="$fetching">Send</button>
+}

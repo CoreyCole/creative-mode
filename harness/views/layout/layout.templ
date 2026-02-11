@@ -1,15 +1,20 @@
 package layout
 
+// Head renders the shared <head> block for all pages.
+templ Head(title string) {
+	<head>
+		<meta charset="UTF-8"/>
+		<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+		<title>{ title } — Creative Mode</title>
+		<script type="module" defer src="/static/datastar.js"></script>
+		<link rel="stylesheet" href="/static/styles.css"/>
+	</head>
+}
+
 templ Base(title string) {
 	<!DOCTYPE html>
 	<html lang="en">
-		<head>
-			<meta charset="UTF-8"/>
-			<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-			<title>{ title } — Creative Mode</title>
-			<script type="module" defer src="/static/datastar.js"></script>
-			<link rel="stylesheet" href="/static/styles.css"/>
-		</head>
+		@Head(title)
 		<body>
 			{ children... }
 		</body>

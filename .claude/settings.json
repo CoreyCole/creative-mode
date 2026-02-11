@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "just check",
+            "command": "cd \"$(git rev-parse --show-toplevel)\" && ./scripts/check.sh",
             "timeout": 120
           }
         ]

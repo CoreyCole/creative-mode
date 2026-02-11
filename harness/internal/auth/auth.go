@@ -251,7 +251,7 @@ func (h *Handler) HandleLogout(c echo.Context) error {
 		MaxAge: -1,
 	})
 
-	return c.Redirect(http.StatusTemporaryRedirect, "/auth/github/login")
+	return c.Redirect(http.StatusSeeOther, "/")
 }
 
 // HandlePendingApproval renders a page for users awaiting admin approval.

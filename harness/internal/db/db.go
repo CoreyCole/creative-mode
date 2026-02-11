@@ -1,18 +1,22 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"embed"
 	"fmt"
 
 	_ "github.com/mattn/go-sqlite3"
+
+	"creative-mode/harness/internal/db/sqlc"
 )
 
 //go:embed migrations/*.sql
 var migrations embed.FS
 
-// DB wraps a sql.DB connection with application-specific query methods.
+// DB wraps a sql.DB connection and embeds SQLc-generated query methods.
 type DB struct {
+	*sqlc.Queries
 	db *sql.DB
 }
 
@@ -24,23 +28,32 @@ func New(dbPath string) (*DB, error) {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
 
+	ctx := context.Background()
+
 	// WAL mode for concurrent access from multiple goroutines.
-	if _, err := sqlDB.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		sqlDB.Close()
+	if _, err := sqlDB.ExecContext(ctx, "PRAGMA journal_mode=WAL"); err != nil {
+		_ = sqlDB.Close()
+
 		return nil, fmt.Errorf("setting WAL mode: %w", err)
 	}
 
 	// 5-second busy timeout to avoid "database is locked" errors.
-	if _, err := sqlDB.Exec("PRAGMA busy_timeout=5000"); err != nil {
-		sqlDB.Close()
+	if _, err := sqlDB.ExecContext(ctx, "PRAGMA busy_timeout=5000"); err != nil {
+		_ = sqlDB.Close()
+
 		return nil, fmt.Errorf("setting busy_timeout: %w", err)
 	}
 
-	d := &DB{db: sqlDB}
-	if err := d.runMigrations(); err != nil {
-		sqlDB.Close()
+	d := &DB{
+		Queries: sqlc.New(sqlDB),
+		db:      sqlDB,
+	}
+	if err := d.runMigrations(ctx); err != nil {
+		_ = sqlDB.Close()
+
 		return nil, fmt.Errorf("running migrations: %w", err)
 	}
+
 	return d, nil
 }
 
@@ -50,13 +63,58 @@ func (d *DB) Close() error {
 }
 
 // runMigrations executes all embedded SQL migration files.
-func (d *DB) runMigrations() error {
+func (d *DB) runMigrations(ctx context.Context) error {
 	content, err := migrations.ReadFile("migrations/001_initial.sql")
 	if err != nil {
 		return fmt.Errorf("reading migration file: %w", err)
 	}
-	if _, err := d.db.Exec(string(content)); err != nil {
+	if _, err := d.db.ExecContext(ctx, string(content)); err != nil {
 		return fmt.Errorf("executing migration: %w", err)
 	}
+
 	return nil
+}
+
+// GetCheckpointAncestry returns the chain of checkpoints from the given
+// checkpoint back to the root (the checkpoint with no parent), ordered from
+// root to the given checkpoint.
+func (d *DB) GetCheckpointAncestry(
+	ctx context.Context,
+	worldID, cpID string,
+) ([]sqlc.Checkpoint, error) {
+	allCPs, err := d.GetCheckpointTree(ctx, worldID)
+	if err != nil {
+		return nil, err
+	}
+
+	cpMap := make(map[string]sqlc.Checkpoint, len(allCPs))
+	for _, cp := range allCPs {
+		cpMap[cp.ID] = cp
+	}
+
+	var ancestry []sqlc.Checkpoint
+	currentID := cpID
+	for currentID != "" {
+		cp, ok := cpMap[currentID]
+		if !ok {
+			return nil, fmt.Errorf(
+				"checkpoint %s not found in world %s",
+				currentID,
+				worldID,
+			)
+		}
+		ancestry = append(ancestry, cp)
+		if cp.ParentCheckpointID.Valid {
+			currentID = cp.ParentCheckpointID.String
+		} else {
+			currentID = ""
+		}
+	}
+
+	// Reverse to get root-first order.
+	for i, j := 0, len(ancestry)-1; i < j; i, j = i+1, j-1 {
+		ancestry[i], ancestry[j] = ancestry[j], ancestry[i]
+	}
+
+	return ancestry, nil
 }

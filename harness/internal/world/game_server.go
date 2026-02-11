@@ -1,6 +1,7 @@
 package world
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -11,6 +12,8 @@ import (
 	"sync"
 	"time"
 )
+
+const gameServerGracePeriod = 2 * time.Minute
 
 // GameServer represents a running game server process.
 type GameServer struct {
@@ -44,13 +47,16 @@ func NewGameServerManager(logger *slog.Logger, logsDir string) *GameServerManage
 
 // Connect returns a running game server for the given checkpoint, starting
 // one if necessary. Increments the reference count.
-func (m *GameServerManager) Connect(worldID, cpID, checkpointDir string) (*GameServer, error) {
+func (m *GameServerManager) Connect(
+	worldID, cpID, checkpointDir string,
+) (*GameServer, error) {
 	key := worldID + "/" + cpID
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if srv, ok := m.servers[key]; ok {
 		m.refCount[key]++
+
 		return srv, nil
 	}
 
@@ -62,11 +68,13 @@ func (m *GameServerManager) Connect(worldID, cpID, checkpointDir string) (*GameS
 	srv, err := m.startServer(worldID, cpID, checkpointDir, port)
 	if err != nil {
 		m.ports.Release(port)
+
 		return nil, err
 	}
 
 	m.servers[key] = srv
 	m.refCount[key] = 1
+
 	return srv, nil
 }
 
@@ -79,19 +87,24 @@ func (m *GameServerManager) Disconnect(worldID, cpID string) {
 
 	m.refCount[key]--
 	if m.refCount[key] <= 0 {
-		go m.stopAfterDelay(key, 2*time.Minute)
+		go m.stopAfterDelay(key, gameServerGracePeriod)
 	}
 }
 
-func (m *GameServerManager) startServer(worldID, cpID, checkpointDir string, port int) (*GameServer, error) {
+func (m *GameServerManager) startServer(
+	worldID, cpID, checkpointDir string,
+	port int,
+) (*GameServer, error) {
 	serverBin := filepath.Join(checkpointDir, "target", "release", "server")
 
 	logDir := filepath.Join(m.logsDir, "worlds", worldID, cpID)
-	if err := os.MkdirAll(logDir, 0755); err != nil {
+	if err := os.MkdirAll(logDir, 0o750); err != nil {
 		return nil, fmt.Errorf("creating log directory: %w", err)
 	}
 
-	logFile, err := os.Create(filepath.Join(logDir, "game-server.jsonl"))
+	logFile, err := os.Create( //nolint:gosec // G304: internal log path
+		filepath.Join(logDir, "game-server.jsonl"),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("creating log file: %w", err)
 	}
@@ -103,13 +116,16 @@ func (m *GameServerManager) startServer(worldID, cpID, checkpointDir string, por
 		event:   "game_server.output",
 	}
 
-	cmd := exec.Command(serverBin)
+	cmd := exec.CommandContext( //nolint:gosec // G204: internal binary path
+		context.Background(), serverBin,
+	)
 	cmd.Env = append(os.Environ(), fmt.Sprintf("GAME_PORT=%d", port))
 	cmd.Stdout = writer
 	cmd.Stderr = writer
 
 	if err := cmd.Start(); err != nil {
-		logFile.Close()
+		_ = logFile.Close()
+
 		return nil, fmt.Errorf("starting game server: %w", err)
 	}
 
@@ -117,13 +133,23 @@ func (m *GameServerManager) startServer(worldID, cpID, checkpointDir string, por
 
 	// Monitor for crashes.
 	go func() {
-		if err := cmd.Wait(); err != nil {
-			m.logger.Error("game server exited", "worldID", worldID, "cpID", cpID, "error", err)
+		if waitErr := cmd.Wait(); waitErr != nil {
+			m.logger.Error(
+				"game server exited",
+				"worldID",
+				worldID,
+				"cpID",
+				cpID,
+				"error",
+				waitErr,
+			)
 		}
-		logFile.Close()
+
+		_ = logFile.Close()
 	}()
 
 	m.logger.Info("game server started", "worldID", worldID, "cpID", cpID, "port", port)
+
 	return srv, nil
 }
 
@@ -132,21 +158,27 @@ func (m *GameServerManager) stopAfterDelay(key string, delay time.Duration) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if m.refCount[key] <= 0 {
-		if srv, ok := m.servers[key]; ok {
-			_ = srv.Cmd.Process.Kill()
-			m.ports.Release(srv.Port)
-			delete(m.servers, key)
-			delete(m.refCount, key)
-			m.logger.Info("game server stopped", "key", key)
-		}
+	if m.refCount[key] > 0 {
+		return
 	}
+
+	srv, ok := m.servers[key]
+	if !ok {
+		return
+	}
+
+	_ = srv.Cmd.Process.Kill()
+	m.ports.Release(srv.Port)
+	delete(m.servers, key)
+	delete(m.refCount, key)
+	m.logger.Info("game server stopped", "key", key)
 }
 
 // Shutdown stops all running game servers immediately.
 func (m *GameServerManager) Shutdown() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	for key, srv := range m.servers {
 		_ = srv.Cmd.Process.Kill()
 		m.ports.Release(srv.Port)
@@ -169,7 +201,8 @@ func (w *jsonlLineWriter) Write(p []byte) (n int, err error) {
 		if line == "" {
 			continue
 		}
-		entry, _ := json.Marshal(map[string]any{
+
+		entry, marshalErr := json.Marshal(map[string]any{
 			"ts":      time.Now().UTC().Format(time.RFC3339),
 			"level":   "info",
 			"event":   w.event,
@@ -177,7 +210,12 @@ func (w *jsonlLineWriter) Write(p []byte) (n int, err error) {
 			"cpID":    w.cpID,
 			"line":    line,
 		})
+		if marshalErr != nil {
+			continue
+		}
+
 		_, _ = w.file.Write(append(entry, '\n'))
 	}
+
 	return len(p), nil
 }

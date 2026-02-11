@@ -1,10 +1,12 @@
 package auth
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -13,10 +15,20 @@ import (
 	"strings"
 	"time"
 
-	"creative-mode/harness/internal/db"
-
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+
+	"creative-mode/harness/internal/db"
+	"creative-mode/harness/internal/db/sqlc"
+)
+
+const (
+	oauthStateBytes  = 16
+	oauthStateTTLSec = 300 // 5 minutes
+	sessionBytes     = 32
+	sessionTTLDays   = 7
+	sessionMaxAgeSec = sessionTTLDays * 24 * 3600
+	sessionTTLHours  = sessionTTLDays * 24
 )
 
 // Config holds GitHub OAuth configuration.
@@ -40,7 +52,7 @@ func NewHandler(database *db.DB, config *Config, logger *slog.Logger) *Handler {
 
 // HandleLogin redirects to GitHub OAuth authorize URL with a CSRF state token.
 func (h *Handler) HandleLogin(c echo.Context) error {
-	state, err := randomHex(16)
+	state, err := randomHex(oauthStateBytes)
 	if err != nil {
 		return fmt.Errorf("generating state: %w", err)
 	}
@@ -49,7 +61,7 @@ func (h *Handler) HandleLogin(c echo.Context) error {
 		Name:     "oauth_state",
 		Value:    state,
 		Path:     "/",
-		MaxAge:   300, // 5 minutes
+		MaxAge:   oauthStateTTLSec,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 		Secure:   !isLocalhost(h.config.BaseURL),
@@ -67,6 +79,8 @@ func (h *Handler) HandleLogin(c echo.Context) error {
 
 // HandleCallback processes the GitHub OAuth callback.
 func (h *Handler) HandleCallback(c echo.Context) error {
+	ctx := c.Request().Context()
+
 	// Validate state parameter (CSRF protection).
 	stateCookie, err := c.Cookie("oauth_state")
 	if err != nil || stateCookie.Value == "" {
@@ -90,58 +104,89 @@ func (h *Handler) HandleCallback(c echo.Context) error {
 	}
 
 	// Exchange code for access token.
-	accessToken, err := h.exchangeCode(code)
+	accessToken, err := h.exchangeCode(ctx, code)
 	if err != nil {
 		h.logger.Error("failed to exchange OAuth code", "error", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, "OAuth token exchange failed")
+
+		return echo.NewHTTPError(
+			http.StatusInternalServerError,
+			"OAuth token exchange failed",
+		)
 	}
 
 	// Fetch user info from GitHub.
-	ghUser, err := h.fetchGitHubUser(accessToken)
+	ghUser, err := h.fetchGitHubUser(ctx, accessToken)
 	if err != nil {
 		h.logger.Error("failed to fetch GitHub user", "error", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to fetch GitHub user info")
+
+		return echo.NewHTTPError(
+			http.StatusInternalServerError,
+			"failed to fetch GitHub user info",
+		)
 	}
 
 	// Determine role: first user is admin, others are pending.
 	// Check if user already exists first.
-	existingUser, err := h.db.GetUserByGitHubID(ghUser.ID)
-	if err != nil {
+	existingUser, err := h.db.GetUserByGitHubID(ctx, ghUser.ID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("checking existing user: %w", err)
 	}
 
 	var userID string
-	if existingUser != nil {
+	if err == nil {
 		// Existing user: update username/avatar, keep existing role.
 		userID = existingUser.ID
-		if err := h.db.UpsertUser(existingUser.ID, ghUser.ID, ghUser.Login, sql.NullString{String: ghUser.AvatarURL, Valid: ghUser.AvatarURL != ""}, existingUser.Role); err != nil {
-			return fmt.Errorf("updating user: %w", err)
+		if upsertErr := h.db.UpsertUser(ctx, sqlc.UpsertUserParams{
+			ID:             existingUser.ID,
+			GitHubID:       ghUser.ID,
+			GitHubUsername: ghUser.Login,
+			AvatarURL: sql.NullString{
+				String: ghUser.AvatarURL,
+				Valid:  ghUser.AvatarURL != "",
+			},
+			Role: existingUser.Role,
+		}); upsertErr != nil {
+			return fmt.Errorf("updating user: %w", upsertErr)
 		}
 	} else {
 		// New user: determine role.
 		role := "pending"
-		count, err := h.db.CountUsers()
-		if err != nil {
-			return fmt.Errorf("counting users: %w", err)
+
+		count, countErr := h.db.CountUsers(ctx)
+		if countErr != nil {
+			return fmt.Errorf("counting users: %w", countErr)
 		}
 		if count == 0 {
 			role = "admin"
 		}
 
 		userID = uuid.New().String()
-		if err := h.db.UpsertUser(userID, ghUser.ID, ghUser.Login, sql.NullString{String: ghUser.AvatarURL, Valid: ghUser.AvatarURL != ""}, role); err != nil {
-			return fmt.Errorf("creating user: %w", err)
+		if upsertErr := h.db.UpsertUser(ctx, sqlc.UpsertUserParams{
+			ID:             userID,
+			GitHubID:       ghUser.ID,
+			GitHubUsername: ghUser.Login,
+			AvatarURL: sql.NullString{
+				String: ghUser.AvatarURL,
+				Valid:  ghUser.AvatarURL != "",
+			},
+			Role: role,
+		}); upsertErr != nil {
+			return fmt.Errorf("creating user: %w", upsertErr)
 		}
 	}
 
 	// Create session (32 bytes, hex-encoded = 64 chars).
-	sessionID, err := randomHex(32)
+	sessionID, err := randomHex(sessionBytes)
 	if err != nil {
 		return fmt.Errorf("generating session ID: %w", err)
 	}
 
-	expiresAt := time.Now().Add(7 * 24 * time.Hour)
-	if err := h.db.CreateSession(sessionID, userID, expiresAt); err != nil {
+	expiresAt := time.Now().Add(sessionTTLHours * time.Hour)
+	if err := h.db.CreateSession(ctx, sqlc.CreateSessionParams{
+		ID:        sessionID,
+		UserID:    userID,
+		ExpiresAt: expiresAt,
+	}); err != nil {
 		return fmt.Errorf("creating session: %w", err)
 	}
 
@@ -149,21 +194,24 @@ func (h *Handler) HandleCallback(c echo.Context) error {
 		Name:     "session",
 		Value:    sessionID,
 		Path:     "/",
-		MaxAge:   7 * 24 * 3600, // 7 days
+		MaxAge:   sessionMaxAgeSec,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 		Secure:   !isLocalhost(h.config.BaseURL),
 	})
 
 	h.logger.Info("user logged in", "userID", userID, "github_username", ghUser.Login)
+
 	return c.Redirect(http.StatusTemporaryRedirect, "/")
 }
 
 // HandleLogout clears the session.
 func (h *Handler) HandleLogout(c echo.Context) error {
+	ctx := c.Request().Context()
+
 	cookie, err := c.Cookie("session")
 	if err == nil && cookie.Value != "" {
-		if err := h.db.DeleteSession(cookie.Value); err != nil {
+		if err := h.db.DeleteSession(ctx, cookie.Value); err != nil {
 			h.logger.Error("failed to delete session", "error", err)
 		}
 	}
@@ -180,10 +228,11 @@ func (h *Handler) HandleLogout(c echo.Context) error {
 
 // HandlePendingApproval renders a page for users awaiting admin approval.
 func (h *Handler) HandlePendingApproval(c echo.Context) error {
-	user, ok := c.Get("user").(*db.User)
+	user, ok := c.Get("user").(*sqlc.User)
 	if !ok {
 		return c.Redirect(http.StatusTemporaryRedirect, "/auth/github/login")
 	}
+
 	return c.JSON(http.StatusOK, map[string]string{
 		"status":   "pending",
 		"username": user.GitHubUsername,
@@ -193,7 +242,9 @@ func (h *Handler) HandlePendingApproval(c echo.Context) error {
 
 // HandleAdminUsers returns all users for admin management.
 func (h *Handler) HandleAdminUsers(c echo.Context) error {
-	users, err := h.db.ListUsers()
+	ctx := c.Request().Context()
+
+	users, err := h.db.ListUsers(ctx)
 	if err != nil {
 		return fmt.Errorf("listing users: %w", err)
 	}
@@ -201,7 +252,7 @@ func (h *Handler) HandleAdminUsers(c echo.Context) error {
 	type userResp struct {
 		ID       string `json:"id"`
 		Username string `json:"username"`
-		Avatar   string `json:"avatar_url"`
+		Avatar   string `json:"avatarURL"`
 		Role     string `json:"role"`
 	}
 	resp := make([]userResp, len(users))
@@ -210,31 +261,46 @@ func (h *Handler) HandleAdminUsers(c echo.Context) error {
 		if u.AvatarURL.Valid {
 			avatar = u.AvatarURL.String
 		}
-		resp[i] = userResp{ID: u.ID, Username: u.GitHubUsername, Avatar: avatar, Role: u.Role}
+		resp[i] = userResp{
+			ID:       u.ID,
+			Username: u.GitHubUsername,
+			Avatar:   avatar,
+			Role:     u.Role,
+		}
 	}
+
 	return c.JSON(http.StatusOK, resp)
 }
 
 // HandleApproveUser promotes a pending user to "user" role.
 func (h *Handler) HandleApproveUser(c echo.Context) error {
+	ctx := c.Request().Context()
 	userID := c.Param("userID")
-	if err := h.db.UpdateUserRole(userID, "user"); err != nil {
+
+	if _, err := h.db.UpdateUserRole(ctx, sqlc.UpdateUserRoleParams{
+		Role: "user",
+		ID:   userID,
+	}); err != nil {
 		return fmt.Errorf("approving user: %w", err)
 	}
 	h.logger.Info("user approved", "userID", userID)
+
 	return c.JSON(http.StatusOK, map[string]string{"status": "approved"})
 }
 
 // HandleRejectUser deletes a user and their sessions.
 func (h *Handler) HandleRejectUser(c echo.Context) error {
+	ctx := c.Request().Context()
 	userID := c.Param("userID")
-	if err := h.db.DeleteSessionsByUserID(userID); err != nil {
+
+	if err := h.db.DeleteSessionsByUserID(ctx, userID); err != nil {
 		h.logger.Error("failed to delete user sessions", "error", err, "userID", userID)
 	}
-	if err := h.db.DeleteUser(userID); err != nil {
+	if err := h.db.DeleteUser(ctx, userID); err != nil {
 		return fmt.Errorf("deleting user: %w", err)
 	}
 	h.logger.Info("user rejected", "userID", userID)
+
 	return c.JSON(http.StatusOK, map[string]string{"status": "rejected"})
 }
 
@@ -242,18 +308,23 @@ func (h *Handler) HandleRejectUser(c echo.Context) error {
 type gitHubUser struct {
 	ID        int64  `json:"id"`
 	Login     string `json:"login"`
-	AvatarURL string `json:"avatar_url"`
+	AvatarURL string `json:"avatar_url"` //nolint:tagliatelle // GitHub API format
 }
 
 // exchangeCode exchanges an OAuth code for a GitHub access token.
-func (h *Handler) exchangeCode(code string) (string, error) {
+func (h *Handler) exchangeCode(ctx context.Context, code string) (string, error) {
 	data := url.Values{
 		"client_id":     {h.config.GitHubClientID},
 		"client_secret": {h.config.GitHubClientSecret},
 		"code":          {code},
 	}
 
-	req, err := http.NewRequest("POST", "https://github.com/login/oauth/access_token", strings.NewReader(data.Encode()))
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		"https://github.com/login/oauth/access_token",
+		strings.NewReader(data.Encode()),
+	)
 	if err != nil {
 		return "", err
 	}
@@ -264,7 +335,7 @@ func (h *Handler) exchangeCode(code string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("token exchange request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -272,9 +343,9 @@ func (h *Handler) exchangeCode(code string) (string, error) {
 	}
 
 	var tokenResp struct {
-		AccessToken string `json:"access_token"`
+		AccessToken string `json:"access_token"` //nolint:tagliatelle // GitHub API format
 		Error       string `json:"error"`
-		ErrorDesc   string `json:"error_description"`
+		ErrorDesc   string `json:"error_description"` //nolint:tagliatelle // GitHub API format
 	}
 	if err := json.Unmarshal(body, &tokenResp); err != nil {
 		return "", fmt.Errorf("parsing token response: %w", err)
@@ -283,15 +354,23 @@ func (h *Handler) exchangeCode(code string) (string, error) {
 		return "", fmt.Errorf("OAuth error: %s: %s", tokenResp.Error, tokenResp.ErrorDesc)
 	}
 	if tokenResp.AccessToken == "" {
-		return "", fmt.Errorf("empty access token in response")
+		return "", errors.New("empty access token in response")
 	}
 
 	return tokenResp.AccessToken, nil
 }
 
 // fetchGitHubUser fetches user info from the GitHub API.
-func (h *Handler) fetchGitHubUser(accessToken string) (*gitHubUser, error) {
-	req, err := http.NewRequest("GET", "https://api.github.com/user", nil)
+func (h *Handler) fetchGitHubUser(
+	ctx context.Context,
+	accessToken string,
+) (*gitHubUser, error) {
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		"https://api.github.com/user",
+		http.NoBody,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -302,10 +381,11 @@ func (h *Handler) fetchGitHubUser(accessToken string) (*gitHubUser, error) {
 	if err != nil {
 		return nil, fmt.Errorf("GitHub API request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+
 		return nil, fmt.Errorf("GitHub API returned %d: %s", resp.StatusCode, body)
 	}
 
@@ -313,6 +393,7 @@ func (h *Handler) fetchGitHubUser(accessToken string) (*gitHubUser, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
 		return nil, fmt.Errorf("parsing user response: %w", err)
 	}
+
 	return &user, nil
 }
 
@@ -322,6 +403,7 @@ func randomHex(n int) (string, error) {
 	if _, err := rand.Read(bytes); err != nil {
 		return "", err
 	}
+
 	return hex.EncodeToString(bytes), nil
 }
 
@@ -332,5 +414,6 @@ func isLocalhost(baseURL string) bool {
 		return false
 	}
 	host := u.Hostname()
+
 	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }

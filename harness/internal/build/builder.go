@@ -3,6 +3,7 @@ package build
 import (
 	"bufio"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"creative-mode/harness/internal/db"
+	"creative-mode/harness/internal/db/sqlc"
 )
 
 const (
@@ -29,7 +31,11 @@ type Builder struct {
 }
 
 // NewBuilder creates a new builder.
-func NewBuilder(database *db.DB, logger *slog.Logger, wasmBuildsDir, logsDir string) *Builder {
+func NewBuilder(
+	database *db.DB,
+	logger *slog.Logger,
+	wasmBuildsDir, logsDir string,
+) *Builder {
 	return &Builder{
 		db:            database,
 		logger:        logger,
@@ -40,32 +46,34 @@ func NewBuilder(database *db.DB, logger *slog.Logger, wasmBuildsDir, logsDir str
 
 // Build runs the cargo build for the game server and Trunk build for the WASM
 // client. Updates the checkpoint's WasmPath and BuildDurationMs on success.
-func (b *Builder) Build(cp *db.Checkpoint, isInitial bool) error {
+func (b *Builder) Build(cp *sqlc.Checkpoint, isInitial bool) error {
 	timeout := BuildTimeoutIncremental
 	if isInitial {
 		timeout = BuildTimeoutInitial
 	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	startTime := time.Now()
 
 	wasmDir := filepath.Join(b.wasmBuildsDir, cp.WorldID, cp.ID)
-	if err := os.MkdirAll(wasmDir, 0755); err != nil {
+	if err := os.MkdirAll(wasmDir, 0o750); err != nil {
 		return fmt.Errorf("creating wasm dir: %w", err)
 	}
 
 	logDir := filepath.Join(b.logsDir, "worlds", cp.WorldID, cp.ID)
-	if err := os.MkdirAll(logDir, 0755); err != nil {
+	if err := os.MkdirAll(logDir, 0o750); err != nil {
 		return fmt.Errorf("creating log dir: %w", err)
 	}
 
 	buildLogPath := filepath.Join(logDir, "build.jsonl")
-	buildLog, err := os.Create(buildLogPath)
+
+	buildLog, err := os.Create(buildLogPath) //nolint:gosec // G304: internal log path
 	if err != nil {
 		return fmt.Errorf("creating build log: %w", err)
 	}
-	defer buildLog.Close()
+	defer func() { _ = buildLog.Close() }()
 
 	writer := &jsonlLineWriter{
 		file:    buildLog,
@@ -76,27 +84,40 @@ func (b *Builder) Build(cp *db.Checkpoint, isInitial bool) error {
 
 	// Step 1: Build game server (native binary).
 	b.logger.Info("building game server", "worldID", cp.WorldID, "cpID", cp.ID)
+
 	serverCmd := exec.CommandContext(ctx, "cargo", "build", "--release", "-p", "server")
 	serverCmd.Dir = cp.DirPath
 	serverCmd.Stdout = writer
 	serverCmd.Stderr = writer
+
 	if err := serverCmd.Run(); err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			return fmt.Errorf("server build timed out after %v", timeout)
 		}
+
 		return fmt.Errorf("server build failed: %w", err)
 	}
 
 	// Step 2: Build game client (WASM via Trunk).
 	b.logger.Info("building WASM client", "worldID", cp.WorldID, "cpID", cp.ID)
-	clientCmd := exec.CommandContext(ctx, "trunk", "build", "--release", "--dist", wasmDir)
+
+	clientCmd := exec.CommandContext( //nolint:gosec // G204: trunk with internal path arg
+		ctx,
+		"trunk",
+		"build",
+		"--release",
+		"--dist",
+		wasmDir,
+	)
 	clientCmd.Dir = filepath.Join(cp.DirPath, "client")
 	clientCmd.Stdout = writer
 	clientCmd.Stderr = writer
+
 	if err := clientCmd.Run(); err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			return fmt.Errorf("client build timed out after %v", timeout)
 		}
+
 		return fmt.Errorf("client build failed: %w", err)
 	}
 
@@ -106,16 +127,31 @@ func (b *Builder) Build(cp *db.Checkpoint, isInitial bool) error {
 	cp.WasmPath.String = wasmDir
 	cp.WasmPath.Valid = true
 
-	b.logger.Info("build complete", "worldID", cp.WorldID, "cpID", cp.ID, "durationMs", buildDuration)
+	b.logger.Info(
+		"build complete",
+		"worldID",
+		cp.WorldID,
+		"cpID",
+		cp.ID,
+		"durationMs",
+		buildDuration,
+	)
+
 	return nil
 }
 
 // PostBuild extracts work summaries and file change lists after a successful build.
-func (b *Builder) PostBuild(cp *db.Checkpoint) {
+func (b *Builder) PostBuild(cp *sqlc.Checkpoint) {
+	ctx := context.Background()
+
 	// Read Claude's summary from CHANGES.txt if it exists.
 	changesPath := filepath.Join(cp.DirPath, "CHANGES.txt")
+
 	var workSummary string
-	if summary, err := os.ReadFile(changesPath); err == nil {
+
+	if summary, readErr := os.ReadFile( //nolint:gosec // G304: internal path
+		changesPath,
+	); readErr == nil {
 		workSummary = string(summary)
 	}
 
@@ -124,18 +160,29 @@ func (b *Builder) PostBuild(cp *db.Checkpoint) {
 	filesChanged := parseEditedFiles(claudeLogPath)
 
 	if workSummary != "" || filesChanged != "" {
-		_ = b.db.UpdateCheckpointSummary(cp.ID, workSummary, filesChanged, cp.BuildDurationMs.Int64)
+		_, _ = b.db.UpdateCheckpointSummary(ctx, sqlc.UpdateCheckpointSummaryParams{
+			WorkSummary: sql.NullString{
+				String: workSummary,
+				Valid:  workSummary != "",
+			},
+			FilesChanged: sql.NullString{
+				String: filesChanged,
+				Valid:  filesChanged != "",
+			},
+			BuildDurationMs: sql.NullInt64{Int64: cp.BuildDurationMs.Int64, Valid: true},
+			ID:              cp.ID,
+		})
 	}
 }
 
 // parseEditedFiles reads claude.jsonl and extracts unique file paths from
 // Edit/Write tool uses. Returns a JSON array string.
 func parseEditedFiles(claudeLogPath string) string {
-	f, err := os.Open(claudeLogPath)
-	if err != nil {
+	f, openErr := os.Open(claudeLogPath) //nolint:gosec // G304: internal path
+	if openErr != nil {
 		return ""
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	seen := make(map[string]bool)
 	var files []string
@@ -177,7 +224,11 @@ func parseEditedFiles(claudeLogPath string) string {
 		return ""
 	}
 
-	result, _ := json.Marshal(files)
+	result, err := json.Marshal(files)
+	if err != nil {
+		return ""
+	}
+
 	return string(result)
 }
 
@@ -195,7 +246,8 @@ func (w *jsonlLineWriter) Write(p []byte) (n int, err error) {
 		if line == "" {
 			continue
 		}
-		entry, _ := json.Marshal(map[string]any{
+
+		entry, marshalErr := json.Marshal(map[string]any{
 			"ts":      time.Now().UTC().Format(time.RFC3339),
 			"level":   "info",
 			"event":   w.event,
@@ -203,7 +255,12 @@ func (w *jsonlLineWriter) Write(p []byte) (n int, err error) {
 			"cpID":    w.cpID,
 			"line":    line,
 		})
+		if marshalErr != nil {
+			continue
+		}
+
 		_, _ = w.file.Write(append(entry, '\n'))
 	}
+
 	return len(p), nil
 }

@@ -1,0 +1,40 @@
+version: "2"
+sql:
+  - engine: "sqlite"
+    queries: "internal/db/queries"
+    schema: "internal/db/migrations/001_initial.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "internal/db/sqlc"
+        emit_interface: true
+        emit_empty_slices: true
+        rename:
+          github_id: "GitHubID"
+          github_username: "GitHubUsername"
+          avatar_url: "AvatarURL"
+          created_by: "CreatedBy"
+          created_at: "CreatedAt"
+          last_seen_at: "LastSeenAt"
+          user_id: "UserID"
+          expires_at: "ExpiresAt"
+          world_id: "WorldID"
+          parent_checkpoint_id: "ParentCheckpointID"
+          checkpoint_id: "CheckpointID"
+          build_log: "BuildLog"
+          work_summary: "WorkSummary"
+          files_changed: "FilesChanged"
+          build_duration_ms: "BuildDurationMs"
+          dir_path: "DirPath"
+          wasm_path: "WasmPath"
+          server_port: "ServerPort"
+          prompt_text: "PromptText"
+          last_accessed_at: "LastAccessedAt"
+        overrides:
+          - db_type: "TIMESTAMP"
+            go_type:
+              import: "time"
+              type: "Time"
+            nullable: true
+          - column: "checkpoints.status"
+            go_type: "string"

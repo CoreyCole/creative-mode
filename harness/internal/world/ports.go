@@ -5,6 +5,11 @@ import (
 	"sync"
 )
 
+const (
+	gameServerMinPort = 9001
+	gameServerMaxPort = 9999
+)
+
 // PortAllocator manages a pool of ports for game servers.
 type PortAllocator struct {
 	mu      sync.Mutex
@@ -17,8 +22,8 @@ type PortAllocator struct {
 func NewPortAllocator() *PortAllocator {
 	return &PortAllocator{
 		inUse:   make(map[int]bool),
-		minPort: 9001,
-		maxPort: 9999,
+		minPort: gameServerMinPort,
+		maxPort: gameServerMaxPort,
 	}
 }
 
@@ -26,12 +31,15 @@ func NewPortAllocator() *PortAllocator {
 func (p *PortAllocator) Allocate() (int, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
 	for port := p.minPort; port <= p.maxPort; port++ {
 		if !p.inUse[port] {
 			p.inUse[port] = true
+
 			return port, nil
 		}
 	}
+
 	return 0, fmt.Errorf("no available ports in range %d-%d", p.minPort, p.maxPort)
 }
 

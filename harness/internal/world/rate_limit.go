@@ -1,10 +1,17 @@
 package world
 
 import (
+	"context"
+	"database/sql"
 	"sync"
 	"time"
 
 	"creative-mode/harness/internal/db"
+)
+
+const (
+	rateLimitCooldown      = 30 * time.Second
+	rateLimitMaxCPPerWorld = 50
 )
 
 // RateLimiter prevents prompt spam by enforcing a cooldown between submissions
@@ -22,13 +29,13 @@ func NewRateLimiter(database *db.DB) *RateLimiter {
 	return &RateLimiter{
 		db:            database,
 		lastSubmit:    make(map[string]time.Time),
-		cooldown:      30 * time.Second,
-		maxCPPerWorld: 50,
+		cooldown:      rateLimitCooldown,
+		maxCPPerWorld: rateLimitMaxCPPerWorld,
 	}
 }
 
 // Check returns an error if the user is rate-limited.
-func (r *RateLimiter) Check(userID string) error {
+func (r *RateLimiter) Check(ctx context.Context, userID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -44,7 +51,10 @@ func (r *RateLimiter) Check(userID string) error {
 	}
 
 	// Check for active builds.
-	activeBuilds, err := r.db.CountActiveBuilds(userID)
+	activeBuilds, err := r.db.CountActiveBuilds(
+		ctx,
+		sql.NullString{String: userID, Valid: userID != ""},
+	)
 	if err == nil && activeBuilds > 0 {
 		return &RateLimitError{
 			Message: "You already have a build in progress",
@@ -52,6 +62,7 @@ func (r *RateLimiter) Check(userID string) error {
 	}
 
 	r.lastSubmit[userID] = time.Now()
+
 	return nil
 }
 

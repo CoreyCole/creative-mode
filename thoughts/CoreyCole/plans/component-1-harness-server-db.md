@@ -15,16 +15,36 @@ harness/
 ├── go.sum
 ├── main.go
 ├── justfile
+├── sqlc.yaml                           # SQLc configuration
 ├── internal/
 │   ├── server/
-│   │   └── server.go           # Echo router setup, route registration, graceful shutdown
+│   │   └── server.go                   # Echo router setup, route registration, graceful shutdown
 │   ├── db/
-│   │   ├── db.go               # SQLite connection, migrations, WAL mode
-│   │   ├── migrations/
-│   │   │   └── 001_initial.sql # Full schema
-│   │   └── queries.go          # Query methods for all tables
+│   │   ├── db.go                       # SQLite connection, migrations, WAL mode, embeds sqlc.Queries
+│   │   ├── repository.go              # Wrapper methods preserving public API + type aliases
+│   │   ├── queries/                    # Annotated SQL files (one per domain entity)
+│   │   │   ├── users.sql
+│   │   │   ├── sessions.sql
+│   │   │   ├── worlds.sql
+│   │   │   ├── checkpoints.sql
+│   │   │   ├── user_positions.sql
+│   │   │   ├── prompt_history.sql
+│   │   │   └── messages.sql
+│   │   ├── sqlc/                       # Generated code (DO NOT EDIT) — run `sqlc generate`
+│   │   │   ├── db.go
+│   │   │   ├── models.go
+│   │   │   ├── querier.go
+│   │   │   ├── users.sql.go
+│   │   │   ├── sessions.sql.go
+│   │   │   ├── worlds.sql.go
+│   │   │   ├── checkpoints.sql.go
+│   │   │   ├── user_positions.sql.go
+│   │   │   ├── prompt_history.sql.go
+│   │   │   └── messages.sql.go
+│   │   └── migrations/
+│   │       └── 001_initial.sql         # Full schema (runtime migrations)
 │   └── logging/
-│       └── logger.go           # slog JSON handler → stderr + file
+│       └── logger.go                   # slog JSON handler → stderr + file
 ```
 
 Also create at the repo root:
@@ -123,6 +143,8 @@ CREATE INDEX idx_messages_created_at ON messages(created_at);
 
 ### Database Layer (`harness/internal/db/db.go`)
 
+The DB struct embeds a SQLc `Queries` instance for type-safe database access:
+
 ```go
 package db
 
@@ -130,6 +152,7 @@ import (
     "database/sql"
     "embed"
     "fmt"
+    "creative-mode/harness/internal/db/sqlc"
     _ "github.com/mattn/go-sqlite3"
 )
 
@@ -137,145 +160,77 @@ import (
 var migrations embed.FS
 
 type DB struct {
-    db *sql.DB
+    db      *sql.DB
+    queries *sqlc.Queries
 }
 
 func New(dbPath string) (*DB, error) {
-    db, err := sql.Open("sqlite3", dbPath)
+    sqlDB, err := sql.Open("sqlite3", dbPath+"?_foreign_keys=on")
     if err != nil {
         return nil, err
     }
-    // WAL mode for concurrent access from multiple goroutines
-    db.Exec("PRAGMA journal_mode=WAL")
-    // 5-second busy timeout to avoid "database is locked" errors
-    db.Exec("PRAGMA busy_timeout=5000")
+    sqlDB.Exec("PRAGMA journal_mode=WAL")
+    sqlDB.Exec("PRAGMA busy_timeout=5000")
 
-    d := &DB{db: db}
+    d := &DB{
+        db:      sqlDB,
+        queries: sqlc.New(sqlDB),
+    }
     if err := d.runMigrations(); err != nil {
         return nil, fmt.Errorf("running migrations: %w", err)
     }
     return d, nil
 }
-
-func (d *DB) Close() error {
-    return d.db.Close()
-}
-
-func (d *DB) runMigrations() error {
-    content, err := migrations.ReadFile("migrations/001_initial.sql")
-    if err != nil {
-        return err
-    }
-    _, err = d.db.Exec(string(content))
-    return err
-}
 ```
 
-### Query Methods (`harness/internal/db/queries.go`)
+### SQLc Query Files (`harness/internal/db/queries/*.sql`)
 
-Provide CRUD methods for all tables. At minimum:
+SQL queries are defined in annotated `.sql` files, one per domain entity. SQLc generates type-safe Go code from these. Each query has a name and return annotation:
 
-**Users:**
-- `UpsertUser(id, githubID, username, avatarURL, role) error`
-- `GetUserByID(id) (*User, error)`
-- `GetUserByGitHubID(githubID) (*User, error)`
-- `UpdateUserRole(id, role) error`
-- `ListUsers() ([]User, error)`
-- `ListPendingUsers() ([]User, error)`
-- `DeleteUser(id) error`
-- `CountUsers() (int, error)` — used to check if first user (auto-admin)
-- `UpdateLastSeen(id) error`
+- `:exec` — INSERT/UPDATE/DELETE, returns only `error`
+- `:execresult` — returns `sql.Result` (for `RowsAffected()` checks)
+- `:one` — returns single row
+- `:many` — returns `[]T`
 
-**Sessions:**
-- `CreateSession(id, userID, expiresAt) error`
-- `GetSession(id) (*Session, error)` — returns nil if expired
-- `DeleteSession(id) error`
-- `DeleteExpiredSessions() error`
+Example (`users.sql`):
+```sql
+-- name: GetUserByID :one
+SELECT id, github_id, github_username, avatar_url, role, created_at, last_seen_at
+FROM users WHERE id = ?;
 
-**Worlds:**
-- `CreateWorld(world *World) error`
-- `GetWorld(id) (*World, error)`
-- `ListWorlds() ([]World, error)`
+-- name: ListUsers :many
+SELECT id, github_id, github_username, avatar_url, role, created_at, last_seen_at
+FROM users ORDER BY created_at ASC;
 
-**Checkpoints:**
-- `CreateCheckpoint(cp *Checkpoint) error`
-- `GetCheckpoint(id) (*Checkpoint, error)`
-- `UpdateCheckpointStatus(id, status, buildLog) error`
-- `UpdateCheckpointSummary(id, workSummary, filesChanged, buildDurationMs) error`
-- `UpdateCheckpointServerPort(id, port) error`
-- `GetCheckpointTree(worldID) ([]Checkpoint, error)` — all checkpoints for a world
-- `GetCheckpointAncestry(worldID, cpID) ([]Checkpoint, error)` — walk parent_checkpoint_id from cpID to root
+-- name: UpdateUserRole :execresult
+UPDATE users SET role = ? WHERE id = ?;
+```
 
-**User Positions:**
-- `GetUserPosition(userID, worldID) (string, error)` — returns checkpoint ID
-- `SetUserPosition(userID, worldID, checkpointID) error`
+### Repository Layer (`harness/internal/db/repository.go`)
 
-**Prompt History:**
-- `CreatePromptHistory(id, cpID, worldID, userID, promptText) error`
+Thin wrapper methods that preserve the existing public API while delegating to SQLc:
 
-**Messages:**
-- `CreateMessage(msg *Message) error`
-- `GetRecentMessages(limit int) ([]Message, error)` — ordered by created_at DESC
-- `GetRecentMessagesByWorld(worldID string, limit int) ([]Message, error)`
+```go
+// Type aliases expose SQLc-generated models under the db package.
+type User = sqlc.User
+type Session = sqlc.Session
+type World = sqlc.World
+type Checkpoint = sqlc.Checkpoint
+type Message = sqlc.Message
+```
+
+Wrapper methods handle:
+1. Mapping individual parameters to SQLc's generated param structs
+2. Converting `:one` query `sql.ErrNoRows` to the `nil, nil` pattern
+3. Checking `RowsAffected() == 0` for `:execresult` queries
+4. Type conversions (e.g., `int` ↔ `int64` for counts/limits)
+5. Custom business logic (`GetCheckpointAncestry` does in-memory tree walking)
 
 ### Model Types
 
-Define in `db.go` or a separate `models.go`:
-
-```go
-type User struct {
-    ID             string
-    GitHubID       int64
-    GitHubUsername string
-    AvatarURL      string
-    Role           string // "admin", "user", "pending"
-    CreatedAt      time.Time
-    LastSeenAt     time.Time
-}
-
-type Session struct {
-    ID        string
-    UserID    string
-    CreatedAt time.Time
-    ExpiresAt time.Time
-}
-
-type World struct {
-    ID          string
-    Name        string
-    Description string
-    CreatedBy   string
-    CreatedAt   time.Time
-}
-
-type Checkpoint struct {
-    ID                 string
-    WorldID            string
-    ParentCheckpointID string
-    Name               string
-    Prompt             string
-    Status             string // "building", "ready", "failed"
-    BuildLog           string
-    WorkSummary        string
-    FilesChanged       string
-    BuildDurationMs    int64
-    DirPath            string
-    WasmPath           string
-    ServerPort         int
-    CreatedBy          string
-    CreatedAt          time.Time
-}
-
-type Message struct {
-    ID           string
-    Type         string // "chat", "build.started", "build.completed", "build.failed", "player.joined", "player.left"
-    UserID       string
-    WorldID      string
-    CheckpointID string
-    Content      string
-    CreatedAt    time.Time
-}
-```
+Model types are generated by SQLc in `internal/db/sqlc/models.go` and re-exported
+via type aliases in `repository.go`. Nullable columns use `sql.NullString` / `sql.NullInt64`.
+TIMESTAMP columns are overridden to `time.Time` via `sqlc.yaml` config.
 
 ### Logging (`harness/internal/logging/logger.go`)
 
@@ -420,7 +375,11 @@ build:
 test:
     go test ./...
 
+sqlc:
+    sqlc generate
+
 generate:
+    sqlc generate
     templ generate
 ```
 
@@ -449,12 +408,18 @@ github.com/coreycole/datastarui
 golang.org/x/oauth2
 ```
 
+### Tool Dependencies
+
+```
+sqlc                           # SQL code generator (brew install sqlc)
+```
+
 ## Interface Contract
 
 This component provides to other components:
 
 1. **DB type with query methods** — all components use `*db.DB` for data access
-2. **Model types** (User, Session, World, Checkpoint, Message) — shared across all components
+2. **Model types** (User, Session, World, Checkpoint, Message) — SQLc-generated in `internal/db/sqlc/models.go`, re-exported via type aliases in `repository.go` (e.g., `db.User` is `sqlc.User`). Nullable columns use `sql.NullString` / `sql.NullInt64`.
 3. **Logger** — `*slog.Logger` passed to all components
 4. **Echo instance** — other components register their routes on the same Echo router
 5. **Server struct** — other components extend it with additional handlers or compose with it
@@ -467,8 +432,9 @@ Other components should be able to:
 ## Success Criteria
 
 ### Automated Verification
-- [ ] `cd harness && go build ./...` compiles successfully
-- [ ] `cd harness && go test ./...` passes
+- [x] `cd harness && sqlc generate` succeeds with no errors
+- [x] `cd harness && go build ./...` compiles successfully
+- [x] `cd harness && go test ./...` passes
 - [ ] Echo server starts and responds on `:8080`
 - [ ] `GET /health` returns `{"status": "ok"}`
 - [ ] SQLite database creates all tables on first run (users, sessions, worlds, checkpoints, user_positions, prompt_history, messages)

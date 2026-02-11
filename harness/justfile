@@ -10,5 +10,15 @@ build:
 test:
     go test ./...
 
+sqlc:
+    sqlc generate
+
 generate:
+    sqlc generate
     templ generate
+
+fmt:
+    golangci-lint fmt ./...
+
+lint:
+    golangci-lint run ./...

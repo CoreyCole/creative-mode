@@ -47,7 +47,7 @@ fn main() {
     let ws_config = {
         #[cfg(target_family = "wasm")]
         {
-            lightyear::prelude::client::ClientConfig::default()
+            lightyear::prelude::client::ClientConfig
         }
         #[cfg(not(target_family = "wasm"))]
         {
@@ -374,6 +374,7 @@ fn handle_interpolated_spawn(
 // --- Mesh Sync ---
 
 /// Spawn/update meshes for player entities that have PlayerPosition and PlayerColor.
+#[allow(clippy::type_complexity)]
 fn sync_player_meshes(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,

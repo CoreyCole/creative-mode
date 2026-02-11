@@ -10,8 +10,8 @@ use core::net::{Ipv4Addr, SocketAddr};
 use core::time::Duration;
 use lightyear::connection::client::Connected;
 use lightyear::netcode::NetcodeServer;
-use lightyear::prelude::server::NetcodeConfig;
 use lightyear::prelude::input::native::*;
+use lightyear::prelude::server::NetcodeConfig;
 use lightyear::prelude::server::*;
 use lightyear::prelude::*;
 use shared::protocol::*;
@@ -29,9 +29,11 @@ fn main() {
     let mut app = App::new();
 
     // Headless server: minimal plugins + schedule runner
-    app.add_plugins(MinimalPlugins.set(ScheduleRunnerPlugin::run_loop(
-        Duration::from_secs_f64(1.0 / FIXED_TIMESTEP_HZ),
-    )));
+    app.add_plugins(
+        MinimalPlugins.set(ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(
+            1.0 / FIXED_TIMESTEP_HZ,
+        ))),
+    );
     app.add_plugins(LogPlugin::default());
 
     // Lightyear server plugin
@@ -127,10 +129,7 @@ fn handle_connected(
 
 /// Apply client inputs to player positions on the server.
 fn movement(
-    mut position_query: Query<
-        (&mut PlayerPosition, &ActionState<PlayerInput>),
-        Without<Predicted>,
-    >,
+    mut position_query: Query<(&mut PlayerPosition, &ActionState<PlayerInput>), Without<Predicted>>,
 ) {
     for (position, input) in position_query.iter_mut() {
         shared_movement(position, input);

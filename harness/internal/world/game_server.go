@@ -85,8 +85,12 @@ func (m *GameServerManager) Disconnect(worldID, cpID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.refCount[key]--
 	if m.refCount[key] <= 0 {
+		return
+	}
+
+	m.refCount[key]--
+	if m.refCount[key] == 0 {
 		go m.stopAfterDelay(key, gameServerGracePeriod)
 	}
 }
@@ -136,16 +140,29 @@ func (m *GameServerManager) startServer(
 		if waitErr := cmd.Wait(); waitErr != nil {
 			m.logger.Error(
 				"game server exited",
-				"worldID",
-				worldID,
-				"cpID",
-				cpID,
-				"error",
-				waitErr,
+				"worldID", worldID,
+				"cpID", cpID,
+				"error", waitErr,
 			)
 		}
 
 		_ = logFile.Close()
+
+		// Clean up crashed server entry.
+		key := worldID + "/" + cpID
+		m.mu.Lock()
+		defer m.mu.Unlock()
+
+		existing, ok := m.servers[key]
+		if !ok || existing != srv {
+			return
+		}
+
+		m.ports.Release(srv.Port)
+		delete(m.servers, key)
+		delete(m.refCount, key)
+		m.logger.Info("cleaned up crashed game server",
+			"key", key, "port", srv.Port)
 	}()
 
 	m.logger.Info("game server started", "worldID", worldID, "cpID", cpID, "port", port)

@@ -12,3 +12,6 @@ SELECT m.id, m.type, m.user_id, m.world_id, m.checkpoint_id, m.content, m.create
 FROM messages m
 LEFT JOIN users u ON m.user_id = u.id
 ORDER BY m.created_at DESC LIMIT ?;
+
+-- name: DeleteMessagesByUserID :exec
+DELETE FROM messages WHERE user_id = ?;

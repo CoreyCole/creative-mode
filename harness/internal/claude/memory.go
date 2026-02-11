@@ -2,6 +2,7 @@ package claude
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 )
@@ -11,8 +12,17 @@ import (
 // about what the user asked for.
 func updateMemory(checkpointDir, prompt string) {
 	memoryPath := filepath.Join(checkpointDir, "MEMORY.md")
-	content, _ := os.ReadFile(memoryPath) //nolint:gosec // G304: internal checkpoint path
+	//nolint:gosec // G304: internal checkpoint path
+	content, err := os.ReadFile(memoryPath)
+	if err != nil && !os.IsNotExist(err) {
+		slog.Warn("failed to read MEMORY.md",
+			"path", memoryPath, "error", err)
+	}
 
 	addition := fmt.Sprintf("\n\n## Latest Prompt\n%s\n", prompt)
-	_ = os.WriteFile(memoryPath, append(content, []byte(addition)...), 0o600)
+	content = append(content, []byte(addition)...)
+	if writeErr := os.WriteFile(memoryPath, content, 0o600); writeErr != nil {
+		slog.Error("failed to write MEMORY.md",
+			"path", memoryPath, "error", writeErr)
+	}
 }

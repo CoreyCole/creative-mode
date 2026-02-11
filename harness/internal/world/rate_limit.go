@@ -9,28 +9,23 @@ import (
 	"creative-mode/harness/internal/db"
 )
 
-const (
-	rateLimitCooldown      = 30 * time.Second
-	rateLimitMaxCPPerWorld = 50
-)
+const rateLimitCooldown = 30 * time.Second
 
 // RateLimiter prevents prompt spam by enforcing a cooldown between submissions
 // and limiting concurrent builds per user.
 type RateLimiter struct {
-	db            *db.DB
-	mu            sync.Mutex
-	lastSubmit    map[string]time.Time // userID -> last prompt time
-	cooldown      time.Duration
-	maxCPPerWorld int
+	db         *db.DB
+	mu         sync.Mutex
+	lastSubmit map[string]time.Time // userID -> last prompt time
+	cooldown   time.Duration
 }
 
 // NewRateLimiter creates a rate limiter with a 30-second cooldown.
 func NewRateLimiter(database *db.DB) *RateLimiter {
 	return &RateLimiter{
-		db:            database,
-		lastSubmit:    make(map[string]time.Time),
-		cooldown:      rateLimitCooldown,
-		maxCPPerWorld: rateLimitMaxCPPerWorld,
+		db:         database,
+		lastSubmit: make(map[string]time.Time),
+		cooldown:   rateLimitCooldown,
 	}
 }
 
@@ -38,6 +33,14 @@ func NewRateLimiter(database *db.DB) *RateLimiter {
 func (r *RateLimiter) Check(ctx context.Context, userID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	// Prune stale entries (older than 2x cooldown).
+	cutoff := time.Now().Add(-2 * r.cooldown)
+	for uid, ts := range r.lastSubmit {
+		if ts.Before(cutoff) {
+			delete(r.lastSubmit, uid)
+		}
+	}
 
 	// Check cooldown.
 	if last, ok := r.lastSubmit[userID]; ok {
@@ -55,7 +58,12 @@ func (r *RateLimiter) Check(ctx context.Context, userID string) error {
 		ctx,
 		sql.NullString{String: userID, Valid: userID != ""},
 	)
-	if err == nil && activeBuilds > 0 {
+	if err != nil {
+		return &RateLimitError{
+			Message: "Unable to verify build status, please try again",
+		}
+	}
+	if activeBuilds > 0 {
 		return &RateLimitError{
 			Message: "You already have a build in progress",
 		}

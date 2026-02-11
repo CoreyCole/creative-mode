@@ -32,3 +32,12 @@ func (q *Queries) CreatePromptHistory(ctx context.Context, arg CreatePromptHisto
 	)
 	return err
 }
+
+const deletePromptHistoryByUserID = `-- name: DeletePromptHistoryByUserID :exec
+DELETE FROM prompt_history WHERE user_id = ?
+`
+
+func (q *Queries) DeletePromptHistoryByUserID(ctx context.Context, userID string) error {
+	_, err := q.db.ExecContext(ctx, deletePromptHistoryByUserID, userID)
+	return err
+}

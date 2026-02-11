@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/labstack/echo/v4"
 
@@ -48,10 +49,31 @@ func main() {
 	}
 	defer func() { _ = database.Close() }()
 
+	// Graceful shutdown context (created early for periodic goroutines).
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	// Clean up expired sessions on startup.
 	if cleanErr := database.DeleteExpiredSessions(context.Background()); cleanErr != nil {
 		logger.Error("failed to clean expired sessions", "error", cleanErr)
 	}
+
+	// Periodically clean expired sessions.
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				cleanupErr := database.DeleteExpiredSessions(context.Background())
+				if cleanupErr != nil {
+					logger.Error("periodic session cleanup failed", "error", cleanupErr)
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
 	// Set up auth (optional — requires GITHUB_CLIENT_ID).
 	var authHandler *auth.Handler
@@ -105,9 +127,6 @@ func main() {
 	srv.RegisterRoutes(e)
 
 	// Graceful shutdown on SIGINT/SIGTERM.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
 	go func() {
 		<-ctx.Done()
 		logger.Info("Shutting down server...")

@@ -7,35 +7,36 @@ import (
 	"github.com/starfederation/datastar-go/datastar"
 )
 
-templ Overlay(w sqlc.World, cp sqlc.Checkpoint, user *sqlc.User) {
+templ Overlay(w sqlc.World, cp sqlc.Checkpoint, checkpoints []sqlc.Checkpoint) {
 	// Expanded state
 	<div class="overlay-expanded" data-show="$overlay_expanded">
-		@OverlayTopBar(w, cp, user)
+		@OverlayTopBar(w)
+		@CheckpointTree(checkpoints, cp.ID, w.ID)
 		<div class="overlay-middle">
 			<div class="game-area"></div>
 			@chat.ChatPanel()
 		</div>
 		@OverlayBottomBar(w)
 	</div>
-	// Minimized state
-	<div class="overlay-minimized" data-show="!$overlay_expanded">
-		<button data-on-click="$overlay_expanded = true; $unread_count = 0">
+	// Minimized state — starts hidden (overlay_expanded defaults to true)
+	<div class="overlay-minimized" data-show="!$overlay_expanded" style="display: none;">
+		<button data-on-click={ OE.Expand() }>
 			CM
-			<span class="badge" data-show="$unread_count > 0" data-text="$unread_count"></span>
+			<span class="badge" data-show="$unread_count > 0" data-text="$unread_count" style="display: none;"></span>
 		</button>
 	</div>
 }
 
-templ OverlayTopBar(w sqlc.World, cp sqlc.Checkpoint, user *sqlc.User) {
+templ OverlayTopBar(w sqlc.World) {
 	<div class="overlay-bar overlay-top-bar">
 		<div class="top-bar-left">
 			<span class="brand">Creative Mode</span>
 			<span class="world-name">{ w.Name }</span>
 		</div>
 		<div class="top-bar-right">
-			<button class="btn btn-sm" data-on-click="$show_checkpoint_tree = !$show_checkpoint_tree">Tree</button>
+			<button class="btn btn-sm" data-on-click={ OE.ToggleTree() }>Tree</button>
 			<a href="/" class="btn btn-sm btn-muted">Lobby</a>
-			<button class="btn btn-sm btn-muted" data-on-click="$overlay_expanded = false">—</button>
+			<button class="btn btn-sm btn-muted" data-on-click={ OE.Minimize() }>—</button>
 		</div>
 	</div>
 }
@@ -56,14 +57,7 @@ templ OverlayBottomBar(w sqlc.World) {
 		<div class="status-bar">
 			<span class="build-status"
 				data-text="$build_status"
-				data-class="{
-					'status-idle': $build_status === 'idle',
-					'status-editing': $build_status === 'editing',
-					'status-compiling': $build_status === 'compiling',
-					'status-ready': $build_status === 'ready',
-					'status-failed': $build_status === 'failed',
-					'status-rate-limited': $build_status === 'rate_limited'
-				}"></span>
+				data-class={ OE.BuildStatusDataClass() }></span>
 		</div>
 	</div>
 }

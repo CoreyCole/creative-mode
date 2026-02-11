@@ -3,17 +3,14 @@ package world
 import (
 	"fmt"
 	"creative-mode/harness/internal/db/sqlc"
+	"creative-mode/harness/views/dsutil"
+	"creative-mode/harness/views/layout"
 )
 
-templ Page(w sqlc.World, cp sqlc.Checkpoint, user *sqlc.User, signals OverlaySignals, serverPort int) {
+templ Page(w sqlc.World, cp sqlc.Checkpoint, user *sqlc.User, signals OverlaySignals, serverPort int, checkpoints []sqlc.Checkpoint) {
 	<!DOCTYPE html>
 	<html lang="en">
-		<head>
-			<meta charset="UTF-8"/>
-			<title>{ w.Name } — Creative Mode</title>
-			<script type="module" defer src="/static/datastar.js"></script>
-			<link rel="stylesheet" href="/static/styles.css"/>
-		</head>
+		@layout.Head(w.Name)
 		<body>
 			if serverPort > 0 {
 				<iframe id="game-frame"
@@ -25,8 +22,8 @@ templ Page(w sqlc.World, cp sqlc.Checkpoint, user *sqlc.User, signals OverlaySig
 			}
 			<div id="harness-overlay"
 				data-signals={ templ.JSONString(signals) }
-				data-on-load={ fmt.Sprintf("@get('/world/%s/events',{requestCancellation: 'disabled'})", w.ID) }>
-				@Overlay(w, cp, user)
+				data-on-load={ dsutil.GetSSENoCancel(fmt.Sprintf("/world/%s/events", w.ID)) }>
+				@Overlay(w, cp, checkpoints)
 			</div>
 			<script src="/static/game-loader.js"></script>
 		</body>

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -69,7 +70,10 @@ func (s *Server) handleRoot(c echo.Context) error {
 		return render(c, pending.Page(&user))
 	}
 
-	worlds, _ := s.DB.ListWorlds(ctx)
+	worlds, err := s.DB.ListWorlds(ctx)
+	if err != nil {
+		s.Logger.Error("failed to list worlds", "error", err)
+	}
 
 	return render(c, lobby.Page(&user, worlds))
 }
@@ -98,8 +102,8 @@ func (s *Server) RegisterRoutes(e *echo.Echo) {
 	// Health check endpoint.
 	e.GET("/health", s.handleHealth)
 
-	// Claude hook event endpoint (unprotected — internal same-machine communication).
-	e.POST("/api/claude-event", s.handleClaudeEvent)
+	// Claude hook event endpoint (protected by CM_HOOK_SECRET if set).
+	e.POST("/api/claude-event", s.handleClaudeEvent, hookSecretMiddleware())
 
 	// Root route — soft session check renders login/pending/lobby.
 	e.GET("/", s.handleRoot)
@@ -223,9 +227,15 @@ func (s *Server) handleWorldView(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get world")
 	}
 
-	cpID, _ := s.WorldManager.GetUserPosition(ctx, user.ID, worldID)
+	cpID, err := s.WorldManager.GetUserPosition(ctx, user.ID, worldID)
+	if err != nil {
+		s.Logger.Warn("failed to get user position", "error", err)
+	}
+	checkpoints, err := s.WorldManager.GetCheckpointTree(ctx, worldID)
+	if err != nil {
+		s.Logger.Warn("failed to get checkpoint tree", "error", err)
+	}
 	if cpID == "" {
-		checkpoints, _ := s.WorldManager.GetCheckpointTree(ctx, worldID)
 		if len(checkpoints) > 0 {
 			cpID = checkpoints[0].ID
 		}
@@ -245,7 +255,7 @@ func (s *Server) handleWorldView(c echo.Context) error {
 
 	signals := worldview.DefaultOverlaySignals(worldID, cpID)
 
-	return render(c, worldview.Page(w, cp, user, signals, serverPort))
+	return render(c, worldview.Page(w, cp, user, signals, serverPort, checkpoints))
 }
 
 // handleCheckpointView updates the user's position and returns checkpoint info.
@@ -264,7 +274,9 @@ func (s *Server) handleCheckpointView(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "checkpoint not found")
 	}
 
-	_ = s.WorldManager.SetUserPosition(ctx, user.ID, worldID, cpID)
+	if err := s.WorldManager.SetUserPosition(ctx, user.ID, worldID, cpID); err != nil {
+		s.Logger.Warn("failed to set user position", "error", err)
+	}
 
 	return c.JSON(http.StatusOK, cp)
 }
@@ -363,6 +375,10 @@ func (s *Server) handleSaveCheckpoint(c echo.Context) error {
 	ctx := c.Request().Context()
 	worldID := c.Param("worldID")
 
+	if _, err := requireUser(c); err != nil {
+		return err
+	}
+
 	var req struct {
 		CheckpointID string `json:"checkpoint_id"` //nolint:tagliatelle // matches frontend JSON
 		Name         string `json:"name"`
@@ -395,7 +411,12 @@ func (s *Server) handleLogStream(c echo.Context) error {
 	cpID := c.Param("cpID")
 	logType := c.Param("logType") // "build", "claude", "game-server"
 
-	logPath := filepath.Join(s.DataDir, "logs", "worlds", worldID, cpID, logType+".jsonl")
+	baseDir := filepath.Join(s.DataDir, "logs", "worlds")
+	logPath := filepath.Clean(filepath.Join(baseDir, worldID, cpID, logType+".jsonl"))
+	if !strings.HasPrefix(logPath, filepath.Clean(baseDir)+string(os.PathSeparator)) {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid path")
+	}
+
 	if _, err := os.Stat(logPath); os.IsNotExist(err) {
 		return echo.NewHTTPError(http.StatusNotFound, "log not found")
 	}
@@ -409,7 +430,12 @@ func (s *Server) handleWASMArtifacts(c echo.Context) error {
 	cpID := c.Param("cpID")
 	filePath := c.Param("*")
 
-	fullPath := filepath.Join(s.DataDir, "wasm-builds", worldID, cpID, filePath)
+	baseDir := filepath.Join(s.DataDir, "wasm-builds")
+	fullPath := filepath.Clean(filepath.Join(baseDir, worldID, cpID, filePath))
+	if !strings.HasPrefix(fullPath, filepath.Clean(baseDir)+string(os.PathSeparator)) {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid path")
+	}
+
 	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
 		return echo.NewHTTPError(http.StatusNotFound, "artifact not found")
 	}
@@ -417,8 +443,22 @@ func (s *Server) handleWASMArtifacts(c echo.Context) error {
 	return c.File(fullPath)
 }
 
+// hookSecretMiddleware validates the X-Hook-Secret header against CM_HOOK_SECRET.
+// If CM_HOOK_SECRET is not set, all requests are allowed.
+func hookSecretMiddleware() echo.MiddlewareFunc {
+	secret := os.Getenv("CM_HOOK_SECRET")
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			if secret != "" && c.Request().Header.Get("X-Hook-Secret") != secret {
+				return echo.NewHTTPError(http.StatusForbidden, "invalid hook secret")
+			}
+			return next(c)
+		}
+	}
+}
+
 // handleClaudeEvent receives JSONL events POSTed by Claude Code hook scripts.
-// This endpoint is unprotected (internal same-machine communication).
+// Protected by CM_HOOK_SECRET header when the env var is set.
 func (s *Server) handleClaudeEvent(c echo.Context) error {
 	var event map[string]any
 	if err := json.NewDecoder(c.Request().Body).Decode(&event); err != nil {
@@ -437,7 +477,7 @@ func (s *Server) handleClaudeEvent(c echo.Context) error {
 	}
 
 	// If claude stopped, trigger the build pipeline.
-	if eventType == "claude.session_stopped" && s.Orchestrator != nil {
+	if eventType == events.EventClaudeSessionStop && s.Orchestrator != nil {
 		go s.Orchestrator.BuildCheckpoint(worldID, cpID)
 	}
 
@@ -476,7 +516,7 @@ func (s *Server) handleChatMessage(c echo.Context) error {
 
 	if s.EventBus != nil {
 		s.EventBus.PublishGlobal(map[string]any{
-			"event":    "chat.message",
+			"event":    events.EventChatMessage,
 			"username": user.GitHubUsername,
 			"avatar":   user.AvatarURL.String,
 			"content":  input.ChatText,

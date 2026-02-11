@@ -28,6 +28,9 @@ func New(dbPath string) (*DB, error) {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
 
+	// SQLite performs best with a single writer connection.
+	sqlDB.SetMaxOpenConns(1)
+
 	ctx := context.Background()
 
 	// WAL mode for concurrent access from multiple goroutines.
@@ -62,14 +65,30 @@ func (d *DB) Close() error {
 	return d.db.Close()
 }
 
-// runMigrations executes all embedded SQL migration files.
+// BeginTx starts a new transaction.
+func (d *DB) BeginTx(ctx context.Context) (*sql.Tx, error) {
+	return d.db.BeginTx(ctx, nil)
+}
+
+// WithTx returns a Queries instance scoped to the given transaction.
+func (d *DB) WithTx(tx *sql.Tx) *sqlc.Queries {
+	return d.Queries.WithTx(tx)
+}
+
+// runMigrations executes all embedded SQL migration files in order.
 func (d *DB) runMigrations(ctx context.Context) error {
-	content, err := migrations.ReadFile("migrations/001_initial.sql")
-	if err != nil {
-		return fmt.Errorf("reading migration file: %w", err)
+	migrationFiles := []string{
+		"migrations/001_initial.sql",
+		"migrations/002_cascades_indexes.sql",
 	}
-	if _, err := d.db.ExecContext(ctx, string(content)); err != nil {
-		return fmt.Errorf("executing migration: %w", err)
+	for _, file := range migrationFiles {
+		content, err := migrations.ReadFile(file)
+		if err != nil {
+			return fmt.Errorf("reading %s: %w", file, err)
+		}
+		if _, err := d.db.ExecContext(ctx, string(content)); err != nil {
+			return fmt.Errorf("executing %s: %w", file, err)
+		}
 	}
 
 	return nil
@@ -92,9 +111,18 @@ func (d *DB) GetCheckpointAncestry(
 		cpMap[cp.ID] = cp
 	}
 
+	visited := make(map[string]bool, len(cpMap))
 	var ancestry []sqlc.Checkpoint
 	currentID := cpID
 	for currentID != "" {
+		if visited[currentID] {
+			return nil, fmt.Errorf(
+				"cycle detected at checkpoint %s in world %s",
+				currentID,
+				worldID,
+			)
+		}
+		visited[currentID] = true
 		cp, ok := cpMap[currentID]
 		if !ok {
 			return nil, fmt.Errorf(

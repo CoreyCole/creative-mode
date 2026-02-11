@@ -83,12 +83,28 @@ func (m *Manager) CreateWorld(
 		m.logger.Warn("failed to clone template build cache", "error", err)
 	}
 
-	if err := m.db.CreateWorld(ctx, sqlc.CreateWorldParams{
+	// DB inserts in a transaction.
+	worldDir := filepath.Join(m.dataDir, "worlds", worldID)
+	tx, txErr := m.db.BeginTx(ctx)
+	if txErr != nil {
+		_ = os.RemoveAll(worldDir)
+		return nil, fmt.Errorf("beginning transaction: %w", txErr)
+	}
+	defer func() {
+		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+			m.logger.Error("rollback failed", "error", rbErr)
+		}
+	}()
+
+	qtx := m.db.WithTx(tx)
+
+	if err := qtx.CreateWorld(ctx, sqlc.CreateWorldParams{
 		ID:          worldID,
 		Name:        name,
 		Description: sql.NullString{String: description, Valid: description != ""},
 		CreatedBy:   sql.NullString{String: userID, Valid: userID != ""},
 	}); err != nil {
+		_ = os.RemoveAll(worldDir)
 		return nil, fmt.Errorf("inserting world: %w", err)
 	}
 
@@ -98,22 +114,28 @@ func (m *Manager) CreateWorld(
 		Status:  "ready",
 		DirPath: cpDir,
 	}
-	if err := m.db.CreateCheckpoint(ctx, sqlc.CreateCheckpointParams{
+	if err := qtx.CreateCheckpoint(ctx, sqlc.CreateCheckpointParams{
 		ID:        cpID,
 		WorldID:   worldID,
 		Status:    "ready",
 		DirPath:   cpDir,
 		CreatedBy: sql.NullString{String: userID, Valid: userID != ""},
 	}); err != nil {
+		_ = os.RemoveAll(worldDir)
 		return nil, fmt.Errorf("inserting root checkpoint: %w", err)
 	}
 
-	if err := m.db.SetUserPosition(ctx, sqlc.SetUserPositionParams{
+	if err := qtx.SetUserPosition(ctx, sqlc.SetUserPositionParams{
 		UserID:       userID,
 		WorldID:      worldID,
 		CheckpointID: cpID,
 	}); err != nil {
 		m.logger.Error("failed to set initial user position", "error", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		_ = os.RemoveAll(worldDir)
+		return nil, fmt.Errorf("committing transaction: %w", err)
 	}
 
 	// Trigger initial build in background.
@@ -193,7 +215,21 @@ func (m *Manager) ForkCheckpoint(
 		m.logger.Warn("failed to clone build cache", "error", err)
 	}
 
-	if err := m.db.CreateCheckpoint(ctx, sqlc.CreateCheckpointParams{
+	// DB inserts in a transaction.
+	tx, txErr := m.db.BeginTx(ctx)
+	if txErr != nil {
+		_ = os.RemoveAll(newDir)
+		return nil, fmt.Errorf("beginning transaction: %w", txErr)
+	}
+	defer func() {
+		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+			m.logger.Error("rollback failed", "error", rbErr)
+		}
+	}()
+
+	qtx := m.db.WithTx(tx)
+
+	if err := qtx.CreateCheckpoint(ctx, sqlc.CreateCheckpointParams{
 		ID:                 newID,
 		WorldID:            worldID,
 		ParentCheckpointID: sql.NullString{String: sourceCPID, Valid: true},
@@ -202,21 +238,31 @@ func (m *Manager) ForkCheckpoint(
 		DirPath:            newDir,
 		CreatedBy:          sql.NullString{String: userID, Valid: userID != ""},
 	}); err != nil {
+		_ = os.RemoveAll(newDir)
 		return nil, fmt.Errorf("inserting checkpoint: %w", err)
 	}
 
-	_ = m.db.CreatePromptHistory(ctx, sqlc.CreatePromptHistoryParams{
+	if err := qtx.CreatePromptHistory(ctx, sqlc.CreatePromptHistoryParams{
 		ID:           uuid.New().String()[:8],
 		CheckpointID: newID,
 		WorldID:      worldID,
 		UserID:       userID,
 		PromptText:   prompt,
-	})
-	_ = m.db.SetUserPosition(ctx, sqlc.SetUserPositionParams{
+	}); err != nil {
+		m.logger.Error("failed to create prompt history", "error", err)
+	}
+	if err := qtx.SetUserPosition(ctx, sqlc.SetUserPositionParams{
 		UserID:       userID,
 		WorldID:      worldID,
 		CheckpointID: newID,
-	})
+	}); err != nil {
+		m.logger.Error("failed to set user position", "error", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		_ = os.RemoveAll(newDir)
+		return nil, fmt.Errorf("committing transaction: %w", err)
+	}
 
 	return &sqlc.Checkpoint{
 		ID:      newID,

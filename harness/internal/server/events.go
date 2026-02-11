@@ -9,6 +9,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/starfederation/datastar-go/datastar"
 
+	"creative-mode/harness/internal/events"
 	"creative-mode/harness/views/chat"
 )
 
@@ -17,42 +18,35 @@ const (
 	recentMessageLimit   = 50
 )
 
-// sseLogErr logs an SSE error to the browser console, falling
-// back to slog if the console message itself fails.
+// sseLogErr logs an SSE error server-side and attempts to forward it
+// to the browser console.
 func sseLogErr(
 	sse *datastar.ServerSentEventGenerator,
 	err error,
 	msg string,
 ) {
-	if cErr := sse.ConsoleError(err); cErr != nil {
-		slog.Error(msg, "err", err)
-	}
+	slog.Warn(msg, "err", err)
+	_ = sse.ConsoleError(err)
 }
 
 // ssePatchChat appends a templ component to #chat-log via SSE.
 func ssePatchChat(
 	sse *datastar.ServerSentEventGenerator,
 	component templ.Component,
-	errMsg string,
-) {
-	err := sse.PatchElementTempl(
+) error {
+	return sse.PatchElementTempl(
 		component,
 		datastar.WithSelectorID("chat-log"),
 		datastar.WithModeAppend(),
 	)
-	if err != nil {
-		sseLogErr(sse, err, errMsg)
-	}
 }
 
 // ssePatchSignals sends a signal update via SSE.
 func ssePatchSignals(
 	sse *datastar.ServerSentEventGenerator,
 	signals map[string]any,
-) {
-	if err := sse.MarshalAndPatchSignals(signals); err != nil {
-		sseLogErr(sse, err, "SSE signal error")
-	}
+) error {
+	return sse.MarshalAndPatchSignals(signals)
 }
 
 // handleWorldSSE streams global + world-specific events to the overlay.
@@ -82,7 +76,7 @@ func (s *Server) handleWorldSSE(c echo.Context) error {
 	// Announce player joined.
 	if user != nil {
 		s.EventBus.PublishGlobal(map[string]any{
-			"event":    "player.joined",
+			"event":    events.EventPlayerJoined,
 			"username": user.GitHubUsername,
 			"worldID":  worldID,
 		})
@@ -91,9 +85,13 @@ func (s *Server) handleWorldSSE(c echo.Context) error {
 	for {
 		select {
 		case event := <-globalCh:
-			s.handleGlobalEvent(sse, event)
+			if err := s.handleGlobalEvent(sse, event); err != nil {
+				return nil // Connection broken.
+			}
 		case event := <-worldCh:
-			s.handleWorldEvent(sse, event)
+			if err := s.handleWorldEvent(sse, event); err != nil {
+				return nil // Connection broken.
+			}
 		case <-heartbeat.C:
 			if err := sse.MarshalAndPatchSignals(map[string]any{}); err != nil {
 				return nil
@@ -101,7 +99,7 @@ func (s *Server) handleWorldSSE(c echo.Context) error {
 		case <-ctx.Done():
 			if user != nil {
 				s.EventBus.PublishGlobal(map[string]any{
-					"event":    "player.left",
+					"event":    events.EventPlayerLeft,
 					"username": user.GitHubUsername,
 					"worldID":  worldID,
 				})
@@ -133,7 +131,9 @@ func (s *Server) handleGlobalSSE(c echo.Context) error {
 	for {
 		select {
 		case event := <-globalCh:
-			s.handleGlobalEvent(sse, event)
+			if err := s.handleGlobalEvent(sse, event); err != nil {
+				return nil // Connection broken.
+			}
 		case <-heartbeat.C:
 			if err := sse.MarshalAndPatchSignals(map[string]any{}); err != nil {
 				return nil
@@ -149,10 +149,13 @@ func (s *Server) sendChatHistory(
 	sse *datastar.ServerSentEventGenerator,
 	ctx context.Context,
 ) error {
-	recentMsgs, _ := s.DB.GetRecentMessagesWithUser(
+	recentMsgs, err := s.DB.GetRecentMessagesWithUser(
 		ctx,
 		recentMessageLimit,
 	)
+	if err != nil {
+		slog.Error("failed to load chat history", "error", err)
+	}
 
 	for i := len(recentMsgs) - 1; i >= 0; i-- {
 		msg := recentMsgs[i]
@@ -187,102 +190,107 @@ func (s *Server) sendChatHistory(
 }
 
 // handleGlobalEvent processes a global event and sends SSE patches.
+// Returns an error if the SSE connection is broken.
 func (s *Server) handleGlobalEvent(
 	sse *datastar.ServerSentEventGenerator,
 	event any,
-) {
+) error {
 	e, ok := event.(map[string]any)
 	if !ok {
-		return
+		return nil
 	}
 
 	eventType, _ := e["event"].(string)
 
 	switch eventType {
-	case "chat.message":
+	case events.EventChatMessage:
 		username, _ := e["username"].(string)
 		avatar, _ := e["avatar"].(string)
 		content, _ := e["content"].(string)
 		ts, _ := e["ts"].(string)
-		ssePatchChat(
+		return ssePatchChat(
 			sse,
 			chat.Message(username, avatar, content, ts),
-			"SSE chat error",
 		)
-	case "player.joined":
+	case events.EventPlayerJoined:
 		username, _ := e["username"].(string)
-		ssePatchChat(
+		return ssePatchChat(
 			sse,
 			chat.SystemNotification(username+" joined"),
-			"SSE notification error",
 		)
-	case "player.left":
+	case events.EventPlayerLeft:
 		username, _ := e["username"].(string)
-		ssePatchChat(
+		return ssePatchChat(
 			sse,
 			chat.SystemNotification(username+" left"),
-			"SSE notification error",
 		)
 	}
+
+	return nil
 }
 
 // handleWorldEvent processes a world-specific event and sends SSE patches.
+// Returns an error if the SSE connection is broken.
 func (s *Server) handleWorldEvent(
 	sse *datastar.ServerSentEventGenerator,
 	event any,
-) {
+) error {
 	e, ok := event.(map[string]any)
 	if !ok {
-		return
+		return nil
 	}
 
 	eventType, _ := e["event"].(string)
 
 	switch eventType {
-	case "claude.tool_use.pre":
-		ssePatchSignals(
+	case events.EventClaudeToolUsePre:
+		return ssePatchSignals(
 			sse,
 			map[string]any{"build_status": "editing"},
 		)
-	case "claude.session_stopped":
-		ssePatchSignals(
+	case events.EventClaudeSessionStop:
+		return ssePatchSignals(
 			sse,
 			map[string]any{"build_status": "compiling"},
 		)
-	case "build.completed":
-		ssePatchSignals(
+	case events.EventBuildCompleted:
+		if err := ssePatchSignals(
 			sse,
 			map[string]any{"build_status": "ready"},
-		)
+		); err != nil {
+			return err
+		}
 
 		worldID, _ := e["worldID"].(string)
 		cpID, _ := e["cpID"].(string)
 		worldName, _ := e["worldName"].(string)
-		ssePatchChat(
+		return ssePatchChat(
 			sse,
 			chat.BuildReadyNotification(
 				worldID,
 				cpID,
 				worldName,
 			),
-			"SSE build notification error",
 		)
-	case "build.failed":
-		ssePatchSignals(
+	case events.EventBuildFailed:
+		if err := ssePatchSignals(
 			sse,
 			map[string]any{"build_status": "failed"},
-		)
+		); err != nil {
+			return err
+		}
 
 		errMsg, _ := e["error"].(string)
-		ssePatchChat(
+		return ssePatchChat(
 			sse,
 			chat.SystemNotification("Build failed: "+errMsg),
-			"SSE build error notification",
 		)
-	case "claude.rate_limited":
-		ssePatchSignals(
+	case events.EventClaudeRateLimited:
+		return ssePatchSignals(
 			sse,
 			map[string]any{"build_status": "rate_limited"},
 		)
 	}
+
+	return nil
 }

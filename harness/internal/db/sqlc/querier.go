@@ -18,9 +18,12 @@ type Querier interface {
 	CreateSession(ctx context.Context, arg CreateSessionParams) error
 	CreateWorld(ctx context.Context, arg CreateWorldParams) error
 	DeleteExpiredSessions(ctx context.Context) error
+	DeleteMessagesByUserID(ctx context.Context, userID sql.NullString) error
+	DeletePromptHistoryByUserID(ctx context.Context, userID string) error
 	DeleteSession(ctx context.Context, id string) error
 	DeleteSessionsByUserID(ctx context.Context, userID string) error
 	DeleteUser(ctx context.Context, id string) error
+	DeleteUserPositionsByUserID(ctx context.Context, userID string) error
 	GetCheckpoint(ctx context.Context, id string) (Checkpoint, error)
 	GetCheckpointTree(ctx context.Context, worldID string) ([]Checkpoint, error)
 	GetRecentMessagesByWorld(ctx context.Context, arg GetRecentMessagesByWorldParams) ([]Message, error)

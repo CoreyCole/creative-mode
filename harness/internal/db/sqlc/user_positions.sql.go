@@ -9,6 +9,15 @@ import (
 	"context"
 )
 
+const deleteUserPositionsByUserID = `-- name: DeleteUserPositionsByUserID :exec
+DELETE FROM user_positions WHERE user_id = ?
+`
+
+func (q *Queries) DeleteUserPositionsByUserID(ctx context.Context, userID string) error {
+	_, err := q.db.ExecContext(ctx, deleteUserPositionsByUserID, userID)
+	return err
+}
+
 const getUserPosition = `-- name: GetUserPosition :one
 SELECT checkpoint_id FROM user_positions
 WHERE user_id = ? AND world_id = ?

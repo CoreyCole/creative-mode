@@ -37,6 +37,15 @@ func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) er
 	return err
 }
 
+const deleteMessagesByUserID = `-- name: DeleteMessagesByUserID :exec
+DELETE FROM messages WHERE user_id = ?
+`
+
+func (q *Queries) DeleteMessagesByUserID(ctx context.Context, userID sql.NullString) error {
+	_, err := q.db.ExecContext(ctx, deleteMessagesByUserID, userID)
+	return err
+}
+
 const getRecentMessagesByWorld = `-- name: GetRecentMessagesByWorld :many
 SELECT id, type, user_id, world_id, checkpoint_id, content, created_at
 FROM messages WHERE world_id = ? ORDER BY created_at DESC LIMIT ?

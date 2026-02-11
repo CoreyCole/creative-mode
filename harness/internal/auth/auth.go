@@ -133,47 +133,9 @@ func (h *Handler) HandleCallback(c echo.Context) error {
 		return fmt.Errorf("checking existing user: %w", err)
 	}
 
-	var userID string
-	if err == nil {
-		// Existing user: update username/avatar, keep existing role.
-		userID = existingUser.ID
-		if upsertErr := h.db.UpsertUser(ctx, sqlc.UpsertUserParams{
-			ID:             existingUser.ID,
-			GitHubID:       ghUser.ID,
-			GitHubUsername: ghUser.Login,
-			AvatarURL: sql.NullString{
-				String: ghUser.AvatarURL,
-				Valid:  ghUser.AvatarURL != "",
-			},
-			Role: existingUser.Role,
-		}); upsertErr != nil {
-			return fmt.Errorf("updating user: %w", upsertErr)
-		}
-	} else {
-		// New user: determine role.
-		role := "pending"
-
-		count, countErr := h.db.CountUsers(ctx)
-		if countErr != nil {
-			return fmt.Errorf("counting users: %w", countErr)
-		}
-		if count == 0 {
-			role = "admin"
-		}
-
-		userID = uuid.New().String()
-		if upsertErr := h.db.UpsertUser(ctx, sqlc.UpsertUserParams{
-			ID:             userID,
-			GitHubID:       ghUser.ID,
-			GitHubUsername: ghUser.Login,
-			AvatarURL: sql.NullString{
-				String: ghUser.AvatarURL,
-				Valid:  ghUser.AvatarURL != "",
-			},
-			Role: role,
-		}); upsertErr != nil {
-			return fmt.Errorf("creating user: %w", upsertErr)
-		}
+	userID, err := h.resolveUser(ctx, ghUser, existingUser, err)
+	if err != nil {
+		return err
 	}
 
 	// Create session (32 bytes, hex-encoded = 64 chars).
@@ -204,6 +166,71 @@ func (h *Handler) HandleCallback(c echo.Context) error {
 	h.logger.Info("user logged in", "userID", userID, "github_username", ghUser.Login)
 
 	return c.Redirect(http.StatusTemporaryRedirect, "/")
+}
+
+// resolveUser creates or updates a user based on GitHub user info. Returns
+// the user ID. For new users, the first user gets the "admin" role atomically.
+func (h *Handler) resolveUser(
+	ctx context.Context,
+	ghUser *gitHubUser,
+	existingUser sqlc.User,
+	lookupErr error,
+) (string, error) {
+	avatar := sql.NullString{
+		String: ghUser.AvatarURL,
+		Valid:  ghUser.AvatarURL != "",
+	}
+
+	if lookupErr == nil {
+		// Existing user: update username/avatar, keep existing role.
+		if upsertErr := h.db.UpsertUser(ctx, sqlc.UpsertUserParams{
+			ID:             existingUser.ID,
+			GitHubID:       ghUser.ID,
+			GitHubUsername: ghUser.Login,
+			AvatarURL:      avatar,
+			Role:           existingUser.Role,
+		}); upsertErr != nil {
+			return "", fmt.Errorf("updating user: %w", upsertErr)
+		}
+
+		return existingUser.ID, nil
+	}
+
+	// New user: determine role atomically (prevents two admins on race).
+	role := "pending"
+
+	tx, txErr := h.db.BeginTx(ctx)
+	if txErr != nil {
+		return "", fmt.Errorf("begin tx: %w", txErr)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	qtx := h.db.WithTx(tx)
+
+	count, countErr := qtx.CountUsers(ctx)
+	if countErr != nil {
+		return "", fmt.Errorf("counting users: %w", countErr)
+	}
+	if count == 0 {
+		role = "admin"
+	}
+
+	userID := uuid.New().String()
+	if upsertErr := qtx.UpsertUser(ctx, sqlc.UpsertUserParams{
+		ID:             userID,
+		GitHubID:       ghUser.ID,
+		GitHubUsername: ghUser.Login,
+		AvatarURL:      avatar,
+		Role:           role,
+	}); upsertErr != nil {
+		return "", fmt.Errorf("creating user: %w", upsertErr)
+	}
+
+	if commitErr := tx.Commit(); commitErr != nil {
+		return "", fmt.Errorf("commit: %w", commitErr)
+	}
+
+	return userID, nil
 }
 
 // HandleLogout clears the session.
@@ -255,14 +282,26 @@ func (h *Handler) HandleApproveUser(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"status": "approved"})
 }
 
-// HandleRejectUser deletes a user and their sessions.
+// HandleRejectUser deletes a user and all their dependent records.
 func (h *Handler) HandleRejectUser(c echo.Context) error {
 	ctx := c.Request().Context()
 	userID := c.Param("userID")
 
+	// Delete all dependent records before the user.
 	if err := h.db.DeleteSessionsByUserID(ctx, userID); err != nil {
 		h.logger.Error("failed to delete user sessions", "error", err, "userID", userID)
 	}
+	if err := h.db.DeleteUserPositionsByUserID(ctx, userID); err != nil {
+		h.logger.Error("failed to delete user positions", "error", err, "userID", userID)
+	}
+	if err := h.db.DeletePromptHistoryByUserID(ctx, userID); err != nil {
+		h.logger.Error("failed to delete prompt history", "error", err, "userID", userID)
+	}
+	nullUserID := sql.NullString{String: userID, Valid: true}
+	if err := h.db.DeleteMessagesByUserID(ctx, nullUserID); err != nil {
+		h.logger.Error("failed to delete messages", "error", err, "userID", userID)
+	}
+
 	if err := h.db.DeleteUser(ctx, userID); err != nil {
 		return fmt.Errorf("deleting user: %w", err)
 	}

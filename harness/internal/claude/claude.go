@@ -75,11 +75,14 @@ func (o *Orchestrator) HandlePrompt(
 	// Create tmux session with CM_* env vars.
 	session := tmux.NewSession(worldID, cp.ID, cp.DirPath)
 	if err := session.Create(ctx, worldID, cp.ID, o.logsDir, o.harnessURL); err != nil {
+		o.markCheckpointFailed(ctx, cp.ID, "tmux session creation failed")
 		return nil, fmt.Errorf("creating tmux session: %w", err)
 	}
 
 	// Send prompt via --input-file.
 	if err := session.SendPrompt(ctx, prompt); err != nil {
+		_ = session.Kill()
+		o.markCheckpointFailed(ctx, cp.ID, "sending prompt failed")
 		return nil, fmt.Errorf("sending prompt: %w", err)
 	}
 
@@ -104,7 +107,7 @@ func (o *Orchestrator) BuildCheckpoint(worldID, cpID string) {
 	worldName := o.worldName(ctx, worldID)
 
 	// Notify: build started.
-	o.createAndPublishMessage(ctx, "build.started", worldID, cpID,
+	o.createAndPublishMessage(ctx, events.EventBuildStarted, worldID, cpID,
 		fmt.Sprintf("Building in %s...", worldName))
 
 	// Build (server binary + WASM client).
@@ -117,11 +120,11 @@ func (o *Orchestrator) BuildCheckpoint(worldID, cpID string) {
 			ID:       cpID,
 		})
 
-		o.createAndPublishMessage(ctx, "build.failed", worldID, cpID,
+		o.createAndPublishMessage(ctx, events.EventBuildFailed, worldID, cpID,
 			"Build failed: "+buildErr.Error())
 
 		o.eventBus.Publish(worldID, map[string]any{
-			"event":   "build.failed",
+			"event":   events.EventBuildFailed,
 			"worldID": worldID,
 			"cpID":    cpID,
 			"error":   buildErr.Error(),
@@ -156,13 +159,14 @@ func (o *Orchestrator) BuildCheckpoint(worldID, cpID string) {
 		promptSnippet = promptSnippet[:promptSnippetLen] + "..."
 	}
 
-	o.createAndPublishMessage(ctx, "build.completed", worldID, cpID,
+	o.createAndPublishMessage(ctx, events.EventBuildCompleted, worldID, cpID,
 		fmt.Sprintf("%s checkpoint ready: '%s'", worldName, promptSnippet))
 
 	o.eventBus.Publish(worldID, map[string]any{
-		"event":   "build.completed",
-		"worldID": worldID,
-		"cpID":    cpID,
+		"event":     events.EventBuildCompleted,
+		"worldID":   worldID,
+		"cpID":      cpID,
+		"worldName": worldName,
 	})
 }
 
@@ -199,6 +203,15 @@ func (o *Orchestrator) worldName(ctx context.Context, worldID string) string {
 	}
 
 	return w.Name
+}
+
+// markCheckpointFailed updates a checkpoint to "failed" status.
+func (o *Orchestrator) markCheckpointFailed(ctx context.Context, cpID, reason string) {
+	_, _ = o.db.UpdateCheckpointStatus(ctx, sqlc.UpdateCheckpointStatusParams{
+		Status:   "failed",
+		BuildLog: sql.NullString{String: reason, Valid: true},
+		ID:       cpID,
+	})
 }
 
 func truncate(s string, n int) string {

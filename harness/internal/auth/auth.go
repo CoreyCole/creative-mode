@@ -239,38 +239,6 @@ func (h *Handler) HandlePendingApproval(c echo.Context) error {
 	return pending.Page(user).Render(c.Request().Context(), c.Response().Writer)
 }
 
-// HandleAdminUsers returns all users for admin management.
-func (h *Handler) HandleAdminUsers(c echo.Context) error {
-	ctx := c.Request().Context()
-
-	users, err := h.db.ListUsers(ctx)
-	if err != nil {
-		return fmt.Errorf("listing users: %w", err)
-	}
-
-	type userResp struct {
-		ID       string `json:"id"`
-		Username string `json:"username"`
-		Avatar   string `json:"avatarURL"`
-		Role     string `json:"role"`
-	}
-	resp := make([]userResp, len(users))
-	for i, u := range users {
-		avatar := ""
-		if u.AvatarURL.Valid {
-			avatar = u.AvatarURL.String
-		}
-		resp[i] = userResp{
-			ID:       u.ID,
-			Username: u.GitHubUsername,
-			Avatar:   avatar,
-			Role:     u.Role,
-		}
-	}
-
-	return c.JSON(http.StatusOK, resp)
-}
-
 // HandleApproveUser promotes a pending user to "user" role.
 func (h *Handler) HandleApproveUser(c echo.Context) error {
 	ctx := c.Request().Context()

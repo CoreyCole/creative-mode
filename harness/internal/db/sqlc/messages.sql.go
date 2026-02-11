@@ -37,42 +37,6 @@ func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) er
 	return err
 }
 
-const getRecentMessages = `-- name: GetRecentMessages :many
-SELECT id, type, user_id, world_id, checkpoint_id, content, created_at
-FROM messages ORDER BY created_at DESC LIMIT ?
-`
-
-func (q *Queries) GetRecentMessages(ctx context.Context, limit int64) ([]Message, error) {
-	rows, err := q.db.QueryContext(ctx, getRecentMessages, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []Message{}
-	for rows.Next() {
-		var i Message
-		if err := rows.Scan(
-			&i.ID,
-			&i.Type,
-			&i.UserID,
-			&i.WorldID,
-			&i.CheckpointID,
-			&i.Content,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const getRecentMessagesByWorld = `-- name: GetRecentMessagesByWorld :many
 SELECT id, type, user_id, world_id, checkpoint_id, content, created_at
 FROM messages WHERE world_id = ? ORDER BY created_at DESC LIMIT ?

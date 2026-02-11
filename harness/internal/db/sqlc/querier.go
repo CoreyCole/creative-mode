@@ -23,7 +23,6 @@ type Querier interface {
 	DeleteUser(ctx context.Context, id string) error
 	GetCheckpoint(ctx context.Context, id string) (Checkpoint, error)
 	GetCheckpointTree(ctx context.Context, worldID string) ([]Checkpoint, error)
-	GetRecentMessages(ctx context.Context, limit int64) ([]Message, error)
 	GetRecentMessagesByWorld(ctx context.Context, arg GetRecentMessagesByWorldParams) ([]Message, error)
 	GetRecentMessagesWithUser(ctx context.Context, limit int64) ([]GetRecentMessagesWithUserRow, error)
 	GetSession(ctx context.Context, id string) (Session, error)

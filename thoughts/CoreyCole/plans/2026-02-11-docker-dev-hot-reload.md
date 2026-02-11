@@ -13,7 +13,7 @@ Add a hybrid development environment: **host (macOS) watches files** with native
 - **Working directory must be `harness/`** — `main.go:25-34` resolves `../data` and `../template` via relative paths
 - **CGo required** — `mattn/go-sqlite3` needs gcc (rules out Alpine)
 - **No Node.js toolchain** — just hand-written CSS and static JS (no bundler/Tailwind)
-- **All pages use `layout.Base()`** — single shared layout wrapping `{ children... }` (`views/layout/layout.templ:14-22`)
+- **Most pages use `layout.Base()`** — login, pending, admin, lobby use the shared layout (`views/layout/layout.templ:14-22`). **Exception**: `views/world/world.templ` constructs its own `<html>`/`<body>` and only uses `layout.Head()` for the `<head>` block — it needs a custom body structure for the fullscreen game iframe + overlay
 - **SSE connections exist** on lobby (`/events` in `lobby.templ:54`) and world pages (`/world/:id/events`)
 - **Datastar morph** is used for all UI updates — `PatchElementTempl`, `PatchElements`, `MarshalAndPatchSignals`
 - **Graceful shutdown** already implemented — `main.go:130-138` handles SIGTERM via `signal.NotifyContext`, calls `e.Shutdown()`, `main()` returns with exit code 0
@@ -26,7 +26,8 @@ Add a hybrid development environment: **host (macOS) watches files** with native
 | Relative path resolution | `main.go:25-34` — `filepath.Join("..", "data")` | WORKDIR must be `/app/harness`, mount at `/app` |
 | Port 8080 hard-coded | `main.go:142` | Single port, map via Docker |
 | `*_templ.go` gitignored | `.gitignore:8` | Host generates, propagates via bind mount |
-| All pages use `layout.Base()` | `views/layout/layout.templ:14-22` | Single place to add dev SSE element |
+| Most pages use `layout.Base()` | `views/layout/layout.templ:14-22` | Single place for most pages; `world.templ` needs refactoring |
+| World page bypasses `layout.Base()` | `views/world/world.templ:11-31` | Must refactor to use `layout.Base()` for dev SSE injection |
 | macOS Docker lacks inotify | VirtioFS limitation | Host watches files, not container |
 
 ## Desired End State
@@ -123,7 +124,7 @@ templ Base(title string) {
 
 New:
 ```go
-import "github.com/starfederation/datastar-go/datastar"
+import "creative-mode/harness/views/dsutil"
 
 templ Base(title string) {
 	<!DOCTYPE html>
@@ -131,7 +132,7 @@ templ Base(title string) {
 		@Head(title)
 		<body>
 			if isDevMode() {
-				<div id="dev-sse" data-on-load={ datastar.GetSSE("/dev/sse") }></div>
+				<div id="dev-sse" data-on-load={ dsutil.GetSSENoCancel("/dev/sse") }></div>
 			}
 			<div id="page-content">
 				{ children... }
@@ -141,9 +142,71 @@ templ Base(title string) {
 }
 ```
 
-`#dev-sse` is deliberately placed **outside** `#page-content` so the morph handler never touches it.
+**Notes:**
+- `#dev-sse` is deliberately placed **outside** `#page-content` so the morph handler never touches it.
+- Uses `dsutil.GetSSENoCancel` (not `datastar.GetSSE`) to prevent Datastar from canceling the dev SSE connection when other SSE actions fire (e.g., PostSSE for form submissions). This matches the pattern used by the world page's SSE connection.
 
-#### 2. Dev Mode Helper
+#### 2. World Page Refactor to Use `layout.Base()`
+**File**: `harness/views/world/world.templ`
+**Action**: Modify
+
+The world page currently bypasses `layout.Base()` and constructs its own `<html>`/`<body>`. It must be refactored to use `layout.Base()` so the `#page-content` wrapper and dev SSE element are injected consistently across all pages.
+
+Current:
+```go
+templ Page(w sqlc.World, cp sqlc.Checkpoint, user *sqlc.User, signals OverlaySignals, serverPort int, checkpoints []sqlc.Checkpoint) {
+	<!DOCTYPE html>
+	<html lang="en">
+		@layout.Head(w.Name)
+		<body>
+			if serverPort > 0 {
+				<iframe id="game-frame"
+					src={ fmt.Sprintf("/wasm/%s/%s/index.html?server_port=%d", w.ID, cp.ID, serverPort) }
+					class="game-iframe">
+				</iframe>
+			} else {
+				<iframe id="game-frame" class="game-iframe"></iframe>
+			}
+			<div id="harness-overlay"
+				data-signals={ templ.JSONString(signals) }
+				data-on-load={ dsutil.GetSSENoCancel(fmt.Sprintf("/world/%s/events", w.ID)) }>
+				@Overlay(w, cp, checkpoints)
+			</div>
+			<script src="/static/game-loader.js"></script>
+		</body>
+	</html>
+}
+```
+
+New:
+```go
+templ Page(w sqlc.World, cp sqlc.Checkpoint, user *sqlc.User, signals OverlaySignals, serverPort int, checkpoints []sqlc.Checkpoint) {
+	@layout.Base(w.Name) {
+		if serverPort > 0 {
+			<iframe id="game-frame"
+				src={ fmt.Sprintf("/wasm/%s/%s/index.html?server_port=%d", w.ID, cp.ID, serverPort) }
+				class="game-iframe">
+			</iframe>
+		} else {
+			<iframe id="game-frame" class="game-iframe"></iframe>
+		}
+		<div id="harness-overlay"
+			data-signals={ templ.JSONString(signals) }
+			data-on-load={ dsutil.GetSSENoCancel(fmt.Sprintf("/world/%s/events", w.ID)) }>
+			@Overlay(w, cp, checkpoints)
+		</div>
+		<script src="/static/game-loader.js"></script>
+	}
+}
+```
+
+**Notes:**
+- The iframe, overlay, and script tag become children of `layout.Base()`, which wraps them in `#page-content`.
+- The `#page-content` wrapper is a plain div — it won't affect the iframe's fullscreen `position: fixed` CSS since that's independent of DOM nesting.
+- The `<script src="/static/game-loader.js">` tag inside `#page-content` means it will re-execute on morph. For a dev tool this is fine — the game loader just sets up iframe communication and re-running it is harmless.
+- On dev morph after rebuild, the iframe src will be re-set, causing the WASM game to reload. This is desirable — the developer likely changed server-side code that affects WASM serving.
+
+#### 3. Dev Mode Helper
 **File**: `harness/views/layout/dev.go`
 **Action**: Create
 
@@ -158,7 +221,7 @@ func isDevMode() bool {
 }
 ```
 
-#### 3. Dev Server Endpoints
+#### 4. Dev Server Endpoints
 **File**: `harness/internal/server/dev.go`
 **Action**: Create
 
@@ -179,32 +242,40 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/starfederation/datastar-go/datastar"
+	"golang.org/x/net/html"
 )
 
-// devClients tracks open dev SSE connections for pushing events
-// without a server restart (e.g., CSS reload).
-var (
-	devMu      sync.Mutex
-	devClients = make(map[chan string]struct{})
-	rebuildMu  sync.Mutex
-)
-
-func addDevClient(ch chan string) {
-	devMu.Lock()
-	devClients[ch] = struct{}{}
-	devMu.Unlock()
+// devState holds dev hot-reload state. Initialized lazily when dev
+// routes are registered. Lives on the Server struct (not package-level)
+// to match the existing pattern for EventBus, etc.
+type devState struct {
+	mu       sync.Mutex
+	clients  map[chan string]struct{}
+	buildMu  sync.Mutex
 }
 
-func removeDevClient(ch chan string) {
-	devMu.Lock()
-	delete(devClients, ch)
-	devMu.Unlock()
+func newDevState() *devState {
+	return &devState{
+		clients: make(map[chan string]struct{}),
+	}
 }
 
-func broadcastToDevClients(msg string) {
-	devMu.Lock()
-	defer devMu.Unlock()
-	for ch := range devClients {
+func (d *devState) addClient(ch chan string) {
+	d.mu.Lock()
+	d.clients[ch] = struct{}{}
+	d.mu.Unlock()
+}
+
+func (d *devState) removeClient(ch chan string) {
+	d.mu.Lock()
+	delete(d.clients, ch)
+	d.mu.Unlock()
+}
+
+func (d *devState) broadcast(msg string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for ch := range d.clients {
 		select {
 		case ch <- msg:
 		default: // skip slow clients
@@ -223,8 +294,8 @@ func (s *Server) handleDevSSE(c echo.Context) error {
 
 	// Register this client for push events (CSS reload, etc.)
 	eventCh := make(chan string, 8)
-	addDevClient(eventCh)
-	defer removeDevClient(eventCh)
+	s.dev.addClient(eventCh)
+	defer s.dev.removeClient(eventCh)
 
 	// On (re)connect: morph the page content
 	s.devMorphPage(sse, r)
@@ -262,7 +333,13 @@ func (s *Server) devMorphPage(
 		return
 	}
 
-	internalURL := fmt.Sprintf("http://localhost:8080%s", refURL.Path)
+	// Use HARNESS_URL env var (same source as main.go) for the internal
+	// request, falling back to localhost:8080.
+	baseURL := os.Getenv("HARNESS_URL")
+	if baseURL == "" {
+		baseURL = "http://localhost:8080"
+	}
+	internalURL := baseURL + refURL.Path
 	if refURL.RawQuery != "" {
 		internalURL += "?" + refURL.RawQuery
 	}
@@ -284,12 +361,11 @@ func (s *Server) devMorphPage(
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	content, err := extractPageContent(resp.Body)
 	if err != nil {
+		s.Logger.Warn("dev: failed to extract page content", "error", err)
 		return
 	}
-
-	content := extractPageContent(string(body))
 	if content != "" {
 		_ = sse.PatchElements(
 			content,
@@ -304,14 +380,15 @@ func (s *Server) devMorphPage(
 // graceful restart via SIGTERM. Build failures leave the old server
 // running.
 func (s *Server) handleDevRebuild(c echo.Context) error {
-	if !rebuildMu.TryLock() {
+	if !s.dev.buildMu.TryLock() {
 		return c.JSON(http.StatusConflict,
 			map[string]string{"status": "already building"})
 	}
 
 	go func() {
-		defer rebuildMu.Unlock()
+		defer s.dev.buildMu.Unlock()
 
+		start := time.Now()
 		s.Logger.Info("dev: building new binary...")
 
 		cmd := exec.Command(
@@ -322,7 +399,8 @@ func (s *Server) handleDevRebuild(c echo.Context) error {
 
 		if output, err := cmd.CombinedOutput(); err != nil {
 			s.Logger.Error("dev: build failed",
-				"error", err, "output", string(output))
+				"error", err, "output", string(output),
+				"duration", time.Since(start))
 			return // old server keeps running
 		}
 
@@ -333,7 +411,8 @@ func (s *Server) handleDevRebuild(c echo.Context) error {
 			return
 		}
 
-		s.Logger.Info("dev: build succeeded, restarting")
+		s.Logger.Info("dev: build succeeded, restarting",
+			"duration", time.Since(start))
 
 		// Trigger existing graceful shutdown in main.go
 		p, _ := os.FindProcess(os.Getpid())
@@ -347,60 +426,88 @@ func (s *Server) handleDevRebuild(c echo.Context) error {
 // handleDevReloadStatic pushes a CSS/JS cache bust to all connected
 // dev SSE clients. No server restart needed.
 func (s *Server) handleDevReloadStatic(c echo.Context) error {
-	broadcastToDevClients("reload-static")
+	s.dev.broadcast("reload-static")
 	return c.JSON(http.StatusOK,
 		map[string]string{"status": "reloading"})
 }
 
-// extractPageContent extracts the innerHTML of the #page-content div.
-// Simple string-based extraction — works because we control the layout.
-func extractPageContent(html string) string {
-	marker := `id="page-content"`
-	idx := strings.Index(html, marker)
-	if idx == -1 {
-		return ""
+// extractPageContent uses golang.org/x/net/html to extract the
+// innerHTML of the #page-content div. This is robust against varying
+// page structures (nested divs, script tags, etc.) unlike string-based
+// parsing.
+func extractPageContent(body io.Reader) (string, error) {
+	doc, err := html.Parse(body)
+	if err != nil {
+		return "", fmt.Errorf("parse html: %w", err)
 	}
 
-	closeTag := strings.Index(html[idx:], ">")
-	if closeTag == -1 {
-		return ""
-	}
-	start := idx + closeTag + 1
-
-	bodyClose := strings.LastIndex(html, "</body>")
-	if bodyClose == -1 {
-		return strings.TrimSpace(html[start:])
-	}
-	divClose := strings.LastIndex(html[:bodyClose], "</div>")
-	if divClose == -1 || divClose < start {
-		return ""
+	node := findNodeByID(doc, "page-content")
+	if node == nil {
+		return "", nil
 	}
 
-	return strings.TrimSpace(html[start:divClose])
+	// Render all children (innerHTML) into a string.
+	var sb strings.Builder
+	for child := node.FirstChild; child != nil; child = child.NextSibling {
+		if err := html.Render(&sb, child); err != nil {
+			return "", fmt.Errorf("render child: %w", err)
+		}
+	}
+
+	return strings.TrimSpace(sb.String()), nil
+}
+
+// findNodeByID walks the HTML tree to find the element with the given id.
+func findNodeByID(n *html.Node, id string) *html.Node {
+	if n.Type == html.ElementNode {
+		for _, attr := range n.Attr {
+			if attr.Key == "id" && attr.Val == id {
+				return n
+			}
+		}
+	}
+	for child := n.FirstChild; child != nil; child = child.NextSibling {
+		if found := findNodeByID(child, id); found != nil {
+			return found
+		}
+	}
+	return nil
 }
 ```
 
 **Design decisions:**
+- **`devState` struct on Server**: Client tracking and build mutex live on the `Server` struct (via a `dev *devState` field) instead of package-level vars. This matches the existing pattern for `EventBus`, `WorldManager`, etc. and is testable.
+- **`golang.org/x/net/html` parser**: Replaces the fragile string-based `extractPageContent`. The old approach found the "last `</div>` before `</body>`" which broke on pages with non-div elements after `#page-content` (e.g., `<script>` tags in the world page). The HTML parser correctly walks the DOM tree and extracts children regardless of nesting structure.
+- **`HARNESS_URL` env var**: `devMorphPage` reads `HARNESS_URL` (same source as `main.go:109-112`) instead of hardcoding `localhost:8080`. Keeps the internal request URL consistent with the server's actual address.
+- **Build duration logging**: `handleDevRebuild` logs build duration to help developers understand the feedback loop latency.
 - **Zero-downtime rebuild**: `handleDevRebuild` builds `/tmp/harness-next` in the background while the old server keeps serving. Only after a successful build does it `Rename` + `SIGTERM`. Build failures are safe — old server keeps running.
-- **`rebuildMu.TryLock()`**: Prevents concurrent builds. Returns 409 Conflict if already building.
-- **`devClients` broadcast channel**: Allows `handleDevReloadStatic` to push events to all open dev SSE connections without a server restart. CSS changes go through this path — instant, no rebuild.
+- **`buildMu.TryLock()`**: Prevents concurrent builds. Returns 409 Conflict if already building.
 - **`devMorphPage` on SSE connect**: On each (re)connection (including after graceful restart), fetches the current page via internal HTTP request (forwarding cookies for auth), extracts `#page-content`, sends as Datastar morph.
 - **SIGTERM triggers existing graceful shutdown**: `main.go:130-138` already handles SIGTERM — drains connections, shuts down cleanly, `main()` returns with exit 0. The entrypoint loop then starts the new binary.
 
-#### 4. Route Registration
+#### 5. Server Struct + Route Registration
 **File**: `harness/internal/server/server.go`
 **Action**: Modify
 
-Add dev route registration in `RegisterRoutes`, gated behind `DEV_MODE`:
+Add `dev *devState` field to the `Server` struct and register dev routes in `RegisterRoutes`, gated behind `DEV_MODE`:
 
 ```go
+// Add field to Server struct:
+type Server struct {
+    // ... existing fields ...
+    dev *devState // nil when DEV_MODE is not set
+}
+
 // In RegisterRoutes, after static file serving and before health check:
 if os.Getenv("DEV_MODE") == "true" {
+    s.dev = newDevState()
     e.GET("/dev/sse", s.handleDevSSE)
     e.POST("/dev/rebuild", s.handleDevRebuild)
     e.POST("/dev/reload-static", s.handleDevReloadStatic)
 }
 ```
+
+The `dev` field is `nil` when `DEV_MODE` is not set, so no dev state is allocated in production. The dev handlers are only registered conditionally, so the nil field is never accessed.
 
 ### Success Criteria
 
@@ -409,8 +516,10 @@ if os.Getenv("DEV_MODE") == "true" {
 - [ ] `cd harness && just lint` passes
 
 #### Manual Verification:
-- [ ] `DEV_MODE=true go run .` — page source contains `id="dev-sse"` and `id="page-content"`
+- [ ] `DEV_MODE=true go run .` — lobby page source contains `id="dev-sse"` and `id="page-content"`
+- [ ] `DEV_MODE=true go run .` — world page source also contains `id="dev-sse"` and `id="page-content"` (verifies world.templ refactor)
 - [ ] Without `DEV_MODE` — page source has `id="page-content"` but NOT `id="dev-sse"`
+- [ ] World page iframe and overlay still render correctly after refactor (CSS unaffected)
 - [ ] `POST /dev/rebuild` returns 202, server rebuilds and restarts
 - [ ] `POST /dev/reload-static` returns 200, browser CSS refreshes
 - [ ] Concurrent rebuild requests return 409
@@ -580,18 +689,14 @@ down:
 watch:
     #!/usr/bin/env bash
     echo "Watching for file changes..."
-    fswatch -0 -r \
+    fswatch -0 -r --latency=0.3 \
         --include='\.templ$' \
         --include='\.go$' \
         --include='\.css$' \
+        --exclude='_templ\.go$' \
         --exclude='.*' \
         . | while IFS= read -r -d '' file; do
         case "$file" in
-            *_templ.go)
-                # Generated file — trigger rebuild
-                echo "  _templ.go changed: $file → rebuild"
-                curl -s -X POST http://localhost:8080/dev/rebuild > /dev/null &
-                ;;
             *.templ)
                 # Template source — regenerate, then rebuild
                 echo "  .templ changed: $file → generate + rebuild"
@@ -620,8 +725,9 @@ logs:
 
 **Design decisions:**
 - **`fswatch`**: macOS-native file watcher using FSEvents. Instant detection, no polling. Install via `brew install fswatch`.
-- **Three-tier routing**: `.templ` → generate + rebuild, `.go` → rebuild only, `.css` → reload static (no restart).
-- **`_templ.go` handling**: When templ generates a `_templ.go` file, the watcher sees it as a `.go` change and triggers rebuild. This is the natural flow: edit `.templ` → templ generates → watcher sees `_templ.go` → rebuild.
+- **`--latency=0.3`**: Batches rapid events (common with editor auto-save or format-on-save) into 300ms windows, reducing redundant rebuilds.
+- **`--exclude='_templ\.go$'`**: Prevents double rebuilds. Without this, editing a `.templ` file would trigger: (1) `.templ` case → `templ generate` + rebuild, then (2) the generated `_templ.go` change → another rebuild. The `--exclude` ensures only the `.templ` case fires. The `.templ` case already runs `templ generate` before triggering the rebuild, so the generated `_templ.go` is included in that build. If someone runs `templ generate` manually outside the watcher, the next hand-written `.go` edit will pick up the changes.
+- **Two-tier routing** (was three): `.templ` → generate + rebuild, `.go` → rebuild only, `.css` → reload static (no restart). The `_templ.go` tier was removed because it caused double rebuilds and is redundant with the `.templ` handler.
 - **`curl &`**: Non-blocking — watcher doesn't wait for rebuild to complete before processing the next change.
 - **`just live`**: Single command starts both Docker container and host watcher. `trap 'kill 0' EXIT` ensures both processes are killed on Ctrl+C.
 
@@ -694,8 +800,12 @@ No migration needed. All changes are additive:
 
 **Modified files:**
 - `harness/views/layout/layout.templ` — add `#page-content` wrapper + conditional dev SSE
-- `harness/internal/server/server.go` — register `/dev/sse`, `/dev/rebuild`, `/dev/reload-static`
+- `harness/views/world/world.templ` — refactor to use `layout.Base()` instead of custom `<html>`/`<body>`
+- `harness/internal/server/server.go` — add `dev *devState` field, register `/dev/sse`, `/dev/rebuild`, `/dev/reload-static`
 - `harness/justfile` — append `live`, `up`, `down`, `watch`, `shell`, `logs` recipes
+
+**New dependency:**
+- `golang.org/x/net/html` — already an indirect dependency (`golang.org/x/net v0.48.0` in `go.mod`), just needs a direct import for the HTML parser
 
 Existing workflows (`just dev`, `just generate`, `just build`, `just lint`) unchanged. The `#page-content` wrapper is always present (dev and prod). Dev SSE element only appears when `DEV_MODE=true`.
 

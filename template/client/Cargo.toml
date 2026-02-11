@@ -1,0 +1,15 @@
+[package]
+name = "client"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bevy = { workspace = true, features = ["3d"] }
+lightyear = { workspace = true }
+shared = { path = "../shared" }
+wasm-bindgen = { workspace = true }
+web-sys = { version = "0.3", features = ["Window", "Location", "UrlSearchParams", "Crypto"] }
+
+# getrandom v0.2 needs the "js" feature for WASM (v0.3 uses getrandom_backend cfg)
+[target.'cfg(target_family = "wasm")'.dependencies]
+getrandom_02 = { version = "0.2", features = ["js"], package = "getrandom" }

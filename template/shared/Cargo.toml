@@ -1,0 +1,15 @@
+[package]
+name = "shared"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bevy = { workspace = true, default-features = false, features = [
+    "bevy_state",
+    "bevy_log",
+    "serialize",
+    "bevy_asset",
+    "bevy_color",
+] }
+lightyear = { workspace = true }
+serde = { workspace = true }

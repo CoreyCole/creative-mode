@@ -1,0 +1,19 @@
+[workspace]
+members = ["shared", "server", "client"]
+resolver = "2"
+
+[workspace.dependencies]
+bevy = { version = "0.18", default-features = false }
+lightyear = { version = "0.26", features = [
+    "client",
+    "server",
+    "replication",
+    "prediction",
+    "interpolation",
+    "input_native",
+    "netcode",
+    "websocket",
+    "websocket_self_signed",
+] }
+serde = { version = "1", features = ["derive"] }
+wasm-bindgen = "=0.2.108"

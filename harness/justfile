@@ -1,0 +1,14 @@
+default:
+    @just --list
+
+dev:
+    go run .
+
+build:
+    go build -o harness .
+
+test:
+    go test ./...
+
+generate:
+    templ generate

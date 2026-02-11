@@ -1,0 +1,17 @@
+[package]
+name = "server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bevy = { workspace = true, default-features = false, features = [
+    "bevy_state",
+    "bevy_log",
+    "serialize",
+    "bevy_asset",
+    "bevy_color",
+    "multi_threaded",
+    "sysinfo_plugin",
+] }
+lightyear = { workspace = true }
+shared = { path = "../shared" }

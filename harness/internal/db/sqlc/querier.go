@@ -25,6 +25,7 @@ type Querier interface {
 	GetCheckpointTree(ctx context.Context, worldID string) ([]Checkpoint, error)
 	GetRecentMessages(ctx context.Context, limit int64) ([]Message, error)
 	GetRecentMessagesByWorld(ctx context.Context, arg GetRecentMessagesByWorldParams) ([]Message, error)
+	GetRecentMessagesWithUser(ctx context.Context, limit int64) ([]GetRecentMessagesWithUserRow, error)
 	GetSession(ctx context.Context, id string) (Session, error)
 	GetUserByGitHubID(ctx context.Context, githubID int64) (User, error)
 	GetUserByID(ctx context.Context, id string) (User, error)

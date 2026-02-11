@@ -1,0 +1,29 @@
+package world
+
+import "creative-mode/harness/internal/db/sqlc"
+
+templ CheckpointTree(checkpoints []sqlc.Checkpoint, currentCPID string, worldID string) {
+	<div class="checkpoint-tree" data-show="$show_checkpoint_tree">
+		<h3>Checkpoints</h3>
+		for _, cp := range checkpoints {
+			<div class={ "tree-node", templ.KV("tree-node-current", cp.ID == currentCPID) }>
+				<span class={ "status-dot", "status-" + cp.Status }></span>
+				if cp.Name.Valid {
+					<span class="node-name">{ cp.Name.String }</span>
+				} else if cp.Prompt.Valid {
+					<span class="node-prompt">{ TruncateStr(cp.Prompt.String, 40) }</span>
+				} else {
+					<span class="node-name">Root</span>
+				}
+				if cp.ID != currentCPID && cp.Status == "ready" {
+					<button class="btn btn-xs"
+						data-world-id={ worldID }
+						data-cp-id={ cp.ID }
+						data-on-click="loadCheckpoint(evt.target.dataset.worldId, evt.target.dataset.cpId)">
+						Load
+					</button>
+				}
+			</div>
+		}
+	</div>
+}

@@ -20,6 +20,7 @@ import (
 
 	"creative-mode/harness/internal/db"
 	"creative-mode/harness/internal/db/sqlc"
+	"creative-mode/harness/views/pending"
 )
 
 const (
@@ -233,11 +234,9 @@ func (h *Handler) HandlePendingApproval(c echo.Context) error {
 		return c.Redirect(http.StatusTemporaryRedirect, "/auth/github/login")
 	}
 
-	return c.JSON(http.StatusOK, map[string]string{
-		"status":   "pending",
-		"username": user.GitHubUsername,
-		"message":  "Your request to join has been submitted. An admin will approve your access.",
-	})
+	c.Response().Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	return pending.Page(user).Render(c.Request().Context(), c.Response().Writer)
 }
 
 // HandleAdminUsers returns all users for admin management.

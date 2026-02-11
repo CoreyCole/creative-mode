@@ -1,0 +1,69 @@
+package world
+
+import (
+	"fmt"
+	"creative-mode/harness/internal/db/sqlc"
+	"creative-mode/harness/views/chat"
+	"github.com/starfederation/datastar-go/datastar"
+)
+
+templ Overlay(w sqlc.World, cp sqlc.Checkpoint, user *sqlc.User) {
+	// Expanded state
+	<div class="overlay-expanded" data-show="$overlay_expanded">
+		@OverlayTopBar(w, cp, user)
+		<div class="overlay-middle">
+			<div class="game-area"></div>
+			@chat.ChatPanel()
+		</div>
+		@OverlayBottomBar(w)
+	</div>
+	// Minimized state
+	<div class="overlay-minimized" data-show="!$overlay_expanded">
+		<button data-on-click="$overlay_expanded = true; $unread_count = 0">
+			CM
+			<span class="badge" data-show="$unread_count > 0" data-text="$unread_count"></span>
+		</button>
+	</div>
+}
+
+templ OverlayTopBar(w sqlc.World, cp sqlc.Checkpoint, user *sqlc.User) {
+	<div class="overlay-bar overlay-top-bar">
+		<div class="top-bar-left">
+			<span class="brand">Creative Mode</span>
+			<span class="world-name">{ w.Name }</span>
+		</div>
+		<div class="top-bar-right">
+			<button class="btn btn-sm" data-on-click="$show_checkpoint_tree = !$show_checkpoint_tree">Tree</button>
+			<a href="/" class="btn btn-sm btn-muted">Lobby</a>
+			<button class="btn btn-sm btn-muted" data-on-click="$overlay_expanded = false">—</button>
+		</div>
+	</div>
+}
+
+templ OverlayBottomBar(w sqlc.World) {
+	<div class="overlay-bar overlay-bottom-bar">
+		<div class="prompt-bar">
+			<input placeholder="Describe what to build..."
+				data-bind-prompt_text
+				class="prompt-input"/>
+			<button class="btn btn-primary"
+				data-on-click={ datastar.PostSSE(fmt.Sprintf("/world/%s/prompt", w.ID)) }
+				data-indicator-fetching
+				data-attr-disabled="$fetching">
+				Build
+			</button>
+		</div>
+		<div class="status-bar">
+			<span class="build-status"
+				data-text="$build_status"
+				data-class="{
+					'status-idle': $build_status === 'idle',
+					'status-editing': $build_status === 'editing',
+					'status-compiling': $build_status === 'compiling',
+					'status-ready': $build_status === 'ready',
+					'status-failed': $build_status === 'failed',
+					'status-rate-limited': $build_status === 'rate_limited'
+				}"></span>
+		</div>
+	</div>
+}

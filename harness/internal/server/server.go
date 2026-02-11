@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/starfederation/datastar-go/datastar"
 
 	"creative-mode/harness/internal/auth"
 	"creative-mode/harness/internal/claude"
@@ -20,6 +22,11 @@ import (
 	"creative-mode/harness/internal/db/sqlc"
 	"creative-mode/harness/internal/events"
 	"creative-mode/harness/internal/world"
+	"creative-mode/harness/views/admin"
+	"creative-mode/harness/views/lobby"
+	"creative-mode/harness/views/login"
+	"creative-mode/harness/views/pending"
+	worldview "creative-mode/harness/views/world"
 )
 
 // Server holds application dependencies and registers HTTP routes.
@@ -36,6 +43,35 @@ type Server struct {
 // New creates a new Server with the given database and logger.
 func New(database *db.DB, logger *slog.Logger) *Server {
 	return &Server{DB: database, Logger: logger}
+}
+
+// handleRoot performs a soft session check and renders the appropriate page:
+// login (unauthenticated), pending (awaiting approval), or lobby (approved).
+func (s *Server) handleRoot(c echo.Context) error {
+	cookie, err := c.Cookie("session")
+	if err != nil || cookie.Value == "" {
+		return render(c, login.Page())
+	}
+
+	ctx := c.Request().Context()
+
+	session, err := s.DB.GetSession(ctx, cookie.Value)
+	if err != nil {
+		return render(c, login.Page())
+	}
+
+	user, err := s.DB.GetUserByID(ctx, session.UserID)
+	if err != nil {
+		return render(c, login.Page())
+	}
+
+	if user.Role == "pending" {
+		return render(c, pending.Page(&user))
+	}
+
+	worlds, _ := s.DB.ListWorlds(ctx)
+
+	return render(c, lobby.Page(&user, worlds))
 }
 
 // RegisterRoutes configures middleware and registers all HTTP routes on the
@@ -65,6 +101,9 @@ func (s *Server) RegisterRoutes(e *echo.Echo) {
 	// Claude hook event endpoint (unprotected — internal same-machine communication).
 	e.POST("/api/claude-event", s.handleClaudeEvent)
 
+	// Root route — soft session check renders login/pending/lobby.
+	e.GET("/", s.handleRoot)
+
 	// Auth routes (no auth middleware).
 	if s.AuthHandler == nil {
 		return
@@ -85,14 +124,17 @@ func (s *Server) RegisterRoutes(e *echo.Echo) {
 	// WASM artifact serving (approved users).
 	approved.GET("/wasm/:worldID/:cpID/*", s.handleWASMArtifacts)
 
+	// SSE event stream (approved users — lobby).
+	approved.GET("/events", s.handleGlobalSSE)
+
 	// Chat (approved users).
 	approved.POST("/api/chat", s.handleChatMessage)
 
 	// Admin only.
-	admin := authed.Group("/admin", auth.AdminMiddleware())
-	admin.GET("/users", s.AuthHandler.HandleAdminUsers)
-	admin.POST("/users/:userID/approve", s.AuthHandler.HandleApproveUser)
-	admin.POST("/users/:userID/reject", s.AuthHandler.HandleRejectUser)
+	adminGroup := authed.Group("/admin", auth.AdminMiddleware())
+	adminGroup.GET("/users", s.handleAdminUsers)
+	adminGroup.POST("/users/:userID/approve", s.AuthHandler.HandleApproveUser)
+	adminGroup.POST("/users/:userID/reject", s.AuthHandler.HandleRejectUser)
 }
 
 // registerWorldRoutes adds world management endpoints to the approved group.
@@ -103,6 +145,8 @@ func (s *Server) registerWorldRoutes(approved *echo.Group) {
 	w := approved.Group("/world")
 	w.POST("/create", s.handleCreateWorld)
 	w.GET("/:worldID", s.handleWorldView)
+	w.GET("/:worldID/events", s.handleWorldSSE)
+	w.GET("/:worldID/lineage/:cpID", s.handleLineage)
 	w.GET("/:worldID/checkpoint/:cpID", s.handleCheckpointView)
 	w.POST("/:worldID/prompt", s.handlePrompt)
 	w.POST("/:worldID/checkpoint", s.handleSaveCheckpoint)
@@ -155,13 +199,12 @@ func (s *Server) handleCreateWorld(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create world")
 	}
 
-	return c.JSON(http.StatusCreated, map[string]string{
-		"id":   w.ID,
-		"name": w.Name,
-	})
+	sse := datastar.NewSSE(c.Response().Writer, c.Request())
+
+	return sse.ExecuteScript(fmt.Sprintf("window.location.href='/world/%s'", w.ID))
 }
 
-// handleWorldView returns world info and the user's current position.
+// handleWorldView renders the game iframe with overlay for a world.
 func (s *Server) handleWorldView(c echo.Context) error {
 	ctx := c.Request().Context()
 
@@ -176,24 +219,33 @@ func (s *Server) handleWorldView(c echo.Context) error {
 		if errors.Is(err, sql.ErrNoRows) {
 			return echo.NewHTTPError(http.StatusNotFound, "world not found")
 		}
+
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get world")
 	}
 
 	cpID, _ := s.WorldManager.GetUserPosition(ctx, user.ID, worldID)
-
-	checkpoints, err := s.WorldManager.GetCheckpointTree(ctx, worldID)
-	if err != nil {
-		return echo.NewHTTPError(
-			http.StatusInternalServerError,
-			"failed to get checkpoints",
-		)
+	if cpID == "" {
+		checkpoints, _ := s.WorldManager.GetCheckpointTree(ctx, worldID)
+		if len(checkpoints) > 0 {
+			cpID = checkpoints[0].ID
+		}
 	}
 
-	return c.JSON(http.StatusOK, map[string]any{
-		"world":              w,
-		"current_checkpoint": cpID,
-		"checkpoints":        checkpoints,
-	})
+	cp, err := s.DB.GetCheckpoint(ctx, cpID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "checkpoint not found")
+	}
+
+	// Read server port from DB — already stored by BuildCheckpoint.
+	// Do NOT call GameServers.Connect here — no matching Disconnect would leak refcounts.
+	serverPort := 0
+	if cp.ServerPort.Valid {
+		serverPort = int(cp.ServerPort.Int64)
+	}
+
+	signals := worldview.DefaultOverlaySignals(worldID, cpID)
+
+	return render(c, worldview.Page(w, cp, user, signals, serverPort))
 }
 
 // handleCheckpointView updates the user's position and returns checkpoint info.
@@ -229,33 +281,38 @@ func (s *Server) handlePrompt(c echo.Context) error {
 	}
 	worldID := c.Param("worldID")
 
-	var req struct {
-		Prompt       string `json:"prompt"`
-		CheckpointID string `json:"checkpoint_id"` //nolint:tagliatelle // matches frontend JSON
+	var input struct {
+		PromptText          string `json:"prompt_text"`           //nolint:tagliatelle // Datastar signal name
+		CurrentCheckpointID string `json:"current_checkpoint_id"` //nolint:tagliatelle // Datastar signal name
 	}
-	if err := c.Bind(&req); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
+	if err := datastar.ReadSignals(c.Request(), &input); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid signals")
 	}
-	if req.Prompt == "" || req.CheckpointID == "" {
+	if input.PromptText == "" || input.CurrentCheckpointID == "" {
 		return echo.NewHTTPError(
 			http.StatusBadRequest,
-			"prompt and checkpoint_id are required",
+			"prompt_text and current_checkpoint_id are required",
 		)
 	}
 
+	sse := datastar.NewSSE(c.Response().Writer, c.Request())
+
 	// Use Orchestrator if available (launches Claude Code in tmux).
 	if s.Orchestrator != nil {
-		cp, promptErr := s.Orchestrator.HandlePrompt(
+		_, promptErr := s.Orchestrator.HandlePrompt(
 			ctx,
 			worldID,
-			req.CheckpointID,
-			req.Prompt,
+			input.CurrentCheckpointID,
+			input.PromptText,
 			user.ID,
 		)
 		if promptErr != nil {
 			var rateLimitErr *world.RateLimitError
 			if errors.As(promptErr, &rateLimitErr) {
-				return echo.NewHTTPError(http.StatusTooManyRequests, promptErr.Error())
+				return sse.MarshalAndPatchSignals(map[string]any{
+					"build_status": "rate_limited",
+					"prompt_text":  "",
+				})
 			}
 			s.Logger.Error("failed to handle prompt", "error", promptErr)
 
@@ -265,24 +322,27 @@ func (s *Server) handlePrompt(c echo.Context) error {
 			)
 		}
 
-		return c.JSON(http.StatusCreated, map[string]string{
-			"checkpoint_id": cp.ID,
-			"status":        cp.Status,
+		return sse.MarshalAndPatchSignals(map[string]any{
+			"build_status": "editing",
+			"prompt_text":  "",
 		})
 	}
 
 	// Fallback: fork-only (no Claude session).
-	cp, forkErr := s.WorldManager.ForkCheckpoint(
+	_, forkErr := s.WorldManager.ForkCheckpoint(
 		ctx,
 		worldID,
-		req.CheckpointID,
-		req.Prompt,
+		input.CurrentCheckpointID,
+		input.PromptText,
 		user.ID,
 	)
 	if forkErr != nil {
 		var rateLimitErr *world.RateLimitError
 		if errors.As(forkErr, &rateLimitErr) {
-			return echo.NewHTTPError(http.StatusTooManyRequests, forkErr.Error())
+			return sse.MarshalAndPatchSignals(map[string]any{
+				"build_status": "rate_limited",
+				"prompt_text":  "",
+			})
 		}
 		s.Logger.Error("failed to fork checkpoint", "error", forkErr)
 
@@ -292,9 +352,9 @@ func (s *Server) handlePrompt(c echo.Context) error {
 		)
 	}
 
-	return c.JSON(http.StatusCreated, map[string]string{
-		"checkpoint_id": cp.ID,
-		"status":        cp.Status,
+	return sse.MarshalAndPatchSignals(map[string]any{
+		"build_status": "editing",
+		"prompt_text":  "",
 	})
 }
 
@@ -393,18 +453,21 @@ func (s *Server) handleChatMessage(c echo.Context) error {
 		return err
 	}
 
-	var body struct {
-		Content string `json:"content"`
+	var input struct {
+		ChatText string `json:"chat_text"` //nolint:tagliatelle // Datastar signal name
 	}
-	if err := c.Bind(&body); err != nil || body.Content == "" {
-		return c.NoContent(http.StatusBadRequest)
+	if err := datastar.ReadSignals(c.Request(), &input); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid signals")
+	}
+	if input.ChatText == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "empty message")
 	}
 
 	if err := s.DB.CreateMessage(ctx, sqlc.CreateMessageParams{
 		ID:      uuid.New().String()[:8],
 		Type:    "chat",
 		UserID:  sql.NullString{String: user.ID, Valid: true},
-		Content: body.Content,
+		Content: input.ChatText,
 	}); err != nil {
 		s.Logger.Error("failed to persist chat message", "error", err)
 
@@ -416,10 +479,38 @@ func (s *Server) handleChatMessage(c echo.Context) error {
 			"event":    "chat.message",
 			"username": user.GitHubUsername,
 			"avatar":   user.AvatarURL.String,
-			"content":  body.Content,
-			"ts":       time.Now().UTC().Format(time.RFC3339),
+			"content":  input.ChatText,
+			"ts":       time.Now().UTC().Format("15:04"),
 		})
 	}
 
-	return c.NoContent(http.StatusOK)
+	sse := datastar.NewSSE(c.Response().Writer, c.Request())
+
+	return sse.MarshalAndPatchSignals(map[string]any{"chat_text": ""})
+}
+
+// handleLineage renders the checkpoint ancestry from root to the given checkpoint.
+func (s *Server) handleLineage(c echo.Context) error {
+	ctx := c.Request().Context()
+	worldID := c.Param("worldID")
+	cpID := c.Param("cpID")
+
+	ancestry, err := s.DB.GetCheckpointAncestry(ctx, worldID, cpID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get lineage")
+	}
+
+	return render(c, worldview.Lineage(ancestry))
+}
+
+// handleAdminUsers renders the admin user management page.
+func (s *Server) handleAdminUsers(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	users, err := s.DB.ListUsers(ctx)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to list users")
+	}
+
+	return render(c, admin.Page(users))
 }

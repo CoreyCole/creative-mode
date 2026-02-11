@@ -1,0 +1,67 @@
+package lobby
+
+import (
+	"creative-mode/harness/internal/db/sqlc"
+	"creative-mode/harness/views/layout"
+	"github.com/starfederation/datastar-go/datastar"
+)
+
+templ Page(user *sqlc.User, worlds []sqlc.World) {
+	@layout.Base("Lobby") {
+		<div class="lobby"
+			data-signals={ templ.JSONString(DefaultLobbySignals()) }>
+			<header class="lobby-header">
+				<h1>Creative Mode</h1>
+				<div class="user-info">
+					if user.AvatarURL.Valid {
+						<img src={ user.AvatarURL.String } class="avatar-sm" alt=""/>
+					}
+					<span>{ user.GitHubUsername }</span>
+					if user.Role == "admin" {
+						<a href="/admin/users" class="btn btn-sm">Admin</a>
+					}
+					<form method="POST" action="/auth/logout" style="display:inline">
+						<button type="submit" class="btn btn-sm btn-muted">Logout</button>
+					</form>
+				</div>
+			</header>
+			<div class="lobby-content">
+				<div class="worlds-panel">
+					<h2>Worlds</h2>
+					<div class="world-list">
+						for _, w := range worlds {
+							<a href={ templ.SafeURL("/world/" + w.ID) } class="world-card">
+								<h3>{ w.Name }</h3>
+								if w.Description.Valid {
+									<p>{ w.Description.String }</p>
+								}
+							</a>
+						}
+					</div>
+					<form class="create-world-form">
+						<input name="name" placeholder="World name" required/>
+						<input name="description" placeholder="Description (optional)"/>
+						<button type="submit"
+							data-on-click={ datastar.PostSSE("/world/create") + "; evt.preventDefault()" }
+							data-indicator-fetching
+							data-attr-disabled="$fetching">
+							Create World
+						</button>
+					</form>
+				</div>
+				<div class="chat-panel" id="chat-panel"
+					data-on-load={ datastar.GetSSE("/events") }>
+					<h3>Global Chat</h3>
+					<div id="chat-log" class="message-log"></div>
+					<div class="chat-input-bar">
+						<input placeholder="Type a message..."
+							data-bind-chat_text/>
+						<button data-on-click={ datastar.PostSSE("/api/chat") }
+							data-indicator-fetching
+							data-attr-disabled="$fetching">Send</button>
+					</div>
+				</div>
+			</div>
+		</div>
+	}
+}

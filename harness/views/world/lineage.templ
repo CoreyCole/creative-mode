@@ -1,0 +1,38 @@
+package world
+
+import (
+	"creative-mode/harness/internal/db/sqlc"
+	"fmt"
+)
+
+templ Lineage(ancestry []sqlc.Checkpoint) {
+	for _, cp := range ancestry {
+		<div class="lineage-entry">
+			<div class="lineage-header">
+				<span class="cp-id">[{ TruncateStr(cp.ID, 8) }]</span>
+				if cp.Prompt.Valid {
+					<span class="prompt">"{ TruncateStr(cp.Prompt.String, 60) }"</span>
+				} else {
+					<span class="prompt">Starter template</span>
+				}
+				<time class="ts">{ TimeAgo(cp.CreatedAt) }</time>
+			</div>
+			if cp.WorkSummary.Valid {
+				<div class="lineage-summary">
+					<span class="claude-label">Claude:</span>
+					{ cp.WorkSummary.String }
+					if cp.FilesChanged.Valid {
+						<div class="files-changed">Files: { cp.FilesChanged.String }</div>
+					}
+					<div class="build-result">
+						Build: { cp.Status }
+						if cp.BuildDurationMs.Valid {
+							({ fmt.Sprintf("%dms", cp.BuildDurationMs.Int64) })
+						}
+					</div>
+				</div>
+			}
+		</div>
+	}
+	<div class="lineage-cursor">you are here</div>
+}

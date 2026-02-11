@@ -8,6 +8,7 @@ package sqlc
 import (
 	"context"
 	"database/sql"
+	"time"
 )
 
 const createMessage = `-- name: CreateMessage :exec
@@ -99,6 +100,59 @@ func (q *Queries) GetRecentMessagesByWorld(ctx context.Context, arg GetRecentMes
 			&i.CheckpointID,
 			&i.Content,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getRecentMessagesWithUser = `-- name: GetRecentMessagesWithUser :many
+SELECT m.id, m.type, m.user_id, m.world_id, m.checkpoint_id, m.content, m.created_at,
+       u.github_username, u.avatar_url
+FROM messages m
+LEFT JOIN users u ON m.user_id = u.id
+ORDER BY m.created_at DESC LIMIT ?
+`
+
+type GetRecentMessagesWithUserRow struct {
+	ID             string
+	Type           string
+	UserID         sql.NullString
+	WorldID        sql.NullString
+	CheckpointID   sql.NullString
+	Content        string
+	CreatedAt      time.Time
+	GitHubUsername sql.NullString
+	AvatarURL      sql.NullString
+}
+
+func (q *Queries) GetRecentMessagesWithUser(ctx context.Context, limit int64) ([]GetRecentMessagesWithUserRow, error) {
+	rows, err := q.db.QueryContext(ctx, getRecentMessagesWithUser, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetRecentMessagesWithUserRow{}
+	for rows.Next() {
+		var i GetRecentMessagesWithUserRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Type,
+			&i.UserID,
+			&i.WorldID,
+			&i.CheckpointID,
+			&i.Content,
+			&i.CreatedAt,
+			&i.GitHubUsername,
+			&i.AvatarURL,
 		); err != nil {
 			return nil, err
 		}

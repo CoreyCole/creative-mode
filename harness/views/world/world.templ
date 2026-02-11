@@ -1,0 +1,34 @@
+package world
+
+import (
+	"fmt"
+	"creative-mode/harness/internal/db/sqlc"
+)
+
+templ Page(w sqlc.World, cp sqlc.Checkpoint, user *sqlc.User, signals OverlaySignals, serverPort int) {
+	<!DOCTYPE html>
+	<html lang="en">
+		<head>
+			<meta charset="UTF-8"/>
+			<title>{ w.Name } — Creative Mode</title>
+			<script type="module" defer src="/static/datastar.js"></script>
+			<link rel="stylesheet" href="/static/styles.css"/>
+		</head>
+		<body>
+			if serverPort > 0 {
+				<iframe id="game-frame"
+					src={ fmt.Sprintf("/wasm/%s/%s/index.html?server_port=%d", w.ID, cp.ID, serverPort) }
+					class="game-iframe">
+				</iframe>
+			} else {
+				<iframe id="game-frame" class="game-iframe"></iframe>
+			}
+			<div id="harness-overlay"
+				data-signals={ templ.JSONString(signals) }
+				data-on-load={ fmt.Sprintf("@get('/world/%s/events',{requestCancellation: 'disabled'})", w.ID) }>
+				@Overlay(w, cp, user)
+			</div>
+			<script src="/static/game-loader.js"></script>
+		</body>
+	</html>
+}

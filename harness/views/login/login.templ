@@ -1,0 +1,13 @@
+package login
+
+import "creative-mode/harness/views/layout"
+
+templ Page() {
+	@layout.Base("Login") {
+		<div class="login-container">
+			<h1>Creative Mode</h1>
+			<p>Collaborative game development with AI</p>
+			<a href="/auth/github/login" class="btn btn-primary">Sign in with GitHub</a>
+		</div>
+	}
+}

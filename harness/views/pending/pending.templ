@@ -1,0 +1,18 @@
+package pending
+
+import (
+	"creative-mode/harness/internal/db/sqlc"
+	"creative-mode/harness/views/layout"
+)
+
+templ Page(user *sqlc.User) {
+	@layout.Base("Pending Approval") {
+		<div class="pending-container">
+			if user.AvatarURL.Valid {
+				<img src={ user.AvatarURL.String } class="avatar" alt="avatar"/>
+			}
+			<h2>Welcome, { user.GitHubUsername }</h2>
+			<p>Your request to join has been submitted. An admin will approve your access.</p>
+		</div>
+	}
+}

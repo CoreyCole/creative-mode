@@ -22,3 +22,58 @@ fmt:
 
 lint:
     golangci-lint run ./...
+
+# --- Development (Docker + Host Watcher) ---
+
+# Start everything: Docker container + host file watcher
+live:
+    #!/usr/bin/env bash
+    trap 'kill 0' EXIT
+    just -f {{justfile()}} up &
+    sleep 5  # wait for container to be ready
+    just -f {{justfile()}} watch &
+    wait
+
+# Start Docker container
+up:
+    docker compose up --build
+
+# Stop Docker container
+down:
+    docker compose down
+
+# Host-side file watcher (native FSEvents, no polling)
+watch:
+    #!/usr/bin/env bash
+    echo "Watching for file changes..."
+    fswatch -0 -r --latency=0.3 \
+        --include='\.templ$' \
+        --include='\.go$' \
+        --include='\.css$' \
+        --exclude='_templ\.go$' \
+        --exclude='.*' \
+        . | while IFS= read -r -d '' file; do
+        case "$file" in
+            *.templ)
+                echo "  .templ changed: $file → generate + rebuild"
+                templ generate 2>&1 | tail -1
+                curl -s -X POST http://localhost:8080/dev/rebuild > /dev/null &
+                ;;
+            *.go)
+                echo "  .go changed: $file → rebuild"
+                curl -s -X POST http://localhost:8080/dev/rebuild > /dev/null &
+                ;;
+            *.css)
+                echo "  .css changed: $file → reload static"
+                curl -s -X POST http://localhost:8080/dev/reload-static > /dev/null &
+                ;;
+        esac
+    done
+
+# Open a shell in the running container
+shell:
+    docker compose exec harness bash
+
+# Show container logs
+logs:
+    docker compose logs -f harness

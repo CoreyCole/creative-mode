@@ -12,8 +12,14 @@ fmt:
 harness:
     cd harness && just dev
 
+# Install playwright-cli for autonomous browser debugging
+setup-playwright:
+    npm install -g @playwright/cli@latest
+    playwright-cli install
+
 setup:
     ./scripts/setup.sh
+    just setup-playwright
 
 sync-thoughts:
     ./scripts/sync-thoughts.sh

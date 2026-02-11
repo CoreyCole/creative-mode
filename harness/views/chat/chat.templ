@@ -6,11 +6,11 @@ import "creative-mode/harness/views/shared"
 templ ChatPanel() {
 	<div class="chat-panel">
 		<div class="tab-bar">
-			<button data-on-click={ CE.SelectTab("global") }
+			<button data-on:click={ CE.SelectTab("global") }
 				data-class={ CE.TabActiveClass("global") }>Global</button>
-			<button data-on-click={ CE.SelectTab("world") }
+			<button data-on:click={ CE.SelectTab("world") }
 				data-class={ CE.TabActiveClass("world") }>World</button>
-			<button data-on-click={ CE.SelectLineageTab() }
+			<button data-on:click={ CE.SelectLineageTab() }
 				data-class={ CE.TabActiveClass("lineage") }>Lineage</button>
 		</div>
 		<div id="chat-log" class="message-log"></div>

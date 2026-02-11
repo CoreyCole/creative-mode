@@ -195,8 +195,8 @@ func (s *Server) handleCreateWorld(c echo.Context) error {
 	}
 
 	var req struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
+		Name        string `json:"name"        form:"name"`
+		Description string `json:"description" form:"description"`
 	}
 	if bindErr := c.Bind(&req); bindErr != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request")

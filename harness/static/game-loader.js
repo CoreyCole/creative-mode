@@ -4,7 +4,7 @@ window.loadCheckpoint = function(worldID, checkpointID) {
 };
 
 // loadLineage fetches the checkpoint ancestry and renders it into the lineage view.
-// Called from data-on-click="loadLineage($current_world_id, $current_checkpoint_id)"
+// Called from data-on:click="loadLineage($current_world_id, $current_checkpoint_id)"
 // so signal values are passed as arguments (not read from stale DOM attributes).
 window.loadLineage = function(worldID, cpID) {
     if (!worldID || !cpID) return;

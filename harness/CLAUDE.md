@@ -193,16 +193,20 @@ if err := datastar.ReadSignals(r, &signals); err != nil {
 ### Templ Helpers for Client Attributes
 
 ```go
-// In .templ files — generate data-on-click/data-on-load expressions
+// In .templ files — generate data-on:click/data-init expressions
 datastar.GetSSE("/path")     // GET SSE request
 datastar.PostSSE("/path")    // POST SSE request
 datastar.PutSSE("/path")     // PUT SSE request
 datastar.DeleteSSE("/path")  // DELETE SSE request
 
 // Usage:
-<button data-on-click={ datastar.PostSSE("/api/chat") }>Send</button>
-<div data-on-load={ datastar.GetSSE("/world/abc/events") }></div>
+<button data-on:click={ datastar.PostSSE("/api/chat") }>Send</button>
+<div data-init={ datastar.GetSSE("/world/abc/events") }></div>
 ```
+
+> **IMPORTANT — Datastar v1.0.0-RC.6 attribute syntax**:
+> - **Event handlers use colon syntax**: `data-on:click`, `data-on:keydown`, etc. (NOT `data-on-click` with a dash — dashes break the plugin lookup via HTML dataset camelCase conversion)
+> - **SSE on load uses `data-init`**: NOT `data-on-load` (which registers a DOM `load` event that only fires on resource-loading elements like img/script/iframe, not divs)
 
 ## Datastar — Client-Side Attributes
 
@@ -231,9 +235,9 @@ Datastar is a hypermedia framework. All reactivity is declarative via `data-*` a
 | `data-show` | Conditional visibility | `data-show="$isVisible"` |
 | `data-class` | Conditional CSS classes (object syntax) | `data-class="{'active': $tab === 'chat'}"` |
 | `data-bind` | Two-way input binding | `data-bind-chatText` |
-| `data-on-click` | Click handler | `data-on-click="$count++"` |
-| `data-on-load` | Run on element load | `data-on-load="@get('/events')"` |
-| `data-on-keydown` | Keyboard handler | `data-on-keydown="evt.key === 'Enter' && @post('/send')"` |
+| `data-on:click` | Click handler | `data-on:click="$count++"` |
+| `data-init` | Run when element is first processed | `data-init="@get('/events')"` |
+| `data-on:keydown` | Keyboard handler | `data-on:keydown="evt.key === 'Enter' && @post('/send')"` |
 | `data-attr-*` | Dynamic attribute | `data-attr-disabled="$loading"` |
 | `data-indicator` | Track fetch in-progress | `data-indicator-fetching` |
 
@@ -247,21 +251,21 @@ data-text="$user.name"
 data-show="$items.length > 0"
 
 <!-- Assignment -->
-data-on-click="$count++; $message = 'Updated'"
+data-on:click="$count++; $message = 'Updated'"
 
 <!-- Ternary (works with data-text, data-show, data-attr-*, NOT data-class) -->
 data-text="$count > 0 ? $count + ' items' : 'No items'"
 
 <!-- Actions (@ prefix for SSE requests) -->
-data-on-click="@post('/api/endpoint')"
-data-on-click="$count++; @post('/api/count')"
+data-on:click="@post('/api/endpoint')"
+data-on:click="$count++; @post('/api/count')"
 
 <!-- Event context -->
-data-on-keydown="evt.key === 'Enter' && @post('/search')"
-data-on-input="$value = evt.target.value"
+data-on:keydown="evt.key === 'Enter' && @post('/search')"
+data-on:input="$value = evt.target.value"
 
 <!-- Multiple statements (semicolons) -->
-data-on-click="$expanded = true; $unreadCount = 0"
+data-on:click="$expanded = true; $unreadCount = 0"
 ```
 
 ### Forms
@@ -270,7 +274,7 @@ data-on-click="$expanded = true; $unreadCount = 0"
 <!-- Send form data (not signals) to backend -->
 <form>
     <input name="prompt" required />
-    <button data-on-click="@post('/world/abc/prompt', {contentType: 'form'})">
+    <button data-on:click="@post('/world/abc/prompt', {contentType: 'form'})">
         Submit
     </button>
 </form>
@@ -281,7 +285,7 @@ data-on-click="$expanded = true; $unreadCount = 0"
 ```html
 <button id="sendBtn"
         data-indicator-fetching
-        data-on-click="@post('/api/chat')"
+        data-on:click="@post('/api/chat')"
         data-attr-disabled="$fetching">
     Send
 </button>
@@ -349,6 +353,6 @@ For in-depth working examples of these patterns, see the `context/` directory:
 - **`.cursor/rules/datastar.mdc`** — Comprehensive Datastar attribute reference, expression syntax, form handling
 - **`components/`** — Reusable UI components (button, input, dialog, checkbox, tabs, etc.)
 - **Signal namespacing** — Using `props.ID` to namespace signals: `$myComponent.open`, `$myComponent.selected`
-- **Event handling** — `data-on-click`, `data-on-keydown`, `data-on-click__outside`
+- **Event handling** — `data-on:click`, `data-on:keydown`, `data-on:click__outside`
 - **Conditional classes** — `data-class="{'active': $tab === 'chat'}"` (object syntax required)
 - **Fetch indicators** — `data-indicator-fetching`, `data-attr-disabled="$fetching"`

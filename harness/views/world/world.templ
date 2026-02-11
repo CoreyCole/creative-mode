@@ -19,7 +19,7 @@ templ Page(w sqlc.World, cp sqlc.Checkpoint, user *sqlc.User, signals OverlaySig
 		}
 		<div id="harness-overlay"
 			data-signals={ templ.JSONString(signals) }
-			data-on-load={ dsutil.GetSSENoCancel(fmt.Sprintf("/world/%s/events", w.ID)) }>
+			data-init={ dsutil.GetSSENoCancel(fmt.Sprintf("/world/%s/events", w.ID)) }>
 			@Overlay(w, cp, checkpoints)
 		</div>
 		<script src="/static/game-loader.js"></script>

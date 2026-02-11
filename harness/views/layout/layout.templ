@@ -19,7 +19,7 @@ templ Base(title string) {
 		@Head(title)
 		<body>
 			if isDevMode() {
-				<div id="dev-sse" data-on-load={ dsutil.GetSSENoCancel("/dev/sse") }></div>
+				<div id="dev-sse" data-init={ dsutil.GetSSENoCancel("/dev/sse") }></div>
 			}
 			<div id="page-content">
 				{ children... }

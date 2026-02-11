@@ -5,7 +5,7 @@ templ LoadCheckpointButton(worldID, cpID, label, class string) {
 	<button class={ class }
 		data-world-id={ worldID }
 		data-cp-id={ cpID }
-		data-on-click="loadCheckpoint(evt.target.dataset.worldId, evt.target.dataset.cpId)">
+		data-on:click="loadCheckpoint(evt.target.dataset.worldId, evt.target.dataset.cpId)">
 		{ label }
 	</button>
 }

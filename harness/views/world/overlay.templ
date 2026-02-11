@@ -20,7 +20,7 @@ templ Overlay(w sqlc.World, cp sqlc.Checkpoint, checkpoints []sqlc.Checkpoint) {
 	</div>
 	// Minimized state — starts hidden (overlay_expanded defaults to true)
 	<div class="overlay-minimized" data-show="!$overlay_expanded" style="display: none;">
-		<button data-on-click={ OE.Expand() }>
+		<button data-on:click={ OE.Expand() }>
 			CM
 			<span class="badge" data-show="$unread_count > 0" data-text="$unread_count" style="display: none;"></span>
 		</button>
@@ -34,9 +34,9 @@ templ OverlayTopBar(w sqlc.World) {
 			<span class="world-name">{ w.Name }</span>
 		</div>
 		<div class="top-bar-right">
-			<button class="btn btn-sm" data-on-click={ OE.ToggleTree() }>Tree</button>
+			<button class="btn btn-sm" data-on:click={ OE.ToggleTree() }>Tree</button>
 			<a href="/" class="btn btn-sm btn-muted">Lobby</a>
-			<button class="btn btn-sm btn-muted" data-on-click={ OE.Minimize() }>—</button>
+			<button class="btn btn-sm btn-muted" data-on:click={ OE.Minimize() }>—</button>
 		</div>
 	</div>
 }
@@ -48,7 +48,7 @@ templ OverlayBottomBar(w sqlc.World) {
 				data-bind-prompt_text
 				class="prompt-input"/>
 			<button class="btn btn-primary"
-				data-on-click={ datastar.PostSSE(fmt.Sprintf("/world/%s/prompt", w.ID)) }
+				data-on:click={ datastar.PostSSE(fmt.Sprintf("/world/%s/prompt", w.ID)) }
 				data-indicator-fetching
 				data-attr-disabled="$fetching">
 				Build

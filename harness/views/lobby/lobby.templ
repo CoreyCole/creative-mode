@@ -43,7 +43,7 @@ templ Page(user *sqlc.User, worlds []sqlc.World) {
 						<input name="name" placeholder="World name" required/>
 						<input name="description" placeholder="Description (optional)"/>
 						<button type="submit"
-							data-on-click__prevent={ datastar.PostSSE("/world/create") }
+							data-on:click__prevent="@post('/world/create', {contentType: 'form'})"
 							data-indicator-fetching
 							data-attr-disabled="$fetching">
 							Create World
@@ -51,7 +51,7 @@ templ Page(user *sqlc.User, worlds []sqlc.World) {
 					</form>
 				</div>
 				<div class="chat-panel" id="chat-panel"
-					data-on-load={ datastar.GetSSE("/events") }>
+					data-init={ datastar.GetSSE("/events") }>
 					<h3>Global Chat</h3>
 					<div id="chat-log" class="message-log"></div>
 					<div class="chat-input-bar">

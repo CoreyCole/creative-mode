@@ -7,3 +7,9 @@ node_modules/
 template-target/
 *_templ.go
 context/
+
+# Playwright CLI artifacts
+.playwright-cli/
+.playwright/
+playwright-report/
+test-results/

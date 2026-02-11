@@ -8,16 +8,21 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"creative-mode/harness/internal/auth"
 	"creative-mode/harness/internal/db"
 	"creative-mode/harness/internal/logging"
 	"creative-mode/harness/internal/server"
+	"creative-mode/harness/internal/world"
 
 	"github.com/labstack/echo/v4"
 )
 
 func main() {
 	// Ensure the data directory exists.
-	dataDir := filepath.Join("..", "data")
+	dataDir, err := filepath.Abs(filepath.Join("..", "data"))
+	if err != nil {
+		log.Fatalf("Failed to resolve data directory: %v", err)
+	}
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		log.Fatalf("Failed to create data directory: %v", err)
 	}
@@ -35,9 +40,43 @@ func main() {
 	}
 	defer database.Close()
 
+	// Clean up expired sessions on startup.
+	if err := database.DeleteExpiredSessions(); err != nil {
+		logger.Error("failed to clean expired sessions", "error", err)
+	}
+
+	// Set up auth (optional — requires GITHUB_CLIENT_ID).
+	var authHandler *auth.Handler
+	ghClientID := os.Getenv("GITHUB_CLIENT_ID")
+	ghClientSecret := os.Getenv("GITHUB_CLIENT_SECRET")
+	if ghClientID != "" && ghClientSecret != "" {
+		baseURL := os.Getenv("HARNESS_URL")
+		if baseURL == "" {
+			baseURL = "http://localhost:8080"
+		}
+		authHandler = auth.NewHandler(database, &auth.Config{
+			GitHubClientID:     ghClientID,
+			GitHubClientSecret: ghClientSecret,
+			BaseURL:            baseURL,
+		}, logger)
+		logger.Info("GitHub OAuth enabled")
+	} else {
+		logger.Warn("GitHub OAuth disabled (GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET not set)")
+	}
+
+	// Set up world manager.
+	templateDir, err := filepath.Abs(filepath.Join("..", "template"))
+	if err != nil {
+		log.Fatalf("Failed to resolve template directory: %v", err)
+	}
+	worldManager := world.NewManager(database, logger, dataDir, templateDir)
+
 	// Set up Echo server.
 	e := echo.New()
 	srv := server.New(database, logger)
+	srv.AuthHandler = authHandler
+	srv.WorldManager = worldManager
+	srv.DataDir = dataDir
 	srv.RegisterRoutes(e)
 
 	// Graceful shutdown on SIGINT/SIGTERM.
@@ -47,6 +86,7 @@ func main() {
 	go func() {
 		<-ctx.Done()
 		logger.Info("Shutting down server...")
+		worldManager.Shutdown()
 		if err := e.Shutdown(context.Background()); err != nil {
 			logger.Error("Server shutdown error", "error", err)
 		}

@@ -454,6 +454,34 @@ func (d *DB) GetRecentMessages(limit int) ([]Message, error) {
 	return messages, rows.Err()
 }
 
+// DeleteSessionsByUserID removes all sessions for a given user.
+func (d *DB) DeleteSessionsByUserID(userID string) error {
+	_, err := d.db.Exec(`DELETE FROM sessions WHERE user_id = ?`, userID)
+	return err
+}
+
+// CountActiveBuilds returns the number of checkpoints with status "building"
+// for the given user.
+func (d *DB) CountActiveBuilds(userID string) (int, error) {
+	var count int
+	err := d.db.QueryRow(`
+		SELECT COUNT(*) FROM checkpoints WHERE created_by = ? AND status = 'building'
+	`, userID).Scan(&count)
+	return count, err
+}
+
+// UpdateCheckpointWasmPath sets the WASM build output path for a checkpoint.
+func (d *DB) UpdateCheckpointWasmPath(id string, wasmPath string) error {
+	_, err := d.db.Exec(`UPDATE checkpoints SET wasm_path = ? WHERE id = ?`, wasmPath, id)
+	return err
+}
+
+// UpdateCheckpointName sets a display name on a checkpoint (bookmark).
+func (d *DB) UpdateCheckpointName(id string, name string) error {
+	_, err := d.db.Exec(`UPDATE checkpoints SET name = ? WHERE id = ?`, name, id)
+	return err
+}
+
 // GetRecentMessagesByWorld returns the most recent messages for a specific
 // world, ordered by created_at DESC (newest first).
 func (d *DB) GetRecentMessagesByWorld(worldID string, limit int) ([]Message, error) {

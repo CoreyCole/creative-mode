@@ -1,0 +1,18 @@
+services:
+  harness:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      - ..:/app:cached
+      - go-mod-cache:/go/pkg/mod
+      - go-build-cache:/root/.cache/go-build
+    environment:
+      - CGO_ENABLED=1
+      - DEV_MODE=true
+
+volumes:
+  go-mod-cache:
+  go-build-cache:

@@ -8,24 +8,20 @@ import (
 )
 
 templ Page(w sqlc.World, cp sqlc.Checkpoint, user *sqlc.User, signals OverlaySignals, serverPort int, checkpoints []sqlc.Checkpoint) {
-	<!DOCTYPE html>
-	<html lang="en">
-		@layout.Head(w.Name)
-		<body>
-			if serverPort > 0 {
-				<iframe id="game-frame"
-					src={ fmt.Sprintf("/wasm/%s/%s/index.html?server_port=%d", w.ID, cp.ID, serverPort) }
-					class="game-iframe">
-				</iframe>
-			} else {
-				<iframe id="game-frame" class="game-iframe"></iframe>
-			}
-			<div id="harness-overlay"
-				data-signals={ templ.JSONString(signals) }
-				data-on-load={ dsutil.GetSSENoCancel(fmt.Sprintf("/world/%s/events", w.ID)) }>
-				@Overlay(w, cp, checkpoints)
-			</div>
-			<script src="/static/game-loader.js"></script>
-		</body>
-	</html>
+	@layout.Base(w.Name) {
+		if serverPort > 0 {
+			<iframe id="game-frame"
+				src={ fmt.Sprintf("/wasm/%s/%s/index.html?server_port=%d", w.ID, cp.ID, serverPort) }
+				class="game-iframe">
+			</iframe>
+		} else {
+			<iframe id="game-frame" class="game-iframe"></iframe>
+		}
+		<div id="harness-overlay"
+			data-signals={ templ.JSONString(signals) }
+			data-on-load={ dsutil.GetSSENoCancel(fmt.Sprintf("/world/%s/events", w.ID)) }>
+			@Overlay(w, cp, checkpoints)
+		</div>
+		<script src="/static/game-loader.js"></script>
+	}
 }

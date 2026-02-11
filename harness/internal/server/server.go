@@ -39,6 +39,7 @@ type Server struct {
 	Orchestrator *claude.Orchestrator
 	EventBus     *events.EventBus
 	DataDir      string
+	dev          *devState // nil when DEV_MODE is not set
 }
 
 // New creates a new Server with the given database and logger.
@@ -98,6 +99,14 @@ func (s *Server) RegisterRoutes(e *echo.Echo) {
 	// Static file serving (public, no auth required).
 	e.Static("/assets", filepath.Join(s.DataDir, "shared-assets"))
 	e.Static("/static", "static")
+
+	// Dev hot-reload endpoints (only when DEV_MODE=true).
+	if os.Getenv("DEV_MODE") == "true" {
+		s.dev = newDevState()
+		e.GET("/dev/sse", s.handleDevSSE)
+		e.POST("/dev/rebuild", s.handleDevRebuild)
+		e.POST("/dev/reload-static", s.handleDevReloadStatic)
+	}
 
 	// Health check endpoint.
 	e.GET("/health", s.handleHealth)

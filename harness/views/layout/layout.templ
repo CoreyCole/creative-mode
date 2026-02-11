@@ -1,5 +1,7 @@
 package layout
 
+import "creative-mode/harness/views/dsutil"
+
 // Head renders the shared <head> block for all pages.
 templ Head(title string) {
 	<head>
@@ -16,7 +18,12 @@ templ Base(title string) {
 	<html lang="en">
 		@Head(title)
 		<body>
-			{ children... }
+			if isDevMode() {
+				<div id="dev-sse" data-on-load={ dsutil.GetSSENoCancel("/dev/sse") }></div>
+			}
+			<div id="page-content">
+				{ children... }
+			</div>
 		</body>
 	</html>
 }

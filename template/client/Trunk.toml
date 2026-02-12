@@ -5,3 +5,6 @@ minify = "on_release"
 
 [tools]
 wasm_bindgen = "0.2.108"
+
+[[proxy]]
+backend = "http://127.0.0.1:8080/assets/"

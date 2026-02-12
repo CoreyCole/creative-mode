@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,6 +22,10 @@ import (
 const (
 	truncatePromptLen = 100
 	promptSnippetLen  = 60
+
+	// claudeSessionParts is the number of hyphen-separated parts in a
+	// Claude session name: cm-{worldID}-{cpID}.
+	claudeSessionParts = 3
 )
 
 // Orchestrator manages the prompt-to-build pipeline: forking checkpoints,
@@ -56,9 +62,9 @@ func NewOrchestrator(
 	}
 }
 
-// HandlePrompt forks a checkpoint, updates MEMORY.md, creates a tmux session,
-// and sends the prompt to Claude Code. Returns immediately — hooks drive the
-// rest of the pipeline asynchronously.
+// HandlePrompt forks a checkpoint, updates MEMORY.md, starts a dev server,
+// creates a tmux session, and sends the prompt to Claude Code. Returns
+// immediately — hooks drive the rest of the pipeline asynchronously.
 func (o *Orchestrator) HandlePrompt(
 	ctx context.Context,
 	worldID, sourceCPID, prompt, userID string,
@@ -72,16 +78,34 @@ func (o *Orchestrator) HandlePrompt(
 	// Update MEMORY.md with prompt context.
 	updateMemory(cp.DirPath, prompt)
 
-	// Create tmux session with CM_* env vars.
+	// Start dev server (cargo watch) — non-fatal if it fails.
+	var extraEnv []string
+	devSrv, devErr := o.worldManager.GameServers.ConnectDev(worldID, cp.ID, cp.DirPath)
+	if devErr != nil {
+		o.logger.Warn("failed to start dev server",
+			"worldID", worldID, "cpID", cp.ID, "error", devErr)
+	} else {
+		extraEnv = append(extraEnv,
+			fmt.Sprintf("CM_GAME_PORT=%d", devSrv.Port),
+			fmt.Sprintf("CM_BRP_PORT=%d", devSrv.BRPPort),
+		)
+	}
+
+	// Create tmux session with CM_* env vars (+ dev server ports if available).
 	session := tmux.NewSession(worldID, cp.ID, cp.DirPath)
-	if err := session.Create(ctx, worldID, cp.ID, o.logsDir, o.harnessURL); err != nil {
+	createErr := session.Create(
+		ctx, worldID, cp.ID, o.logsDir, o.harnessURL, extraEnv...,
+	)
+	if createErr != nil {
+		o.worldManager.GameServers.Disconnect(worldID, cp.ID)
 		o.markCheckpointFailed(ctx, cp.ID, "tmux session creation failed")
-		return nil, fmt.Errorf("creating tmux session: %w", err)
+		return nil, fmt.Errorf("creating tmux session: %w", createErr)
 	}
 
 	// Send prompt via --input-file.
 	if err := session.SendPrompt(ctx, prompt); err != nil {
 		_ = session.Kill()
+		o.worldManager.GameServers.Disconnect(worldID, cp.ID)
 		o.markCheckpointFailed(ctx, cp.ID, "sending prompt failed")
 		return nil, fmt.Errorf("sending prompt: %w", err)
 	}
@@ -96,6 +120,14 @@ func (o *Orchestrator) HandlePrompt(
 // claude.session_stopped event arrives from a hook script.
 func (o *Orchestrator) BuildCheckpoint(worldID, cpID string) {
 	ctx := context.Background()
+
+	// Kill dev server for this specific checkpoint (Claude is done editing).
+	// Use targeted Disconnect to avoid killing the active prod server.
+	o.worldManager.GameServers.Disconnect(worldID, cpID)
+
+	// Kill the Claude tmux session (it's idle now).
+	claudeSession := tmux.NewSession(worldID, cpID, "")
+	_ = claudeSession.Kill()
 
 	cp, err := o.db.GetCheckpoint(ctx, cpID)
 	if err != nil {
@@ -141,6 +173,15 @@ func (o *Orchestrator) BuildCheckpoint(worldID, cpID string) {
 		Status: "ready",
 		ID:     cpID,
 	})
+	if cp.WasmPath.Valid {
+		_ = o.db.UpdateCheckpointWasmPath(ctx, sqlc.UpdateCheckpointWasmPathParams{
+			WasmPath: cp.WasmPath,
+			ID:       cpID,
+		})
+	}
+
+	// Stop old game servers for this world before starting the new one.
+	o.worldManager.GameServers.StopByWorldExcept(worldID, cpID)
 
 	// Start game server.
 	srv, err := o.worldManager.GameServers.Connect(worldID, cpID, cp.DirPath)
@@ -162,11 +203,17 @@ func (o *Orchestrator) BuildCheckpoint(worldID, cpID string) {
 	o.createAndPublishMessage(ctx, events.EventBuildCompleted, worldID, cpID,
 		fmt.Sprintf("%s checkpoint ready: '%s'", worldName, promptSnippet))
 
+	serverPort := 0
+	if srv != nil {
+		serverPort = srv.Port
+	}
+
 	o.eventBus.Publish(worldID, map[string]any{
-		"event":     events.EventBuildCompleted,
-		"worldID":   worldID,
-		"cpID":      cpID,
-		"worldName": worldName,
+		"event":      events.EventBuildCompleted,
+		"worldID":    worldID,
+		"cpID":       cpID,
+		"worldName":  worldName,
+		"serverPort": serverPort,
 	})
 }
 
@@ -203,6 +250,64 @@ func (o *Orchestrator) worldName(ctx context.Context, worldID string) string {
 	}
 
 	return w.Name
+}
+
+// ReapOrphanedSessions scans tmux for cm-{worldID}-{cpID} Claude sessions
+// whose checkpoint is no longer in "building" status, and kills them. Also
+// reaps orphaned game server sessions via GameServerManager.
+func (o *Orchestrator) ReapOrphanedSessions() {
+	// Reap orphaned game server sessions.
+	o.worldManager.GameServers.ReapOrphans()
+
+	// Reap orphaned Claude sessions.
+	out, err := exec.CommandContext(
+		context.Background(),
+		"tmux", "list-sessions", "-F", "#{session_name}",
+	).Output()
+	if err != nil {
+		return
+	}
+
+	ctx := context.Background()
+
+	for _, line := range strings.Split(
+		strings.TrimSpace(string(out)), "\n",
+	) {
+		// Match cm-{worldID}-{cpID} but NOT cm-server-* or cm-trunk-*.
+		if !strings.HasPrefix(line, "cm-") ||
+			strings.HasPrefix(line, "cm-server-") ||
+			strings.HasPrefix(line, "cm-trunk-") {
+			continue
+		}
+
+		parts := strings.SplitN(line, "-", claudeSessionParts)
+		if len(parts) != claudeSessionParts {
+			continue
+		}
+
+		cpID := parts[2]
+
+		cp, cpErr := o.db.GetCheckpoint(ctx, cpID)
+		if cpErr != nil {
+			// Checkpoint deleted from DB — kill the session.
+			o.killTmuxSession(line, "checkpoint not in DB")
+
+			continue
+		}
+
+		if cp.Status != "building" {
+			o.killTmuxSession(line, "checkpoint status: "+cp.Status)
+		}
+	}
+}
+
+func (o *Orchestrator) killTmuxSession(name, reason string) {
+	_ = exec.CommandContext(
+		context.Background(),
+		"tmux", "kill-session", "-t", name,
+	).Run()
+	o.logger.Info("reaped orphaned claude session",
+		"session", name, "reason", reason)
 }
 
 // markCheckpointFailed updates a checkpoint to "failed" status.

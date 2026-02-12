@@ -1,10 +1,18 @@
 //! Bevy WASM client with Lightyear networking.
 //!
-//! Connects to the game server via WebSocket, provides a fly camera (WASD + mouse),
-//! renders other players as pill meshes (capsules), and shows a ground plane.
+//! Connects to the game server via WebSocket, provides first/third-person camera
+//! (toggled with V), renders other players as pill meshes (capsules), and shows a ground plane.
 
+#[cfg(target_family = "wasm")]
+mod debug;
+
+use bevy::asset::{AssetMetaCheck, AssetPlugin};
+use bevy::gltf::GltfAssetLabel;
+use bevy::image::{ImageAddressMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor};
 use bevy::input::mouse::AccumulatedMouseMotion;
+use bevy::math::Affine2;
 use bevy::prelude::*;
+use bevy::window::{CursorGrabMode, CursorOptions};
 use core::net::{Ipv4Addr, SocketAddr};
 use core::time::Duration;
 use lightyear::netcode::NetcodeClient;
@@ -12,7 +20,8 @@ use lightyear::prelude::client::input::*;
 use lightyear::prelude::client::*;
 use lightyear::prelude::input::native::*;
 use lightyear::prelude::*;
-use lightyear::websocket::client::WebSocketTarget;
+use lightyear::websocket::client::{WebSocketScheme, WebSocketTarget};
+use serde::Serialize;
 use shared::protocol::*;
 
 // --- Entry Point ---
@@ -27,15 +36,23 @@ fn main() {
     let mut app = App::new();
 
     // Full Bevy with rendering for the client
-    app.add_plugins(DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(Window {
-            title: "Creative Mode".to_string(),
-            resolution: (1280, 720).into(),
-            prevent_default_event_handling: true,
-            ..default()
-        }),
-        ..default()
-    }));
+    app.add_plugins(
+        DefaultPlugins
+            .set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "Creative Mode".to_string(),
+                    resolution: (1280, 720).into(),
+                    prevent_default_event_handling: true,
+                    ..default()
+                }),
+                ..default()
+            })
+            .set(AssetPlugin {
+                file_path: "/assets".to_string(),
+                meta_check: AssetMetaCheck::Never,
+                ..default()
+            }),
+    );
 
     // Lightyear client plugin
     app.add_plugins(lightyear::prelude::client::ClientPlugins { tick_duration });
@@ -51,7 +68,7 @@ fn main() {
         }
         #[cfg(not(target_family = "wasm"))]
         {
-            lightyear::prelude::client::ClientConfig::builder().with_no_cert_validation()
+            lightyear::prelude::client::ClientConfig::builder().with_no_encryption()
         }
     };
 
@@ -79,7 +96,7 @@ fn main() {
         NetcodeClient::new(auth, netcode_config).expect("Failed to create netcode client"),
         WebSocketClientIo {
             config: ws_config,
-            target: WebSocketTarget::Addr(Default::default()),
+            target: WebSocketTarget::Addr(WebSocketScheme::Plain),
         },
     ));
 
@@ -90,13 +107,26 @@ fn main() {
         buffer_input.in_set(InputSystems::WriteClientInputs),
     );
     app.add_systems(FixedUpdate, client_movement);
-    app.add_systems(Update, fly_camera);
-    app.add_systems(Update, sync_player_meshes);
+    app.add_systems(
+        Update,
+        (
+            cursor_lock_system,
+            toggle_camera_mode,
+            game_camera,
+            sync_player_meshes,
+        )
+            .chain(),
+    );
     app.add_observer(handle_predicted_spawn);
     app.add_observer(handle_interpolated_spawn);
 
     // Camera state resource
-    app.init_resource::<FlyCameraState>();
+    app.init_resource::<CameraState>();
+    app.register_type::<CameraState>();
+
+    // Debug query system (WASM only)
+    #[cfg(target_family = "wasm")]
+    app.add_systems(Update, debug::process_debug_queries);
 
     app.run();
 }
@@ -157,15 +187,41 @@ fn connect_to_server(mut commands: Commands, client: Single<Entity, With<Client>
 
 // --- Scene Setup ---
 
-/// Marker for the fly camera.
+/// Marker for the game camera entity.
 #[derive(Component)]
-struct FlyCamera;
+struct GameCamera;
 
-/// State for fly camera rotation.
-#[derive(Resource, Default)]
-struct FlyCameraState {
+/// Camera perspective mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Reflect, Serialize)]
+enum CameraMode {
+    FirstPerson,
+    #[default]
+    ThirdPerson,
+}
+
+/// Camera state resource controlling view parameters.
+#[derive(Resource, Reflect, Serialize)]
+#[reflect(Serialize)]
+struct CameraState {
+    mode: CameraMode,
     yaw: f32,
     pitch: f32,
+    distance: f32,
+    height_offset: f32,
+    cursor_locked: bool,
+}
+
+impl Default for CameraState {
+    fn default() -> Self {
+        Self {
+            mode: CameraMode::ThirdPerson,
+            yaw: 0.0,
+            pitch: -0.3,
+            distance: 8.0,
+            height_offset: 1.5,
+            cursor_locked: false,
+        }
+    }
 }
 
 /// Set up the 3D scene: ground plane, lighting, and camera.
@@ -173,15 +229,36 @@ fn setup_scene(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    asset_server: Res<AssetServer>,
 ) {
-    // Ground plane
+    // Ground plane with tiled checkerboard texture from shared assets
+    let ground_texture: Handle<Image> = asset_server.load_with_settings(
+        "textures/test-checkerboard.png",
+        |settings: &mut ImageLoaderSettings| {
+            settings.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+                address_mode_u: ImageAddressMode::Repeat,
+                address_mode_v: ImageAddressMode::Repeat,
+                ..default()
+            });
+        },
+    );
     commands.spawn((
         Mesh3d(meshes.add(Plane3d::default().mesh().size(200.0, 200.0))),
         MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.3, 0.5, 0.3),
+            base_color_texture: Some(ground_texture),
+            uv_transform: Affine2::from_scale(Vec2::splat(25.0)),
             ..default()
         })),
         Transform::from_translation(Vec3::ZERO),
+    ));
+
+    // Spawn GLB model from shared assets
+    commands.spawn((
+        SceneRoot(
+            asset_server
+                .load(GltfAssetLabel::Scene(0).from_asset("models/bonecrusher_warrior.glb")),
+        ),
+        Transform::from_xyz(0.0, 0.0, 0.0),
     ));
 
     // Directional light (sun)
@@ -201,74 +278,134 @@ fn setup_scene(
         ..default()
     });
 
-    // Fly camera
+    // Game camera
     commands.spawn((
         Camera3d::default(),
         Transform::from_xyz(0.0, 5.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y),
-        FlyCamera,
+        GameCamera,
     ));
 }
 
-// --- Fly Camera ---
+// --- Cursor Lock ---
 
-/// WASD + mouse fly camera system.
-fn fly_camera(
-    time: Res<Time>,
-    keys: Res<ButtonInput<KeyCode>>,
-    accumulated_mouse: Res<AccumulatedMouseMotion>,
-    mut camera_state: ResMut<FlyCameraState>,
-    mut camera_query: Query<&mut Transform, With<FlyCamera>>,
+/// Lock cursor on click, unlock on Escape. Detects browser-initiated unlock.
+fn cursor_lock_system(
     mouse_buttons: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut camera_state: ResMut<CameraState>,
+    mut cursor_opts: Query<&mut CursorOptions, With<Window>>,
 ) {
-    let Ok(mut transform) = camera_query.single_mut() else {
+    let Ok(mut cursor) = cursor_opts.single_mut() else {
         return;
     };
 
-    // Mouse look (only when right mouse button is held)
-    if mouse_buttons.pressed(MouseButton::Right) {
+    if mouse_buttons.just_pressed(MouseButton::Left) && !camera_state.cursor_locked {
+        cursor.grab_mode = CursorGrabMode::Locked;
+        cursor.visible = false;
+        camera_state.cursor_locked = true;
+    }
+
+    if keys.just_pressed(KeyCode::Escape) && camera_state.cursor_locked {
+        cursor.grab_mode = CursorGrabMode::None;
+        cursor.visible = true;
+        camera_state.cursor_locked = false;
+    }
+
+    // Detect browser-initiated unlock (WASM Escape interception)
+    if camera_state.cursor_locked && cursor.grab_mode == CursorGrabMode::None {
+        cursor.visible = true;
+        camera_state.cursor_locked = false;
+    }
+}
+
+// --- Camera Mode Toggle ---
+
+/// Toggle between first-person and third-person with V key.
+fn toggle_camera_mode(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut camera_state: ResMut<CameraState>,
+    mut players: Query<&mut Visibility, (With<Predicted>, With<PlayerMeshSpawned>)>,
+) {
+    if !keys.just_pressed(KeyCode::KeyV) {
+        return;
+    }
+
+    camera_state.mode = match camera_state.mode {
+        CameraMode::FirstPerson => CameraMode::ThirdPerson,
+        CameraMode::ThirdPerson => CameraMode::FirstPerson,
+    };
+
+    let vis = match camera_state.mode {
+        CameraMode::FirstPerson => Visibility::Hidden,
+        CameraMode::ThirdPerson => Visibility::Inherited,
+    };
+
+    for mut visibility in players.iter_mut() {
+        *visibility = vis;
+    }
+}
+
+// --- Game Camera ---
+
+/// Unified camera system supporting first-person and third-person modes.
+fn game_camera(
+    time: Res<Time>,
+    accumulated_mouse: Res<AccumulatedMouseMotion>,
+    mut camera_state: ResMut<CameraState>,
+    mut camera_query: Query<&mut Transform, With<GameCamera>>,
+    player_query: Query<&PlayerPosition, With<Predicted>>,
+) {
+    let Ok(mut cam_transform) = camera_query.single_mut() else {
+        return;
+    };
+
+    // Mouse look when cursor is locked
+    if camera_state.cursor_locked {
         let sensitivity = 0.003;
         camera_state.yaw -= accumulated_mouse.delta.x * sensitivity;
         camera_state.pitch -= accumulated_mouse.delta.y * sensitivity;
-        camera_state.pitch = camera_state.pitch.clamp(-1.5, 1.5);
     }
 
-    transform.rotation =
-        Quat::from_rotation_y(camera_state.yaw) * Quat::from_rotation_x(camera_state.pitch);
-
-    // Movement
-    let speed = if keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight) {
-        30.0
-    } else {
-        10.0
+    // Clamp pitch based on mode
+    let pitch_limit = match camera_state.mode {
+        CameraMode::FirstPerson => 1.55,
+        CameraMode::ThirdPerson => 1.0,
     };
+    camera_state.pitch = camera_state.pitch.clamp(-1.55, pitch_limit);
 
-    let forward = transform.forward().as_vec3();
-    let right = transform.right().as_vec3();
-    let up = Vec3::Y;
+    let yaw = camera_state.yaw;
+    let pitch = camera_state.pitch;
 
-    let mut velocity = Vec3::ZERO;
-    if keys.pressed(KeyCode::KeyW) {
-        velocity += forward;
-    }
-    if keys.pressed(KeyCode::KeyS) {
-        velocity -= forward;
-    }
-    if keys.pressed(KeyCode::KeyA) {
-        velocity -= right;
-    }
-    if keys.pressed(KeyCode::KeyD) {
-        velocity += right;
-    }
-    if keys.pressed(KeyCode::Space) {
-        velocity += up;
-    }
-    if keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight) {
-        velocity -= up;
-    }
+    // Get player position if available
+    let player_pos = player_query.iter().next().map(|p| p.0);
 
-    if velocity.length_squared() > 0.0 {
-        velocity = velocity.normalize() * speed * time.delta_secs();
-        transform.translation += velocity;
+    match camera_state.mode {
+        CameraMode::FirstPerson => {
+            if let Some(pos) = player_pos {
+                let eye_pos = pos + Vec3::Y * 1.7;
+                cam_transform.translation = eye_pos;
+            }
+            cam_transform.rotation = Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.0);
+        }
+        CameraMode::ThirdPerson => {
+            let rotation = Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.0);
+
+            if let Some(pos) = player_pos {
+                let pivot = pos + Vec3::Y * camera_state.height_offset;
+                let offset = rotation * Vec3::new(0.0, 0.0, camera_state.distance);
+                let desired_pos = pivot + offset;
+                let desired_rot = Transform::from_translation(desired_pos)
+                    .looking_at(pivot, Vec3::Y)
+                    .rotation;
+
+                let t = (15.0 * time.delta_secs()).min(1.0);
+                cam_transform.translation = cam_transform.translation.lerp(desired_pos, t);
+                cam_transform.rotation = cam_transform.rotation.slerp(desired_rot, t);
+            } else {
+                // Pre-connection: just apply rotation in place
+                cam_transform.rotation = rotation;
+            }
+        }
     }
 }
 
@@ -278,18 +415,16 @@ fn fly_camera(
 fn buffer_input(
     mut query: Query<&mut ActionState<PlayerInput>, With<InputMarker<PlayerInput>>>,
     keys: Res<ButtonInput<KeyCode>>,
-    camera_query: Query<&Transform, With<FlyCamera>>,
+    camera_state: Res<CameraState>,
 ) {
     let Ok(mut action_state) = query.single_mut() else {
         return;
     };
 
-    let Ok(cam_transform) = camera_query.single() else {
-        return;
-    };
-
-    let forward = cam_transform.forward().as_vec3();
-    let right = cam_transform.right().as_vec3();
+    // Use yaw only for horizontal movement direction (both modes)
+    let yaw_rotation = Quat::from_rotation_y(camera_state.yaw);
+    let forward = yaw_rotation * -Vec3::Z;
+    let right = yaw_rotation * Vec3::X;
 
     let mut movement = Vec3::ZERO;
     if keys.pressed(KeyCode::KeyW) {

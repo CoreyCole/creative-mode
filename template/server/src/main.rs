@@ -6,6 +6,7 @@
 use bevy::app::ScheduleRunnerPlugin;
 use bevy::log::LogPlugin;
 use bevy::prelude::*;
+use bevy::remote::{http::RemoteHttpPlugin, RemotePlugin};
 use core::net::{Ipv4Addr, SocketAddr};
 use core::time::Duration;
 use lightyear::connection::client::Connected;
@@ -22,7 +23,15 @@ fn main() {
         .and_then(|p| p.parse::<u16>().ok())
         .unwrap_or(9001);
 
-    info!("Starting game server on port {}", port);
+    let brp_port = std::env::var("BRP_PORT")
+        .ok()
+        .and_then(|p| p.parse::<u16>().ok())
+        .unwrap_or(port + 1000);
+
+    info!(
+        "Starting game server on port {}, BRP on port {}",
+        port, brp_port
+    );
 
     let tick_duration = Duration::from_secs_f64(1.0 / FIXED_TIMESTEP_HZ);
 
@@ -45,17 +54,9 @@ fn main() {
     // Spawn server connection entity
     let server_addr = SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), port);
 
-    let sans = vec![
-        "localhost".to_string(),
-        "127.0.0.1".to_string(),
-        "::1".to_string(),
-    ];
     let config = lightyear::websocket::server::ServerConfig::builder()
         .with_bind_address(server_addr)
-        .with_identity(
-            lightyear::websocket::server::Identity::self_signed(sans)
-                .expect("Failed to create self-signed identity"),
-        );
+        .with_no_encryption();
 
     app.world_mut().spawn((
         Name::from("Server"),
@@ -67,6 +68,14 @@ fn main() {
         LocalAddr(server_addr),
         WebSocketServerIo { config },
     ));
+
+    // BRP debug server (JSON-RPC 2.0 over HTTP)
+    app.add_plugins(RemotePlugin::default());
+    app.add_plugins(
+        RemoteHttpPlugin::default()
+            .with_port(brp_port)
+            .with_header("Access-Control-Allow-Origin", "*"),
+    );
 
     // Register server systems
     app.add_systems(Startup, start_server);

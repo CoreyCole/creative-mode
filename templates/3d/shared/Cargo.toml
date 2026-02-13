@@ -13,3 +13,4 @@ bevy = { workspace = true, default-features = false, features = [
 ] }
 lightyear = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }

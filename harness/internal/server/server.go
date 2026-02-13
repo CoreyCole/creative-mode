@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -28,6 +29,12 @@ import (
 	"creative-mode/harness/views/login"
 	"creative-mode/harness/views/pending"
 	worldview "creative-mode/harness/views/world"
+)
+
+const (
+	debugProxyTimeout = 5 * time.Second
+	logExtJSONL       = ".jsonl"
+	logExtPlain       = ".log"
 )
 
 // Server holds application dependencies and registers HTTP routes.
@@ -96,8 +103,8 @@ func (s *Server) RegisterRoutes(e *echo.Echo) {
 	}))
 	e.Use(middleware.Recover())
 
-	// Static file serving (public, no auth required).
-	e.Static("/assets", filepath.Join(s.DataDir, "shared-assets"))
+	// Shared game assets (public, no auth required).
+	e.GET("/assets/*", s.handleSharedAssets)
 	e.Static("/static", "static")
 
 	// Dev hot-reload endpoints (only when DEV_MODE=true).
@@ -105,6 +112,7 @@ func (s *Server) RegisterRoutes(e *echo.Echo) {
 		s.dev = newDevState()
 		e.GET("/dev/sse", s.handleDevSSE)
 		e.POST("/dev/rebuild", s.handleDevRebuild)
+		e.POST("/dev/rebuild-template", s.handleDevRebuildTemplate)
 		e.POST("/dev/reload-static", s.handleDevReloadStatic)
 		if s.AuthHandler != nil {
 			e.POST("/dev/auth/login", s.AuthHandler.HandleDevLogin)
@@ -167,6 +175,10 @@ func (s *Server) registerWorldRoutes(approved *echo.Group) {
 	w.POST("/:worldID/prompt", s.handlePrompt)
 	w.POST("/:worldID/checkpoint", s.handleSaveCheckpoint)
 	w.GET("/:worldID/checkpoint/:cpID/logs/:logType", s.handleLogStream)
+	w.GET("/:worldID/status", s.handleWorldStatus)
+	w.POST("/:worldID/debug", s.handleDebugProxy)
+	w.POST("/:worldID/client-debug", s.handleClientDebug)
+	w.POST("/:worldID/client-debug-response", s.handleClientDebugResponse)
 }
 
 // handleHealth returns a simple JSON health check response.
@@ -198,8 +210,9 @@ func (s *Server) handleCreateWorld(c echo.Context) error {
 	}
 
 	var req struct {
-		Name        string `json:"name"        form:"name"`
-		Description string `json:"description" form:"description"`
+		Name         string `json:"name"          form:"name"`
+		Description  string `json:"description"   form:"description"`
+		TemplateType string `json:"template_type" form:"template_type"` //nolint:tagliatelle // HTML form field name
 	}
 	if bindErr := c.Bind(&req); bindErr != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
@@ -207,8 +220,20 @@ func (s *Server) handleCreateWorld(c echo.Context) error {
 	if req.Name == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "name is required")
 	}
+	if req.TemplateType == "" {
+		req.TemplateType = "3d"
+	}
+	if req.TemplateType != "3d" && req.TemplateType != "2d" {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid template type")
+	}
 
-	w, err := s.WorldManager.CreateWorld(ctx, req.Name, req.Description, user.ID)
+	w, err := s.WorldManager.CreateWorld(
+		ctx,
+		req.Name,
+		req.Description,
+		user.ID,
+		req.TemplateType,
+	)
 	if err != nil {
 		s.Logger.Error("failed to create world", "error", err)
 
@@ -265,9 +290,17 @@ func (s *Server) handleWorldView(c echo.Context) error {
 		serverPort = int(cp.ServerPort.Int64)
 	}
 
+	// Check for trunk serve (template world dev mode).
+	trunkPort := 0
+	if gs := s.WorldManager.GameServers.GetServer(worldID, cpID); gs != nil {
+		trunkPort = gs.TrunkPort
+	}
+
 	signals := worldview.DefaultOverlaySignals(worldID, cpID)
 
-	return render(c, worldview.Page(w, cp, user, signals, serverPort, checkpoints))
+	return render(c, worldview.Page(
+		w, cp, user, signals, serverPort, trunkPort, checkpoints,
+	))
 }
 
 // handleCheckpointView updates the user's position and returns checkpoint info.
@@ -417,19 +450,41 @@ func (s *Server) handleSaveCheckpoint(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"status": "saved"})
 }
 
-// handleLogStream streams JSONL log content for a checkpoint.
+// handleLogStream streams log content for a checkpoint.
+// Game server logs use .log extension (raw text); other logs use .jsonl.
 func (s *Server) handleLogStream(c echo.Context) error {
 	worldID := c.Param("worldID")
 	cpID := c.Param("cpID")
 	logType := c.Param("logType") // "build", "claude", "game-server"
 
 	baseDir := filepath.Join(s.DataDir, "logs", "worlds")
-	logPath := filepath.Clean(filepath.Join(baseDir, worldID, cpID, logType+".jsonl"))
-	if !strings.HasPrefix(logPath, filepath.Clean(baseDir)+string(os.PathSeparator)) {
+
+	// Game server logs are raw text (.log); others are JSONL.
+	ext := logExtJSONL
+	if logType == "game-server" {
+		ext = logExtPlain
+	}
+	logPath := filepath.Clean(
+		filepath.Join(baseDir, worldID, cpID, logType+ext),
+	)
+	if !strings.HasPrefix(
+		logPath, filepath.Clean(baseDir)+string(os.PathSeparator),
+	) {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid path")
 	}
 
+	// Fall back to the other extension if primary doesn't exist.
 	if _, err := os.Stat(logPath); os.IsNotExist(err) {
+		altExt := logExtJSONL
+		if ext == logExtJSONL {
+			altExt = logExtPlain
+		}
+		altPath := filepath.Clean(
+			filepath.Join(baseDir, worldID, cpID, logType+altExt),
+		)
+		if _, altErr := os.Stat(altPath); altErr == nil {
+			return c.File(altPath)
+		}
 		return echo.NewHTTPError(http.StatusNotFound, "log not found")
 	}
 
@@ -450,6 +505,41 @@ func (s *Server) handleWASMArtifacts(c echo.Context) error {
 
 	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
 		return echo.NewHTTPError(http.StatusNotFound, "artifact not found")
+	}
+
+	return c.File(fullPath)
+}
+
+// handleSharedAssets serves files from data/shared-assets with cache and MIME headers.
+func (s *Server) handleSharedAssets(c echo.Context) error {
+	filePath := c.Param("*")
+
+	baseDir := filepath.Join(s.DataDir, "shared-assets")
+	fullPath := filepath.Clean(filepath.Join(baseDir, filePath))
+	if !strings.HasPrefix(fullPath, filepath.Clean(baseDir)+string(os.PathSeparator)) {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid path")
+	}
+
+	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+		return echo.NewHTTPError(http.StatusNotFound, "asset not found")
+	}
+
+	// Set MIME types for game-specific formats not in Go's default registry.
+	ext := strings.ToLower(filepath.Ext(fullPath))
+	switch ext {
+	case ".glb":
+		c.Response().Header().Set("Content-Type", "model/gltf-binary")
+	case ".gltf":
+		c.Response().Header().Set("Content-Type", "model/gltf+json")
+	case ".ktx2":
+		c.Response().Header().Set("Content-Type", "image/ktx2")
+	}
+
+	// In production, enable browser caching with background revalidation.
+	if os.Getenv("DEV_MODE") != "true" {
+		c.Response().
+			Header().
+			Set("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400")
 	}
 
 	return c.File(fullPath)
@@ -553,6 +643,94 @@ func (s *Server) handleLineage(c echo.Context) error {
 	}
 
 	return render(c, worldview.Lineage(ancestry))
+}
+
+// handleDebugProxy forwards a JSON-RPC 2.0 request to the game server's BRP port.
+func (s *Server) handleDebugProxy(c echo.Context) error {
+	ctx := c.Request().Context()
+	worldID := c.Param("worldID")
+
+	user, err := requireUser(c)
+	if err != nil {
+		return err
+	}
+
+	cpID, err := s.WorldManager.GetUserPosition(ctx, user.ID, worldID)
+	if err != nil || cpID == "" {
+		return echo.NewHTTPError(http.StatusNotFound, "no active checkpoint")
+	}
+
+	gs := s.WorldManager.GameServers.GetServer(worldID, cpID)
+	if gs == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "game server not running")
+	}
+
+	targetURL := fmt.Sprintf("http://localhost:%d", gs.BRPPort)
+
+	req, err := http.NewRequestWithContext(
+		ctx, http.MethodPost, targetURL, c.Request().Body,
+	)
+	if err != nil {
+		return echo.NewHTTPError(
+			http.StatusInternalServerError, "failed to create request",
+		)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: debugProxyTimeout}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadGateway, "debug server unreachable")
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	return c.JSONBlob(resp.StatusCode, body)
+}
+
+// handleWorldStatus returns JSON with the world's current checkpoint and game server info.
+func (s *Server) handleWorldStatus(c echo.Context) error {
+	ctx := c.Request().Context()
+	worldID := c.Param("worldID")
+
+	user, err := requireUser(c)
+	if err != nil {
+		return err
+	}
+
+	cpID, err := s.WorldManager.GetUserPosition(ctx, user.ID, worldID)
+	if err != nil || cpID == "" {
+		return echo.NewHTTPError(http.StatusNotFound, "no active checkpoint")
+	}
+
+	cp, err := s.DB.GetCheckpoint(ctx, cpID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "checkpoint not found")
+	}
+
+	result := map[string]any{
+		"world_id":      worldID,
+		"checkpoint_id": cpID,
+		"build_status":  cp.Status,
+	}
+
+	if gs := s.WorldManager.GameServers.GetServer(worldID, cpID); gs != nil {
+		result["game_server"] = map[string]any{
+			"running":  true,
+			"port":     gs.Port,
+			"brp_port": gs.BRPPort,
+			"mode":     gs.Mode,
+		}
+	} else {
+		result["game_server"] = map[string]any{
+			"running": false,
+		}
+	}
+
+	return c.JSON(http.StatusOK, result)
 }
 
 // handleAdminUsers renders the admin user management page.

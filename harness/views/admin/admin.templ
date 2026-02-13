@@ -3,41 +3,67 @@ package admin
 import (
 	"creative-mode/harness/internal/db/sqlc"
 	"creative-mode/harness/views/layout"
+	"github.com/coreycole/datastarui/components/button"
 	"github.com/starfederation/datastar-go/datastar"
 )
 
 templ Page(users []sqlc.User) {
 	@layout.Base("Admin") {
-		<div class="admin-container">
-			<header class="admin-header">
+		<div class="max-w-3xl mx-auto p-6">
+			<header class="flex justify-between items-center mb-6">
 				<h1>Admin — User Management</h1>
-				<a href="/" class="btn btn-sm btn-muted">Back to Lobby</a>
+				<a href="/"
+					class="inline-flex items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground h-8 px-3 text-sm font-medium">
+					Back to Lobby
+				</a>
 			</header>
-			<div class="user-list">
+			<div class="flex flex-col gap-2">
 				for _, u := range users {
-					<div class="user-row">
+					<div class="flex items-center gap-3 p-3 border border-border rounded-lg bg-card">
 						if u.AvatarURL.Valid {
-							<img src={ u.AvatarURL.String } class="avatar-sm" alt=""/>
+							<img src={ u.AvatarURL.String } class="w-7 h-7 rounded-full" alt=""/>
 						}
-						<span class="username">{ u.GitHubUsername }</span>
-						<span class={ "role-badge", "role-" + u.Role }>{ u.Role }</span>
+						<span class="flex-1 font-medium">{ u.GitHubUsername }</span>
+						@RoleBadge(u.Role)
 						if u.Role == "pending" {
-							<button class="btn btn-sm btn-primary"
-								data-on:click={ datastar.PostSSE("/admin/users/" + u.ID + "/approve") }
-								data-indicator-fetching
-								data-attr-disabled="$fetching">
+							@button.Button(button.ButtonArgs{
+								Size: "sm",
+								Attributes: templ.Attributes{
+									"data-on:click":          datastar.PostSSE("/admin/users/" + u.ID + "/approve"),
+									"data-indicator-fetching": true,
+									"data-attr-disabled":     "$fetching",
+								},
+							}) {
 								Approve
-							</button>
-							<button class="btn btn-sm btn-danger"
-								data-on:click={ datastar.PostSSE("/admin/users/" + u.ID + "/reject") }
-								data-indicator-fetching
-								data-attr-disabled="$fetching">
+							}
+							@button.Button(button.ButtonArgs{
+								Variant: "destructive",
+								Size:    "sm",
+								Attributes: templ.Attributes{
+									"data-on:click":          datastar.PostSSE("/admin/users/" + u.ID + "/reject"),
+									"data-indicator-fetching": true,
+									"data-attr-disabled":     "$fetching",
+								},
+							}) {
 								Reject
-							</button>
+							}
 						}
 					</div>
 				}
 			</div>
 		</div>
+	}
+}
+
+templ RoleBadge(role string) {
+	switch role {
+		case "admin":
+			<span class="px-2 py-0.5 rounded text-xs font-medium bg-purple-500/10 text-purple-400">{ role }</span>
+		case "user":
+			<span class="px-2 py-0.5 rounded text-xs font-medium bg-green-500/10 text-green-500">{ role }</span>
+		case "pending":
+			<span class="px-2 py-0.5 rounded text-xs font-medium bg-amber-500/10 text-amber-500">{ role }</span>
+		default:
+			<span class="px-2 py-0.5 rounded text-xs font-medium bg-muted text-muted-foreground">{ role }</span>
 	}
 }

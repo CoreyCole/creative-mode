@@ -49,6 +49,7 @@ pub struct PlayerId(pub PeerId);
 
 /// The player's 3D position in the world. Replicated with prediction + interpolation.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq, Reflect, Deref, DerefMut)]
+#[reflect(Component, Serialize, Deserialize)]
 pub struct PlayerPosition(pub Vec3);
 
 impl Ease for PlayerPosition {
@@ -60,7 +61,8 @@ impl Ease for PlayerPosition {
 }
 
 /// The player's color used for rendering their pill mesh.
-#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq, Reflect)]
+#[reflect(Component, Serialize, Deserialize)]
 pub struct PlayerColor(pub Color);
 
 // --- Channels ---
@@ -72,6 +74,7 @@ pub struct GameChannel;
 
 /// Movement input sent from client to server each tick.
 #[derive(Serialize, Deserialize, Debug, Default, PartialEq, Clone, Reflect)]
+#[reflect(Serialize, Deserialize)]
 pub struct PlayerInput {
     /// Movement direction in local camera space (forward/back/left/right/up/down).
     pub movement: Vec3,
@@ -103,6 +106,11 @@ impl Plugin for ProtocolPlugin {
 
         app.register_component::<PlayerColor>();
 
+        // Register types for reflection-based debug queries
+        app.register_type::<PlayerPosition>();
+        app.register_type::<PlayerColor>();
+        app.register_type::<PlayerInput>();
+
         // Register channels
         app.add_channel::<GameChannel>(ChannelSettings {
             mode: ChannelMode::OrderedReliable(ReliableSettings::default()),
@@ -121,5 +129,6 @@ pub fn shared_movement(mut position: Mut<PlayerPosition>, input: &PlayerInput) {
     } else {
         MOVE_SPEED
     };
-    position.0 += input.movement * speed;
+    let dt = 1.0 / FIXED_TIMESTEP_HZ as f32;
+    position.0 += input.movement * speed * dt;
 }

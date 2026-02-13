@@ -127,6 +127,20 @@ func (q *Queries) GetCheckpointTree(ctx context.Context, worldID string) ([]Chec
 	return items, nil
 }
 
+const updateCheckpointDirPath = `-- name: UpdateCheckpointDirPath :exec
+UPDATE checkpoints SET dir_path = ? WHERE id = ?
+`
+
+type UpdateCheckpointDirPathParams struct {
+	DirPath string
+	ID      string
+}
+
+func (q *Queries) UpdateCheckpointDirPath(ctx context.Context, arg UpdateCheckpointDirPathParams) error {
+	_, err := q.db.ExecContext(ctx, updateCheckpointDirPath, arg.DirPath, arg.ID)
+	return err
+}
+
 const updateCheckpointName = `-- name: UpdateCheckpointName :exec
 UPDATE checkpoints SET name = ? WHERE id = ?
 `

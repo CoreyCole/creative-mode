@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Creative Mode - 2D World</title>
+    <style>
+        html, body { margin: 0; padding: 0; overflow: hidden; width: 100%; height: 100%; background: #111; }
+        canvas { width: 100%; height: 100%; display: block; }
+    </style>
+</head>
+<body>
+<canvas id="bevy-canvas"></canvas>
+<script>
+// Prevent browser shortcuts from interfering with game keybinds.
+document.addEventListener('keydown', function(e) {
+  if (e.key.startsWith('F') && e.key.length <= 3) {
+    e.preventDefault();
+    return;
+  }
+  if (e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+    return;
+  }
+}, { capture: true });
+</script>
+</body>
+</html>

@@ -46,7 +46,8 @@ func NewBuilder(
 
 // Build runs the cargo build for the game server and Trunk build for the WASM
 // client. Updates the checkpoint's WasmPath and BuildDurationMs on success.
-func (b *Builder) Build(cp *sqlc.Checkpoint, isInitial bool) error {
+// 2D templates skip the server build and run trunk from the project root.
+func (b *Builder) Build(cp *sqlc.Checkpoint, isInitial bool, templateType string) error {
 	timeout := BuildTimeoutIncremental
 	if isInitial {
 		timeout = BuildTimeoutInitial
@@ -82,24 +83,40 @@ func (b *Builder) Build(cp *sqlc.Checkpoint, isInitial bool) error {
 		event:   "build.output",
 	}
 
-	// Step 1: Build game server (native binary).
-	b.logger.Info("building game server", "worldID", cp.WorldID, "cpID", cp.ID)
+	// Step 1: Build game server (native binary) — skip for 2D templates.
+	if templateType != "2d" {
+		b.logger.Info("building game server", "worldID", cp.WorldID, "cpID", cp.ID)
 
-	serverCmd := exec.CommandContext(ctx, "cargo", "build", "--release", "-p", "server")
-	serverCmd.Dir = cp.DirPath
-	serverCmd.Stdout = writer
-	serverCmd.Stderr = writer
+		serverCmd := exec.CommandContext(
+			ctx,
+			"cargo",
+			"build",
+			"--release",
+			"-p",
+			"server",
+		)
+		serverCmd.Dir = cp.DirPath
+		serverCmd.Stdout = writer
+		serverCmd.Stderr = writer
 
-	if err := serverCmd.Run(); err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("server build timed out after %v", timeout)
+		if err := serverCmd.Run(); err != nil {
+			if ctx.Err() == context.DeadlineExceeded {
+				return fmt.Errorf("server build timed out after %v", timeout)
+			}
+
+			return fmt.Errorf("server build failed: %w", err)
 		}
-
-		return fmt.Errorf("server build failed: %w", err)
 	}
 
 	// Step 2: Build game client (WASM via Trunk).
 	b.logger.Info("building WASM client", "worldID", cp.WorldID, "cpID", cp.ID)
+
+	// 2D templates are single-crate projects — trunk runs from root.
+	// 3D templates have a client/ subdirectory.
+	trunkDir := filepath.Join(cp.DirPath, "client")
+	if _, statErr := os.Stat(filepath.Join(trunkDir, "index.html")); statErr != nil {
+		trunkDir = cp.DirPath
+	}
 
 	clientCmd := exec.CommandContext( //nolint:gosec // G204: trunk with internal path arg
 		ctx,
@@ -109,7 +126,7 @@ func (b *Builder) Build(cp *sqlc.Checkpoint, isInitial bool) error {
 		"--dist",
 		wasmDir,
 	)
-	clientCmd.Dir = filepath.Join(cp.DirPath, "client")
+	clientCmd.Dir = trunkDir
 	clientCmd.Stdout = writer
 	clientCmd.Stderr = writer
 

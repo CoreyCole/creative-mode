@@ -1,0 +1,31 @@
+{
+    "id": "lobby",
+    "name": "Lobby",
+    "background_color": "#1a1a2e",
+    "hotspots": [
+        {
+            "id": "welcome-sign",
+            "label": "Welcome",
+            "x": 400.0,
+            "y": 200.0,
+            "width": 200.0,
+            "height": 80.0,
+            "action": {
+                "type": "dialog",
+                "text": "Welcome to Creative Mode! Click hotspots to interact."
+            }
+        },
+        {
+            "id": "portal",
+            "label": "Garden",
+            "x": 100.0,
+            "y": 400.0,
+            "width": 150.0,
+            "height": 150.0,
+            "action": {
+                "type": "navigate_room",
+                "room": "garden"
+            }
+        }
+    ]
+}

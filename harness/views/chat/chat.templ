@@ -4,18 +4,21 @@ import "creative-mode/harness/views/shared"
 
 // ChatPanel renders the tabbed chat UI for the world overlay.
 templ ChatPanel() {
-	<div class="chat-panel">
-		<div class="tab-bar">
-			<button data-on:click={ CE.SelectTab("global") }
+	<div class="w-80 flex flex-col border-l border-border bg-[#111]">
+		<div class="flex border-b border-border">
+			<button class="flex-1 py-2 bg-transparent border-b-2 border-transparent text-muted-foreground cursor-pointer text-[13px] hover:text-foreground/80"
+				data-on:click={ CE.SelectTab("global") }
 				data-class={ CE.TabActiveClass("global") }>Global</button>
-			<button data-on:click={ CE.SelectTab("world") }
+			<button class="flex-1 py-2 bg-transparent border-b-2 border-transparent text-muted-foreground cursor-pointer text-[13px] hover:text-foreground/80"
+				data-on:click={ CE.SelectTab("world") }
 				data-class={ CE.TabActiveClass("world") }>World</button>
-			<button data-on:click={ CE.SelectLineageTab() }
+			<button class="flex-1 py-2 bg-transparent border-b-2 border-transparent text-muted-foreground cursor-pointer text-[13px] hover:text-foreground/80"
+				data-on:click={ CE.SelectLineageTab() }
 				data-class={ CE.TabActiveClass("lineage") }>Lineage</button>
 		</div>
-		<div id="chat-log" class="message-log"></div>
-		<div id="lineage-view" class="message-log" data-show="$active_tab === 'lineage'" style="display: none;"></div>
-		<div class="chat-input-bar" data-show="$active_tab !== 'lineage'">
+		<div id="chat-log" class="flex-1 overflow-y-auto px-3 py-2 flex flex-col gap-1"></div>
+		<div id="lineage-view" class="flex-1 overflow-y-auto px-3 py-2 flex flex-col gap-1" data-show="$active_tab === 'lineage'" style="display: none;"></div>
+		<div class="flex gap-1.5 px-3 py-2 border-t border-border" data-show="$active_tab !== 'lineage'">
 			@ChatInputBar()
 		</div>
 	</div>
@@ -23,29 +26,29 @@ templ ChatPanel() {
 
 // Message is an SSE fragment for an individual chat message (appended to #chat-log).
 templ Message(username, avatarURL, content, timestamp string) {
-	<div class="message chat-message">
+	<div class="text-[13px] leading-snug">
 		if avatarURL != "" {
-			<img src={ avatarURL } class="avatar-xs" alt=""/>
+			<img src={ avatarURL } class="w-[18px] h-[18px] rounded-full align-middle inline" alt=""/>
 		}
-		<span class="username">{ username }</span>
-		<span class="content">{ content }</span>
-		<time class="ts">{ timestamp }</time>
+		<span class="font-semibold mr-1.5">{ username }</span>
+		<span class="break-words">{ content }</span>
+		<time class="text-muted-foreground/60 text-[11px] ml-1">{ timestamp }</time>
 	</div>
 }
 
 // SystemNotification is an SSE fragment for system notifications.
 templ SystemNotification(content string) {
-	<div class="message system-notification">
-		<span class="sys-badge">[sys]</span>
-		<span class="content">{ content }</span>
+	<div class="text-[13px] leading-snug text-muted-foreground italic">
+		<span class="text-muted-foreground/60 text-[11px] mr-1">[sys]</span>
+		<span class="break-words">{ content }</span>
 	</div>
 }
 
 // BuildReadyNotification is an SSE fragment for build completion with a play button.
 templ BuildReadyNotification(worldID, cpID, worldName string) {
-	<div class="message system-notification build-ready">
-		<span class="sys-badge">[build]</span>
-		<span class="content">Build ready in { worldName }</span>
-		@shared.LoadCheckpointButton(worldID, cpID, "Play", "play-btn")
+	<div class="text-[13px] leading-snug text-muted-foreground italic">
+		<span class="text-muted-foreground/60 text-[11px] mr-1">[build]</span>
+		<span class="break-words">Build ready in { worldName }</span>
+		@shared.LoadCheckpointButton(worldID, cpID, "Play")
 	</div>
 }

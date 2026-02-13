@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Creative Mode</title>
+    <style>
+        html, body { margin: 0; padding: 0; overflow: hidden; width: 100%; height: 100%; }
+        canvas { width: 100%; height: 100%; display: block; }
+    </style>
+</head>
+<body>
+<canvas id="bevy-canvas"></canvas>
+<script>
+// Prevent browser shortcuts from interfering with game keybinds.
+// Layer 1: Block F-keys and Ctrl+key combos when canvas has focus.
+document.addEventListener('keydown', function(e) {
+  // Block F-keys (F1-F12) — caret mode, refresh, fullscreen, devtools, etc.
+  if (e.key.startsWith('F') && e.key.length <= 3) {
+    e.preventDefault();
+    return;
+  }
+  // Block Ctrl+key browser shortcuts (refresh, close tab, save, find, print).
+  // Allow Cmd/Meta on macOS (users expect Cmd+Tab, Cmd+Q to work).
+  if (e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+    return;
+  }
+}, { capture: true });
+
+// Layer 2: Keyboard Lock API — capture system-level keys when pointer-locked.
+document.addEventListener('pointerlockchange', function() {
+  if (document.pointerLockElement) {
+    if (navigator.keyboard && navigator.keyboard.lock) {
+      navigator.keyboard.lock().catch(function() {});
+    }
+  } else {
+    if (navigator.keyboard && navigator.keyboard.unlock) {
+      navigator.keyboard.unlock();
+    }
+  }
+});
+
+// Bridge postMessage from harness overlay to WASM debug query system.
+// Parent sends: { type: 'debug-query', id: '...', query: {...} }
+// We write to window.__debugRequest, poll __debugResponse, then postMessage back.
+window.addEventListener('message', async (event) => {
+  if (event.data?.type !== 'debug-query') return;
+
+  window.__debugRequest = JSON.stringify(event.data.query);
+
+  // Poll for response (WASM processes next frame, typically <16ms)
+  let response = null;
+  for (let i = 0; i < 20; i++) {
+    await new Promise(r => setTimeout(r, 16));
+    if (window.__debugResponse) {
+      response = JSON.parse(window.__debugResponse);
+      window.__debugResponse = null;
+      break;
+    }
+  }
+
+  window.parent.postMessage({
+    type: 'debug-response',
+    id: event.data.id,
+    response: response ?? { error: 'timeout' },
+  }, '*');
+});
+</script>
+</body>
+</html>

@@ -49,3 +49,11 @@ func (p *PortAllocator) Release(port int) {
 	defer p.mu.Unlock()
 	delete(p.inUse, port)
 }
+
+// MarkInUse marks a port as in-use without allocating it.
+// Used during recovery to reserve ports for existing tmux sessions.
+func (p *PortAllocator) MarkInUse(port int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.inUse[port] = true
+}

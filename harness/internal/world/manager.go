@@ -5,11 +5,17 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strings"
+	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 
@@ -20,26 +26,27 @@ import (
 
 // Manager handles world creation, checkpoint forking, and user positions.
 type Manager struct {
-	db          *db.DB
-	logger      *slog.Logger
-	dataDir     string // absolute path to data/
-	templateDir string // absolute path to template/
-	Builder     *build.Builder
-	GameServers *GameServerManager
-	rateLimiter *RateLimiter
+	db           *db.DB
+	logger       *slog.Logger
+	dataDir      string            // absolute path to data/
+	templateDirs map[string]string // template type → absolute path
+	Builder      *build.Builder
+	GameServers  *GameServerManager
+	rateLimiter  *RateLimiter
 }
 
 // NewManager creates a new world manager.
 func NewManager(
 	database *db.DB,
 	logger *slog.Logger,
-	dataDir, templateDir string,
+	dataDir string,
+	templateDirs map[string]string,
 ) *Manager {
 	return &Manager{
-		db:          database,
-		logger:      logger,
-		dataDir:     dataDir,
-		templateDir: templateDir,
+		db:           database,
+		logger:       logger,
+		dataDir:      dataDir,
+		templateDirs: templateDirs,
 		Builder: build.NewBuilder(
 			database,
 			logger,
@@ -55,36 +62,39 @@ func NewManager(
 // and triggering an initial build.
 func (m *Manager) CreateWorld(
 	ctx context.Context,
-	name, description, userID string,
+	name, description, userID, templateType string,
 ) (*sqlc.World, error) {
+	templateDir, ok := m.templateDirs[templateType]
+	if !ok {
+		return nil, fmt.Errorf("unknown template type: %s", templateType)
+	}
+
 	worldID := uuid.New().String()[:8]
 	cpID := uuid.New().String()[:8]
 
-	cpDir := filepath.Join(m.dataDir, "worlds", worldID, cpID)
+	// Directory name: <name>_<timestamp>_<id> for human-readable ls output.
+	dirName := fmt.Sprintf(
+		"%s_%s_%s",
+		sanitizeName(name),
+		time.Now().Format("2006-01-02_15-04-05"),
+		worldID,
+	)
+	worldDir := filepath.Join(m.dataDir, "worlds", dirName)
+	cpDir := filepath.Join(worldDir, cpID)
 	if err := os.MkdirAll(cpDir, 0o750); err != nil {
 		return nil, fmt.Errorf("creating checkpoint directory: %w", err)
 	}
 
 	// Copy template (excluding target/).
-	rsync := exec.CommandContext( //nolint:gosec // G204: internal command with controlled args
-		ctx,
-		"rsync",
-		"-a",
-		"--exclude=target",
-		m.templateDir+"/",
-		cpDir+"/",
-	)
-	if out, err := rsync.CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("copying template: %s: %w", out, err)
+	if err := copyDir(templateDir, cpDir, []string{"target"}); err != nil {
+		_ = os.RemoveAll(worldDir)
+		return nil, fmt.Errorf("copying template: %w", err)
 	}
 
 	// Clone pre-built target/ if it exists in the template.
-	if err := cloneBuildCache(ctx, m.templateDir, cpDir); err != nil {
+	if err := cloneBuildCache(ctx, templateDir, cpDir); err != nil {
 		m.logger.Warn("failed to clone template build cache", "error", err)
 	}
-
-	// DB inserts in a transaction.
-	worldDir := filepath.Join(m.dataDir, "worlds", worldID)
 	tx, txErr := m.db.BeginTx(ctx)
 	if txErr != nil {
 		_ = os.RemoveAll(worldDir)
@@ -99,10 +109,11 @@ func (m *Manager) CreateWorld(
 	qtx := m.db.WithTx(tx)
 
 	if err := qtx.CreateWorld(ctx, sqlc.CreateWorldParams{
-		ID:          worldID,
-		Name:        name,
-		Description: sql.NullString{String: description, Valid: description != ""},
-		CreatedBy:   sql.NullString{String: userID, Valid: userID != ""},
+		ID:           worldID,
+		Name:         name,
+		Description:  sql.NullString{String: description, Valid: description != ""},
+		CreatedBy:    sql.NullString{String: userID, Valid: userID != ""},
+		TemplateType: templateType,
 	}); err != nil {
 		_ = os.RemoveAll(worldDir)
 		return nil, fmt.Errorf("inserting world: %w", err)
@@ -142,7 +153,7 @@ func (m *Manager) CreateWorld(
 	go func() {
 		bgCtx := context.Background()
 
-		if buildErr := m.Builder.Build(cp, true); buildErr != nil {
+		if buildErr := m.Builder.Build(cp, true, templateType); buildErr != nil {
 			m.logger.Error(
 				"initial build failed",
 				"worldID",
@@ -165,14 +176,46 @@ func (m *Manager) CreateWorld(
 			Status: "ready",
 			ID:     cpID,
 		})
+		if cp.WasmPath.Valid {
+			_ = m.db.UpdateCheckpointWasmPath(bgCtx, sqlc.UpdateCheckpointWasmPathParams{
+				WasmPath: cp.WasmPath,
+				ID:       cpID,
+			})
+		}
 		m.Builder.PostBuild(cp)
+
+		// 2D worlds have no game server.
+		if templateType == "2d" {
+			return
+		}
+
+		// Start game server so the world is immediately playable.
+		srv, srvErr := m.GameServers.Connect(worldID, cpID, cp.DirPath)
+		if srvErr != nil {
+			m.logger.Error("failed to start game server after initial build",
+				"worldID", worldID, "cpID", cpID, "error", srvErr)
+		} else {
+			_, _ = m.db.UpdateCheckpointServerPort(
+				bgCtx,
+				sqlc.UpdateCheckpointServerPortParams{
+					ServerPort: sql.NullInt64{
+						Int64: int64(srv.Port),
+						Valid: true,
+					},
+					ID: cpID,
+				},
+			)
+			m.logger.Info("game server started after initial build",
+				"worldID", worldID, "cpID", cpID, "port", srv.Port)
+		}
 	}()
 
 	return &sqlc.World{
-		ID:          worldID,
-		Name:        name,
-		Description: sql.NullString{String: description, Valid: description != ""},
-		CreatedBy:   sql.NullString{String: userID, Valid: userID != ""},
+		ID:           worldID,
+		Name:         name,
+		Description:  sql.NullString{String: description, Valid: description != ""},
+		CreatedBy:    sql.NullString{String: userID, Valid: userID != ""},
+		TemplateType: templateType,
 	}, nil
 }
 
@@ -195,19 +238,11 @@ func (m *Manager) ForkCheckpoint(
 	}
 
 	newID := uuid.New().String()[:8]
-	newDir := filepath.Join(m.dataDir, "worlds", worldID, newID)
+	newDir := filepath.Join(filepath.Dir(sourceCP.DirPath), newID)
 
 	// Copy source files (excluding target/).
-	rsync := exec.CommandContext( //nolint:gosec // G204: internal command with controlled args
-		ctx,
-		"rsync",
-		"-a",
-		"--exclude=target",
-		sourceCP.DirPath+"/",
-		newDir+"/",
-	)
-	if out, err := rsync.CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("copying checkpoint: %s: %w", out, err)
+	if err := copyDir(sourceCP.DirPath, newDir, []string{"target"}); err != nil {
+		return nil, fmt.Errorf("copying checkpoint: %w", err)
 	}
 
 	// Clone build cache (non-fatal if it fails).
@@ -307,9 +342,265 @@ func (m *Manager) SetUserPosition(
 	})
 }
 
+// EnsureTemplateWorld is an idempotent startup function that ensures a
+// "Template World" exists with running dev servers (cargo watch + trunk serve).
+// Creates it if missing, recovers it if stale from a crash.
+func (m *Manager) EnsureTemplateWorld(ctx context.Context) (string, error) {
+	// Search for existing template world.
+	worlds, err := m.db.ListWorlds(ctx)
+	if err != nil {
+		return "", fmt.Errorf("listing worlds: %w", err)
+	}
+
+	for _, w := range worlds {
+		if w.Name != "Template World" {
+			continue
+		}
+
+		worldID, ensureErr := m.ensureTemplateDevReady(ctx, w.ID)
+		if ensureErr != nil {
+			return "", fmt.Errorf("ensuring template dev ready: %w", ensureErr)
+		}
+
+		return worldID, nil
+	}
+
+	// No template world — create one in dev mode.
+	worldID, err := m.createTemplateWorldDev(ctx)
+	if err != nil {
+		return "", fmt.Errorf("creating template world (dev): %w", err)
+	}
+
+	return worldID, nil
+}
+
+// createTemplateWorldDev creates a template world that points directly at
+// m.templateDirs["3d"] (no file copy). Dev servers (cargo watch + trunk serve) handle
+// compilation automatically.
+func (m *Manager) createTemplateWorldDev(ctx context.Context) (string, error) {
+	worldID := uuid.New().String()[:8]
+	cpID := uuid.New().String()[:8]
+
+	tx, txErr := m.db.BeginTx(ctx)
+	if txErr != nil {
+		return "", fmt.Errorf("beginning transaction: %w", txErr)
+	}
+	defer func() {
+		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+			m.logger.Error("rollback failed", "error", rbErr)
+		}
+	}()
+
+	qtx := m.db.WithTx(tx)
+
+	if err := qtx.CreateWorld(ctx, sqlc.CreateWorldParams{
+		ID:   worldID,
+		Name: "Template World",
+		Description: sql.NullString{
+			String: "Auto-provisioned default world",
+			Valid:  true,
+		},
+		TemplateType: "3d",
+	}); err != nil {
+		return "", fmt.Errorf("inserting world: %w", err)
+	}
+
+	if err := qtx.CreateCheckpoint(ctx, sqlc.CreateCheckpointParams{
+		ID:      cpID,
+		WorldID: worldID,
+		Status:  "ready",
+		DirPath: m.templateDirs["3d"],
+	}); err != nil {
+		return "", fmt.Errorf("inserting root checkpoint: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("committing transaction: %w", err)
+	}
+
+	// Start dev servers.
+	if err := m.startTemplateDevServers(ctx, worldID, cpID); err != nil {
+		return "", fmt.Errorf("starting dev servers: %w", err)
+	}
+
+	m.logger.Info("template world created (dev mode)",
+		"worldID", worldID, "cpID", cpID)
+
+	return worldID, nil
+}
+
+// ensureTemplateDevReady handles an existing template world: ensures dir_path
+// points at m.templateDirs["3d"] (migrates if stale) and starts dev servers.
+func (m *Manager) ensureTemplateDevReady(
+	ctx context.Context, worldID string,
+) (string, error) {
+	checkpoints, err := m.db.GetCheckpointTree(ctx, worldID)
+	if err != nil {
+		return "", fmt.Errorf("getting checkpoint tree: %w", err)
+	}
+
+	if len(checkpoints) == 0 {
+		return "", fmt.Errorf("template world %s has no checkpoints", worldID)
+	}
+
+	cp := checkpoints[0]
+
+	// Migrate dir_path to templateDir if stale (e.g. from a prior prod setup).
+	if cp.DirPath != m.templateDirs["3d"] {
+		m.logger.Info("migrating template world dir_path",
+			"worldID", worldID, "cpID", cp.ID,
+			"old", cp.DirPath, "new", m.templateDirs["3d"])
+		if err := m.db.UpdateCheckpointDirPath(ctx, sqlc.UpdateCheckpointDirPathParams{
+			DirPath: m.templateDirs["3d"],
+			ID:      cp.ID,
+		}); err != nil {
+			return "", fmt.Errorf("updating dir_path: %w", err)
+		}
+	}
+
+	// Start dev servers (idempotent — reuses existing sessions).
+	if err := m.startTemplateDevServers(ctx, worldID, cp.ID); err != nil {
+		return "", fmt.Errorf("starting dev servers: %w", err)
+	}
+
+	return worldID, nil
+}
+
+// startTemplateDevServers starts cargo watch (game server) and trunk serve
+// (WASM client) for the template world. Both are idempotent — they reuse
+// existing tmux sessions if alive.
+func (m *Manager) startTemplateDevServers(
+	ctx context.Context, worldID, cpID string,
+) error {
+	// Start cargo watch game server.
+	srv, err := m.GameServers.ConnectDev(worldID, cpID, m.templateDirs["3d"])
+	if err != nil {
+		return fmt.Errorf("starting dev game server: %w", err)
+	}
+
+	// Sync server port to DB.
+	_, _ = m.db.UpdateCheckpointServerPort(ctx, sqlc.UpdateCheckpointServerPortParams{
+		ServerPort: sql.NullInt64{Int64: int64(srv.Port), Valid: true},
+		ID:         cpID,
+	})
+
+	// Start trunk serve.
+	trunkPort, err := m.GameServers.StartTrunkServe(
+		worldID, cpID, m.templateDirs["3d"],
+	)
+	if err != nil {
+		return fmt.Errorf("starting trunk serve: %w", err)
+	}
+
+	m.logger.Info("template dev servers running",
+		"worldID", worldID, "cpID", cpID,
+		"gamePort", srv.Port, "trunkPort", trunkPort)
+
+	return nil
+}
+
 // Shutdown stops all game servers.
 func (m *Manager) Shutdown() {
 	m.GameServers.Shutdown()
+}
+
+var multiHyphen = regexp.MustCompile(`-{2,}`)
+
+const maxSlugLen = 48
+
+// sanitizeName converts a world name to a filesystem-safe slug:
+// lowercase, non-alphanum replaced with hyphens, trimmed, max 48 chars.
+func sanitizeName(name string) string {
+	var b strings.Builder
+	for _, r := range strings.TrimSpace(name) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(unicode.ToLower(r))
+		} else {
+			b.WriteByte('-')
+		}
+	}
+	s := multiHyphen.ReplaceAllString(b.String(), "-")
+	s = strings.Trim(s, "-")
+	if len(s) > maxSlugLen {
+		s = s[:maxSlugLen]
+		s = strings.TrimRight(s, "-")
+	}
+	if s == "" {
+		s = "world"
+	}
+	return s
+}
+
+// copyDir recursively copies src into dst, skipping any top-level directories
+// whose names appear in exclude. File permissions are preserved.
+func copyDir(src, dst string, exclude []string) error {
+	excluded := make(map[string]bool, len(exclude))
+	for _, name := range exclude {
+		excluded[name] = true
+	}
+
+	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+
+		// Skip excluded top-level directories.
+		if d.IsDir() && filepath.Dir(rel) == "." && excluded[d.Name()] {
+			return filepath.SkipDir
+		}
+
+		target := filepath.Join(dst, rel)
+
+		if d.IsDir() {
+			return os.MkdirAll(target, d.Type().Perm()|0o750)
+		}
+
+		// Copy symlinks as symlinks.
+		if d.Type()&fs.ModeSymlink != 0 {
+			link, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			return os.Symlink(link, target)
+		}
+
+		return copyFile(path, target)
+	})
+}
+
+// copyFile copies a single file, preserving permissions.
+func copyFile(src, dst string) error {
+	//nolint:gosec // G304: internal paths from controlled directory walks
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = in.Close() }()
+
+	info, err := in.Stat()
+	if err != nil {
+		return err
+	}
+
+	//nolint:gosec // G304: internal paths from controlled directory walks
+	out, err := os.OpenFile(
+		dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode().Perm(),
+	)
+	if err != nil {
+		return err
+	}
+
+	if _, err = io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+
+	return out.Close()
 }
 
 // cloneBuildCache copies the target/ directory using platform-appropriate

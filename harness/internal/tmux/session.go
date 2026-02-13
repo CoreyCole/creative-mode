@@ -25,23 +25,31 @@ func NewSession(worldID, cpID, workDir string) *Session {
 
 // Create starts a new tmux session with CM_* environment variables.
 // Hook scripts in .claude/hooks/ use these env vars to tag their JSONL events
-// and POST to the harness.
+// and POST to the harness. Extra env vars (KEY=VALUE strings) are appended.
 func (s *Session) Create(
 	ctx context.Context,
 	worldID, cpID, logsDir, harnessURL string,
+	extraEnv ...string,
 ) error {
 	logDir := filepath.Join(logsDir, "worlds", worldID, cpID)
 	if err := os.MkdirAll(logDir, 0o750); err != nil {
 		return fmt.Errorf("creating log dir: %w", err)
 	}
 
-	return exec.CommandContext( //nolint:gosec // G204: tmux with controlled args
-		ctx, "tmux", "new-session", "-d",
+	args := []string{
+		"new-session", "-d",
 		"-s", s.Name, "-c", s.WorkDir,
-		"-e", "CM_WORLD_ID="+worldID,
-		"-e", "CM_CHECKPOINT_ID="+cpID,
-		"-e", "CM_HARNESS_URL="+harnessURL,
-		"-e", "CM_LOG_DIR="+logDir,
+		"-e", "CM_WORLD_ID=" + worldID,
+		"-e", "CM_CHECKPOINT_ID=" + cpID,
+		"-e", "CM_HARNESS_URL=" + harnessURL,
+		"-e", "CM_LOG_DIR=" + logDir,
+	}
+	for _, env := range extraEnv {
+		args = append(args, "-e", env)
+	}
+
+	return exec.CommandContext( //nolint:gosec // G204: tmux with controlled args
+		ctx, "tmux", args...,
 	).Run()
 }
 

@@ -6,22 +6,36 @@ import (
 )
 
 templ CheckpointTree(checkpoints []sqlc.Checkpoint, currentCPID string, worldID string) {
-	<div class="checkpoint-tree" data-show="$show_checkpoint_tree" style="display: none;">
-		<h3>Checkpoints</h3>
+	<div class="fixed top-[44px] left-0 w-[280px] h-[calc(100vh-44px-80px)] bg-[rgba(17,17,17,0.95)] backdrop-blur-lg border-r border-border overflow-y-auto p-3 z-20"
+		data-show="$show_checkpoint_tree" style="display: none;">
+		<h3 class="mb-3 text-sm font-semibold">Checkpoints</h3>
 		for _, cp := range checkpoints {
-			<div class={ "tree-node", templ.KV("tree-node-current", cp.ID == currentCPID) }>
-				<span class={ "status-dot", "status-" + cp.Status }></span>
+			<div class={ "flex items-center gap-1.5 px-2 py-1.5 rounded text-[13px]", templ.KV("bg-blue-950/60", cp.ID == currentCPID) }>
+				@StatusDot(cp.Status)
 				if cp.Name.Valid {
-					<span class="node-name">{ cp.Name.String }</span>
+					<span class="font-medium">{ cp.Name.String }</span>
 				} else if cp.Prompt.Valid {
-					<span class="node-prompt">{ TruncateStr(cp.Prompt.String, 40) }</span>
+					<span class="text-muted-foreground italic">{ TruncateStr(cp.Prompt.String, 40) }</span>
 				} else {
-					<span class="node-name">Root</span>
+					<span class="font-medium">Root</span>
 				}
 				if cp.ID != currentCPID && cp.Status == "ready" {
-					@shared.LoadCheckpointButton(worldID, cp.ID, "Load", "btn btn-xs")
+					@shared.LoadCheckpointButton(worldID, cp.ID, "Load")
 				}
 			</div>
 		}
 	</div>
+}
+
+templ StatusDot(status string) {
+	switch status {
+		case "ready":
+			<span class="w-2 h-2 rounded-full shrink-0 bg-green-500"></span>
+		case "building":
+			<span class="w-2 h-2 rounded-full shrink-0 bg-blue-500"></span>
+		case "failed":
+			<span class="w-2 h-2 rounded-full shrink-0 bg-red-500"></span>
+		default:
+			<span class="w-2 h-2 rounded-full shrink-0 bg-muted-foreground"></span>
+	}
 }

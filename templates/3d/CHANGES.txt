@@ -1,0 +1,4 @@
+Added browser shortcut prevention so F-keys (F1-F12) and Ctrl+key combos
+don't trigger browser features (caret mode, refresh, save dialog, etc.)
+during gameplay. Also added Keyboard Lock API integration that captures
+system-level keys when pointer lock is active, for even deeper key capture.

@@ -327,6 +327,61 @@ func (s *Server) handleWorldSSE(c echo.Context) error {
 }
 ```
 
+## Game Servers (tmux-based)
+
+Game servers run in dedicated tmux sessions named `cm-server-{worldID}-{cpID}`. This makes them survive harness restarts — on startup, `GameServerManager.Recover()` scans `tmux list-sessions` and re-registers any surviving servers.
+
+### Two Modes
+
+| Mode | Command | When |
+|------|---------|------|
+| `prod` | `./target/release/server` | After build completes (`BuildCheckpoint`) |
+| `dev` | `cargo watch -w shared -w server -x 'run -p server'` | During Claude editing session (`HandlePrompt`) |
+
+### Session Naming
+
+- Game server: `cm-server-{worldID}-{cpID}` (parseable — both IDs are 8-char hex, no hyphens)
+- Claude Code: `cm-{worldID}-{cpID}` (managed by `internal/tmux/`)
+
+### Environment Variables
+
+Each tmux session gets `GAME_PORT`, `BRP_PORT` (GAME_PORT+1000), and `CM_SERVER_MODE` (prod/dev). Recovery reads these via `tmux show-environment`.
+
+### Lifecycle
+
+1. **Prompt submitted** → `HandlePrompt` forks checkpoint, starts dev server (`ConnectDev`), creates Claude tmux session with `CM_GAME_PORT`/`CM_BRP_PORT` env vars
+2. **Claude editing** → dev server auto-rebuilds on file changes, inner Claude can query BRP
+3. **Claude stops** → `BuildCheckpoint` kills dev server + Claude session, runs release build, starts prod server (`Connect`)
+4. **Harness restart** → `Recover()` finds surviving tmux sessions, syncs ports back to SQLite
+
+### Key Methods (`GameServerManager`)
+
+| Method | Purpose |
+|--------|---------|
+| `Connect(worldID, cpID, dir)` | Start/reuse prod server |
+| `ConnectDev(worldID, cpID, dir)` | Start/reuse dev server (cargo watch) |
+| `GetServer(worldID, cpID)` | Lookup with liveness check (cleans stale entries) |
+| `StopByWorldExcept(worldID, keepCPID)` | Kill all servers for a world except one |
+| `Recover()` | Scan tmux sessions on startup, re-register servers |
+| `RecoveredServers()` | Snapshot for DB port sync |
+| `Shutdown()` | Kill all (graceful exit only — crash leaves sessions alive) |
+
+### Logging
+
+Game server output is captured via `tmux pipe-pane` to `{logsDir}/worlds/{worldID}/{cpID}/game-server.log` (raw text, not JSONL). Build logs remain JSONL.
+
+### Status Endpoint
+
+`GET /world/:worldID/status` returns JSON with the user's current checkpoint and game server state:
+```json
+{
+  "world_id": "abc12345",
+  "checkpoint_id": "def67890",
+  "build_status": "ready",
+  "game_server": { "running": true, "port": 9001, "brp_port": 10001, "mode": "prod" }
+}
+```
+
 ## Build & Development
 
 ```bash

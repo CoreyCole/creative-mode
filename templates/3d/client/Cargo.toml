@@ -4,9 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bevy = { workspace = true, features = ["3d"] }
+bevy = { workspace = true, features = ["3d", "jpeg"] }
 lightyear = { workspace = true }
 shared = { path = "../shared" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+js-sys = "0.3"
 wasm-bindgen = { workspace = true }
 web-sys = { version = "0.3", features = ["Window", "Location", "UrlSearchParams", "Crypto"] }
 

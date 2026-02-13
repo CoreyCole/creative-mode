@@ -35,6 +35,7 @@ func (c *ChatExpr) SelectLineageTab() string {
 // TabActiveClass returns the data-class expression for tab active styling.
 func (c *ChatExpr) TabActiveClass(tab string) string {
 	return c.s.DataClass(map[string]string{
-		"tab-active": c.s.Equals("active_tab", tab),
+		"text-foreground":  c.s.Equals("active_tab", tab),
+		"border-b-primary": c.s.Equals("active_tab", tab),
 	})
 }

@@ -12,6 +12,7 @@ bevy = { workspace = true, default-features = false, features = [
     "bevy_color",
     "multi_threaded",
     "sysinfo_plugin",
+    "bevy_remote",
 ] }
 lightyear = { workspace = true }
 shared = { path = "../shared" }

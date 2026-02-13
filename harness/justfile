@@ -16,6 +16,7 @@ sqlc:
 generate:
     sqlc generate
     templ generate
+    just build-tailwind
 
 fmt:
     golangci-lint fmt ./...
@@ -23,14 +24,35 @@ fmt:
 lint:
     golangci-lint run ./...
 
+# --- Tailwind CSS ---
+
+# Build Tailwind CSS with content-hash filename for cache busting
+build-tailwind:
+    #!/usr/bin/env bash
+    echo "Building Tailwind CSS..."
+    pnpm exec tailwindcss -i static/css/index.css -o static/css/out.css \
+        --content "./views/**/*"
+    if [ -f static/css/out.css ]; then
+        HASH=$(shasum -a 256 static/css/out.css | cut -d' ' -f1 | head -c8)
+        rm -f static/css/out.*.css
+        cp static/css/out.css "static/css/out.$HASH.css"
+        echo "Created static/css/out.$HASH.css"
+    fi
+
+# Watch mode for Tailwind (dev, no hashing)
+tailwind-watch:
+    pnpm exec tailwindcss -i static/css/index.css -o static/css/out.css \
+        --content "./views/**/*" --watch
+
 # --- Development (Docker + Host Watcher) ---
 
-# Start everything: Docker container + host file watcher
+# Start everything: Docker container + host file watcher + Tailwind
 live:
     #!/usr/bin/env bash
     trap 'kill 0' EXIT
     just -f {{justfile()}} up &
     sleep 5  # wait for container to be ready
+    just -f {{justfile()}} tailwind-watch &
     just -f {{justfile()}} watch &
     wait
 
@@ -43,6 +65,8 @@ down:
     docker compose down
 
 # Host-side file watcher (native FSEvents, no polling)
+# Note: .rs files are NOT watched here — cargo watch + trunk serve handle
+# Rust rebuilds automatically inside Docker.
 watch:
     #!/usr/bin/env bash
     echo "Watching for file changes..."

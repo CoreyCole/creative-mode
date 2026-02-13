@@ -75,13 +75,38 @@ func (d *DB) WithTx(tx *sql.Tx) *sqlc.Queries {
 	return d.Queries.WithTx(tx)
 }
 
-// runMigrations executes all embedded SQL migration files in order.
+// runMigrations executes all embedded SQL migration files in order,
+// skipping any that have already been applied.
 func (d *DB) runMigrations(ctx context.Context) error {
+	// Create migration tracking table if it doesn't exist.
+	if _, err := d.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS _migrations (
+		name TEXT PRIMARY KEY,
+		applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`); err != nil {
+		return fmt.Errorf("creating migrations table: %w", err)
+	}
+
+	// Bootstrap: for any migration that's not tracked but whose effects
+	// already exist in the schema, mark it as applied to avoid re-running.
+	d.bootstrapExistingMigrations(ctx)
+
 	migrationFiles := []string{
 		"migrations/001_initial.sql",
 		"migrations/002_cascades_indexes.sql",
+		"migrations/003_template_type.sql",
 	}
 	for _, file := range migrationFiles {
+		// Check if already applied.
+		var count int
+		if err := d.db.QueryRowContext(ctx,
+			"SELECT COUNT(*) FROM _migrations WHERE name = ?", file,
+		).Scan(&count); err != nil {
+			return fmt.Errorf("checking migration %s: %w", file, err)
+		}
+		if count > 0 {
+			continue
+		}
+
 		content, err := migrations.ReadFile(file)
 		if err != nil {
 			return fmt.Errorf("reading %s: %w", file, err)
@@ -89,9 +114,51 @@ func (d *DB) runMigrations(ctx context.Context) error {
 		if _, err := d.db.ExecContext(ctx, string(content)); err != nil {
 			return fmt.Errorf("executing %s: %w", file, err)
 		}
+
+		// Record as applied.
+		if _, err := d.db.ExecContext(ctx,
+			"INSERT INTO _migrations (name) VALUES (?)", file,
+		); err != nil {
+			return fmt.Errorf("recording migration %s: %w", file, err)
+		}
 	}
 
 	return nil
+}
+
+// bootstrapExistingMigrations checks each migration's schema effects and marks
+// it as applied if the schema already reflects the change. This handles the
+// case where migrations ran before tracking was introduced, or where the app
+// crashed mid-bootstrap leaving partial tracking state.
+func (d *DB) bootstrapExistingMigrations(ctx context.Context) {
+	// 001: creates the worlds table (and others).
+	var worldsExist int
+	_ = d.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='worlds'",
+	).Scan(&worldsExist)
+	if worldsExist > 0 {
+		_, _ = d.db.ExecContext(ctx,
+			"INSERT OR IGNORE INTO _migrations (name) VALUES (?)",
+			"migrations/001_initial.sql")
+	}
+
+	// 002: creates indexes (idempotent, but mark it if tables exist).
+	if worldsExist > 0 {
+		_, _ = d.db.ExecContext(ctx,
+			"INSERT OR IGNORE INTO _migrations (name) VALUES (?)",
+			"migrations/002_cascades_indexes.sql")
+	}
+
+	// 003: adds template_type column to worlds.
+	var hasCol int
+	_ = d.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM pragma_table_info('worlds') WHERE name='template_type'",
+	).Scan(&hasCol)
+	if hasCol > 0 {
+		_, _ = d.db.ExecContext(ctx,
+			"INSERT OR IGNORE INTO _migrations (name) VALUES (?)",
+			"migrations/003_template_type.sql")
+	}
 }
 
 // GetCheckpointAncestry returns the chain of checkpoints from the given

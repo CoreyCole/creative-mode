@@ -8,6 +8,9 @@ template-target/
 *_templ.go
 context/
 
+# Tailwind CSS build output
+harness/static/css/out*
+
 # Playwright CLI artifacts
 .playwright-cli/
 .playwright/

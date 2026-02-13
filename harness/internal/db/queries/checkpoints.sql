@@ -29,5 +29,8 @@ SELECT id, world_id, parent_checkpoint_id, name, prompt, status,
        dir_path, wasm_path, server_port, created_by, created_at
 FROM checkpoints WHERE world_id = ? ORDER BY created_at ASC;
 
+-- name: UpdateCheckpointDirPath :exec
+UPDATE checkpoints SET dir_path = ? WHERE id = ?;
+
 -- name: CountActiveBuilds :one
 SELECT COUNT(*) FROM checkpoints WHERE created_by = ? AND status = 'building';

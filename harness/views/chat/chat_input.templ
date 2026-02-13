@@ -1,11 +1,26 @@
 package chat
 
-import "github.com/starfederation/datastar-go/datastar"
+import (
+	"github.com/coreycole/datastarui/components/button"
+	"github.com/coreycole/datastarui/components/input"
+	"github.com/starfederation/datastar-go/datastar"
+)
 
 // ChatInputBar is a reusable chat input with send button.
 templ ChatInputBar() {
-	<input placeholder="Type a message..." data-bind-chat_text/>
-	<button data-on:click={ datastar.PostSSE("/api/chat") }
-		data-indicator-fetching
-		data-attr-disabled="$fetching">Send</button>
+	@input.Input(input.InputArgs{
+		Placeholder: "Type a message...",
+		Class:       "flex-1 h-8 text-[13px]",
+		Attributes:  templ.Attributes{"data-bind-chat_text": true},
+	})
+	@button.Button(button.ButtonArgs{
+		Size: "sm",
+		Attributes: templ.Attributes{
+			"data-on:click":          datastar.PostSSE("/api/chat"),
+			"data-indicator-fetching": true,
+			"data-attr-disabled":     "$fetching",
+		},
+	}) {
+		Send
+	}
 }

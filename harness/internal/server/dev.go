@@ -193,6 +193,15 @@ func (s *Server) handleDevRebuild(c echo.Context) error {
 		map[string]string{"status": "building"})
 }
 
+// handleDevRebuildTemplate is a no-op in dev mode — cargo watch + trunk serve
+// handle all template rebuilds automatically inside Docker.
+func (s *Server) handleDevRebuildTemplate(c echo.Context) error {
+	return c.JSON(http.StatusOK, map[string]string{
+		"status":  "no-op",
+		"message": "template uses cargo watch + trunk serve; rebuilds are automatic",
+	})
+}
+
 // handleDevReloadStatic pushes a CSS/JS cache bust to all connected
 // dev SSE clients. No server restart needed.
 func (s *Server) handleDevReloadStatic(c echo.Context) error {

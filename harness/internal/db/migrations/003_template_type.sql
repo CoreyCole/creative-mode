@@ -1,0 +1,1 @@
+ALTER TABLE worlds ADD COLUMN template_type TEXT NOT NULL DEFAULT '3d';

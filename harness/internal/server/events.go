@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -254,24 +255,44 @@ func (s *Server) handleWorldEvent(
 			map[string]any{"build_status": "compiling"},
 		)
 	case events.EventBuildCompleted:
+		cpID, _ := e["cpID"].(string)
+
 		if err := ssePatchSignals(
 			sse,
-			map[string]any{"build_status": "ready"},
+			map[string]any{
+				"build_status":          "ready",
+				"current_checkpoint_id": cpID,
+			},
 		); err != nil {
 			return err
 		}
 
 		worldID, _ := e["worldID"].(string)
-		cpID, _ := e["cpID"].(string)
 		worldName, _ := e["worldName"].(string)
-		return ssePatchChat(
+		if err := ssePatchChat(
 			sse,
 			chat.BuildReadyNotification(
 				worldID,
 				cpID,
 				worldName,
 			),
-		)
+		); err != nil {
+			return err
+		}
+
+		serverPort, _ := e["serverPort"].(int)
+		if serverPort > 0 {
+			script := fmt.Sprintf(
+				"var f=document.getElementById('game-frame');"+
+					"if(f){f.src='/wasm/%s/%s/index.html?server_port=%d';}",
+				worldID, cpID, serverPort,
+			)
+			if err := sse.ExecuteScript(script); err != nil {
+				return err
+			}
+		}
+
+		return nil
 	case events.EventBuildFailed:
 		if err := ssePatchSignals(
 			sse,
@@ -290,6 +311,11 @@ func (s *Server) handleWorldEvent(
 			sse,
 			map[string]any{"build_status": "rate_limited"},
 		)
+	case events.EventExecuteScript:
+		script, _ := e["script"].(string)
+		if script != "" {
+			return sse.ExecuteScript(script)
+		}
 	}
 
 	return nil

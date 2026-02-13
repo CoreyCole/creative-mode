@@ -71,9 +71,10 @@ type UserPosition struct {
 }
 
 type World struct {
-	ID          string
-	Name        string
-	Description sql.NullString
-	CreatedBy   sql.NullString
-	CreatedAt   time.Time
+	ID           string
+	Name         string
+	Description  sql.NullString
+	CreatedBy    sql.NullString
+	CreatedAt    time.Time
+	TemplateType string
 }

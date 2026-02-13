@@ -7,10 +7,25 @@ Multiplayer creative sandbox — Go harness server + Bevy/WASM game client.
 | Directory | Purpose |
 |-----------|---------|
 | `harness/` | Go server (Echo + SQLite + Datastar + templ) — see `harness/CLAUDE.md` |
-| `template/` | Bevy/Rust game template — see `template/CLAUDE.md` |
+| `templates/3d/` | 3D Bevy/Lightyear game template — see `templates/3d/CLAUDE.md` |
+| `templates/2d/` | 2D Bevy room-based template — see `templates/2d/CLAUDE.md` |
 | `scripts/` | Build, format, and setup scripts |
 | `context/` | Reference code (gitignored) |
 | `thoughts/` | Plans, reviews, and notes |
+
+## Running the Server
+
+**IMPORTANT: Always run the harness in Docker, never directly on the host.**
+
+Running `go run .` on the host skips `DEV_MODE=true` and killing it can destroy tmux sessions that manage game servers. Use Docker:
+
+| Command | Purpose |
+|---------|---------|
+| `just live` | Docker + host file watcher + Tailwind (recommended for dev) |
+| `just up` | Docker container only |
+| `just down` | Stop Docker container |
+
+All commands run from `harness/`.
 
 ## Skills
 
@@ -60,5 +75,4 @@ playwright-cli run-code "async page => { await page.evaluate(async () => { await
 just check          # verify Go + Rust + WASM all compile
 just fmt            # format all code
 just setup          # run setup (includes playwright-cli)
-just harness        # run harness dev server
 ```

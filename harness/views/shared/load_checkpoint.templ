@@ -1,11 +1,18 @@
 package shared
 
+import "github.com/coreycole/datastarui/components/button"
+
 // LoadCheckpointButton renders a button that triggers the loadCheckpoint JS function.
-templ LoadCheckpointButton(worldID, cpID, label, class string) {
-	<button class={ class }
-		data-world-id={ worldID }
-		data-cp-id={ cpID }
-		data-on:click="loadCheckpoint(evt.target.dataset.worldId, evt.target.dataset.cpId)">
+templ LoadCheckpointButton(worldID, cpID, label string) {
+	@button.Button(button.ButtonArgs{
+		Size:    "sm",
+		Variant: "secondary",
+		Attributes: templ.Attributes{
+			"data-world-id": worldID,
+			"data-cp-id":    cpID,
+			"data-on:click": "loadCheckpoint(evt.target.dataset.worldId, evt.target.dataset.cpId)",
+		},
+	}) {
 		{ label }
-	</button>
+	}
 }

@@ -38,11 +38,11 @@ func (o *OverlayExpr) ToggleTree() string {
 // BuildStatusDataClass returns the data-class expression for build status styling.
 func (o *OverlayExpr) BuildStatusDataClass() string {
 	return o.s.DataClass(map[string]string{
-		"status-idle":         o.s.Equals("build_status", "idle"),
-		"status-editing":      o.s.Equals("build_status", "editing"),
-		"status-compiling":    o.s.Equals("build_status", "compiling"),
-		"status-ready":        o.s.Equals("build_status", "ready"),
-		"status-failed":       o.s.Equals("build_status", "failed"),
-		"status-rate-limited": o.s.Equals("build_status", "rate_limited"),
+		"text-muted-foreground": o.s.Equals("build_status", "idle"),
+		"text-amber-500":        o.s.Equals("build_status", "editing"),
+		"text-blue-500":         o.s.Equals("build_status", "compiling"),
+		"text-green-500":        o.s.Equals("build_status", "ready"),
+		"text-red-500":          o.s.Equals("build_status", "failed"),
+		"text-orange-500":       o.s.Equals("build_status", "rate_limited"),
 	})
 }

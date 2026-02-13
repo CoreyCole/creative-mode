@@ -23,6 +23,8 @@ use lightyear::prelude::*;
 use lightyear::websocket::client::{WebSocketScheme, WebSocketTarget};
 use serde::Serialize;
 use shared::protocol::*;
+#[cfg(target_family = "wasm")]
+use wasm_bindgen::prelude::*;
 
 // --- Entry Point ---
 
@@ -43,6 +45,8 @@ fn main() {
                     title: "Creative Mode".to_string(),
                     resolution: (1280, 720).into(),
                     prevent_default_event_handling: true,
+                    canvas: Some("#bevy-canvas".into()),
+                    fit_canvas_to_parent: true,
                     ..default()
                 }),
                 ..default()
@@ -102,6 +106,7 @@ fn main() {
 
     // Client systems
     app.add_systems(Startup, (connect_to_server, setup_scene));
+    app.add_systems(FixedFirst, save_previous_positions);
     app.add_systems(
         FixedPreUpdate,
         buffer_input.in_set(InputSystems::WriteClientInputs),
@@ -286,9 +291,34 @@ fn setup_scene(
     ));
 }
 
+// --- Parent Frame Communication ---
+
+/// Send a message to the parent window (harness overlay) via postMessage.
+/// Used to coordinate cursor lock state with overlay visibility.
+#[cfg(target_family = "wasm")]
+fn post_message_to_parent(msg_type: &str) {
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let Ok(Some(parent)) = window.parent() else {
+        return;
+    };
+    let obj = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(
+        &obj,
+        &JsValue::from_str("type"),
+        &JsValue::from_str(msg_type),
+    );
+    let _ = parent.post_message(&obj, "*");
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn post_message_to_parent(_msg_type: &str) {}
+
 // --- Cursor Lock ---
 
-/// Lock cursor on click, unlock on Escape. Detects browser-initiated unlock.
+/// Lock cursor on click, unlock on Escape/Tab. Detects browser-initiated unlock.
+/// Signals the parent harness frame to show/hide the overlay accordingly.
 fn cursor_lock_system(
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -299,16 +329,27 @@ fn cursor_lock_system(
         return;
     };
 
+    // Click to lock cursor and hide overlay
     if mouse_buttons.just_pressed(MouseButton::Left) && !camera_state.cursor_locked {
         cursor.grab_mode = CursorGrabMode::Locked;
         cursor.visible = false;
         camera_state.cursor_locked = true;
+        post_message_to_parent("cursor-locked");
     }
 
+    // Escape unlocks cursor
     if keys.just_pressed(KeyCode::Escape) && camera_state.cursor_locked {
         cursor.grab_mode = CursorGrabMode::None;
         cursor.visible = true;
         camera_state.cursor_locked = false;
+    }
+
+    // Tab unlocks cursor and shows overlay
+    if keys.just_pressed(KeyCode::Tab) && camera_state.cursor_locked {
+        cursor.grab_mode = CursorGrabMode::None;
+        cursor.visible = true;
+        camera_state.cursor_locked = false;
+        post_message_to_parent("cursor-unlocked");
     }
 
     // Detect browser-initiated unlock (WASM Escape interception)
@@ -350,10 +391,11 @@ fn toggle_camera_mode(
 /// Unified camera system supporting first-person and third-person modes.
 fn game_camera(
     time: Res<Time>,
+    fixed_time: Res<Time<Fixed>>,
     accumulated_mouse: Res<AccumulatedMouseMotion>,
     mut camera_state: ResMut<CameraState>,
     mut camera_query: Query<&mut Transform, With<GameCamera>>,
-    player_query: Query<&PlayerPosition, With<Predicted>>,
+    player_query: Query<(&PlayerPosition, Option<&PreviousPlayerPosition>), With<Predicted>>,
 ) {
     let Ok(mut cam_transform) = camera_query.single_mut() else {
         return;
@@ -376,8 +418,15 @@ fn game_camera(
     let yaw = camera_state.yaw;
     let pitch = camera_state.pitch;
 
-    // Get player position if available
-    let player_pos = player_query.iter().next().map(|p| p.0);
+    // Get interpolated player position if available
+    let alpha = fixed_time.overstep_fraction();
+    let player_pos = player_query.iter().next().map(|(p, prev)| {
+        if let Some(prev) = prev {
+            Vec3::lerp(prev.0, p.0, alpha)
+        } else {
+            p.0
+        }
+    });
 
     match camera_state.mode {
         CameraMode::FirstPerson => {
@@ -466,11 +515,28 @@ fn client_movement(
     }
 }
 
+// --- Fixed Timestep Interpolation ---
+
+/// Save current positions before the fixed update so we can interpolate during rendering.
+/// Runs in FixedFirst (before movement), so after all fixed steps complete:
+/// - PreviousPlayerPosition = position before the last step
+/// - PlayerPosition = position after the last step
+/// - overstep_fraction lerps between them for smooth per-frame rendering.
+fn save_previous_positions(mut query: Query<(&PlayerPosition, &mut PreviousPlayerPosition)>) {
+    for (pos, mut prev) in query.iter_mut() {
+        prev.0 = pos.0;
+    }
+}
+
 // --- Entity Spawn Handling ---
 
 /// Marker component for entities that have had their mesh spawned.
 #[derive(Component)]
 struct PlayerMeshSpawned;
+
+/// Stores the player position from the previous fixed timestep for visual interpolation.
+#[derive(Component)]
+struct PreviousPlayerPosition(Vec3);
 
 /// When a predicted entity spawns, adjust its color and add InputMarker.
 fn handle_predicted_spawn(
@@ -509,11 +575,14 @@ fn handle_interpolated_spawn(
 // --- Mesh Sync ---
 
 /// Spawn/update meshes for player entities that have PlayerPosition and PlayerColor.
+/// Uses fixed-timestep interpolation: lerps between previous and current position
+/// using Time<Fixed>::overstep_fraction() for smooth per-frame rendering.
 #[allow(clippy::type_complexity)]
 fn sync_player_meshes(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    fixed_time: Res<Time<Fixed>>,
     new_players: Query<
         (Entity, &PlayerPosition, &PlayerColor),
         (
@@ -522,7 +591,7 @@ fn sync_player_meshes(
         ),
     >,
     mut existing_players: Query<
-        (&PlayerPosition, &mut Transform),
+        (&PlayerPosition, &PreviousPlayerPosition, &mut Transform),
         (
             Or<(With<Predicted>, With<Interpolated>)>,
             With<PlayerMeshSpawned>,
@@ -539,12 +608,15 @@ fn sync_player_meshes(
                 ..default()
             })),
             Transform::from_translation(pos.0 + Vec3::new(0.0, 0.9, 0.0)),
+            PreviousPlayerPosition(pos.0),
             PlayerMeshSpawned,
         ));
     }
 
-    // Update transforms for existing player meshes
-    for (pos, mut transform) in existing_players.iter_mut() {
-        transform.translation = pos.0 + Vec3::new(0.0, 0.9, 0.0);
+    // Interpolate transforms for existing player meshes
+    let alpha = fixed_time.overstep_fraction();
+    for (pos, prev_pos, mut transform) in existing_players.iter_mut() {
+        let interpolated = Vec3::lerp(prev_pos.0, pos.0, alpha);
+        transform.translation = interpolated + Vec3::new(0.0, 0.9, 0.0);
     }
 }

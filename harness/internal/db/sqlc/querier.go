@@ -37,6 +37,7 @@ type Querier interface {
 	ListUsers(ctx context.Context) ([]User, error)
 	ListWorlds(ctx context.Context) ([]World, error)
 	SetUserPosition(ctx context.Context, arg SetUserPositionParams) error
+	UpdateCheckpointDirPath(ctx context.Context, arg UpdateCheckpointDirPathParams) error
 	UpdateCheckpointName(ctx context.Context, arg UpdateCheckpointNameParams) error
 	UpdateCheckpointServerPort(ctx context.Context, arg UpdateCheckpointServerPortParams) (sql.Result, error)
 	UpdateCheckpointStatus(ctx context.Context, arg UpdateCheckpointStatusParams) (sql.Result, error)

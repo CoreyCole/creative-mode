@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"log"
 	"os"
 	"os/signal"
@@ -14,6 +15,7 @@ import (
 	"creative-mode/harness/internal/auth"
 	"creative-mode/harness/internal/claude"
 	"creative-mode/harness/internal/db"
+	"creative-mode/harness/internal/db/sqlc"
 	"creative-mode/harness/internal/events"
 	"creative-mode/harness/internal/logging"
 	"creative-mode/harness/internal/server"
@@ -31,9 +33,18 @@ func main() {
 		log.Fatalf("Failed to create data directory: %v", mkdirErr)
 	}
 
-	templateDir, err := filepath.Abs(filepath.Join("..", "template"))
-	if err != nil {
-		log.Fatalf("Failed to resolve template directory: %v", err)
+	sharedAssetsDir := filepath.Join(dataDir, "shared-assets")
+	if mkdirErr := os.MkdirAll(sharedAssetsDir, 0o750); mkdirErr != nil {
+		log.Fatalf("Failed to create shared-assets directory: %v", mkdirErr)
+	}
+
+	templateDirs := map[string]string{}
+	for _, tmplType := range []string{"3d", "2d"} {
+		dir, tmplErr := filepath.Abs(filepath.Join("..", "templates", tmplType))
+		if tmplErr != nil {
+			log.Fatalf("Failed to resolve %s template directory: %v", tmplType, tmplErr)
+		}
+		templateDirs[tmplType] = dir
 	}
 
 	// Initialize structured logger.
@@ -106,7 +117,66 @@ func main() {
 	}
 
 	// Set up world manager.
-	worldManager := world.NewManager(database, logger, dataDir, templateDir)
+	worldManager := world.NewManager(database, logger, dataDir, templateDirs)
+
+	// Recover game servers from surviving tmux sessions.
+	worldManager.GameServers.Recover()
+	for _, srv := range worldManager.GameServers.RecoveredServers() {
+		// Validate checkpoint still exists in DB.
+		cp, cpErr := database.GetCheckpoint(context.Background(), srv.CPID)
+		if cpErr != nil {
+			logger.Warn("recovered server has no DB checkpoint, killing",
+				"cpID", srv.CPID, "port", srv.Port)
+			worldManager.GameServers.Disconnect(srv.WorldID, srv.CPID)
+
+			continue
+		}
+
+		// Check if this is the template world's dev server — keep it alive.
+		isTemplateDev := false
+		if srv.Mode == world.GameServerModeDev {
+			w, wErr := database.GetWorld(context.Background(), srv.WorldID)
+			if wErr == nil && w.Name == "Template World" {
+				isTemplateDev = true
+			}
+		}
+
+		if !isTemplateDev {
+			// Only keep prod servers for ready checkpoints.
+			if srv.Mode == world.GameServerModeDev || cp.Status != "ready" {
+				logger.Info("killing non-ready recovered server",
+					"cpID", srv.CPID, "status", cp.Status, "mode", srv.Mode)
+				worldManager.GameServers.Disconnect(srv.WorldID, srv.CPID)
+
+				continue
+			}
+		}
+
+		if _, syncErr := database.UpdateCheckpointServerPort(
+			context.Background(),
+			sqlc.UpdateCheckpointServerPortParams{
+				ServerPort: sql.NullInt64{Int64: int64(srv.Port), Valid: true},
+				ID:         srv.CPID,
+			},
+		); syncErr != nil {
+			logger.Warn("failed to sync recovered server port",
+				"cpID", srv.CPID, "port", srv.Port, "error", syncErr)
+		}
+
+		if isTemplateDev {
+			logger.Info("kept template dev server alive",
+				"worldID", srv.WorldID, "cpID", srv.CPID,
+				"port", srv.Port, "trunkPort", srv.TrunkPort)
+		}
+	}
+
+	// Auto-provision template world (non-fatal).
+	templateWorldID, templateErr := worldManager.EnsureTemplateWorld(ctx)
+	if templateErr != nil {
+		logger.Error("failed to ensure template world", "error", templateErr)
+	} else {
+		logger.Info("template world ready", "worldID", templateWorldID)
+	}
 
 	// Set up event bus.
 	eventBus := events.NewEventBus()
@@ -116,6 +186,20 @@ func main() {
 		database, logger, worldManager, worldManager.Builder, eventBus,
 		filepath.Join(dataDir, "logs"), baseURL,
 	)
+
+	// Periodically reap orphaned tmux sessions.
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute) //nolint:mnd // reap interval
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				orchestrator.ReapOrphanedSessions()
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
 	// Set up Echo server.
 	e := echo.New()

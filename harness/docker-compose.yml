@@ -5,15 +5,23 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8080:8080"
+      - "8081:8081"
+      - "9001-9100:9001-9100"
     volumes:
       - ..:/app:cached
       - go-mod-cache:/go/pkg/mod
       - go-build-cache:/root/.cache/go-build
+      - cargo-registry:/usr/local/cargo/registry
+      - cargo-git:/usr/local/cargo/git
     env_file: .env
     environment:
       - CGO_ENABLED=1
       - DEV_MODE=true
+      - TEMPLATE_TRUNK_PORT=8081
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
 
 volumes:
   go-mod-cache:
   go-build-cache:
+  cargo-registry:
+  cargo-git:

@@ -78,17 +78,30 @@ func (o *Orchestrator) HandlePrompt(
 	// Update MEMORY.md with prompt context.
 	updateMemory(cp.DirPath, prompt)
 
-	// Start dev server (cargo watch) — non-fatal if it fails.
+	// Look up world template type.
+	w, wErr := o.db.GetWorld(ctx, worldID)
+	templateType := "3d"
+	if wErr == nil {
+		templateType = w.TemplateType
+	}
+
+	// Start dev server (cargo watch) — non-fatal if it fails. Skip for 2D.
 	var extraEnv []string
-	devSrv, devErr := o.worldManager.GameServers.ConnectDev(worldID, cp.ID, cp.DirPath)
-	if devErr != nil {
-		o.logger.Warn("failed to start dev server",
-			"worldID", worldID, "cpID", cp.ID, "error", devErr)
-	} else {
-		extraEnv = append(extraEnv,
-			fmt.Sprintf("CM_GAME_PORT=%d", devSrv.Port),
-			fmt.Sprintf("CM_BRP_PORT=%d", devSrv.BRPPort),
+	if templateType != "2d" {
+		devSrv, devErr := o.worldManager.GameServers.ConnectDev(
+			worldID,
+			cp.ID,
+			cp.DirPath,
 		)
+		if devErr != nil {
+			o.logger.Warn("failed to start dev server",
+				"worldID", worldID, "cpID", cp.ID, "error", devErr)
+		} else {
+			extraEnv = append(extraEnv,
+				fmt.Sprintf("CM_GAME_PORT=%d", devSrv.Port),
+				fmt.Sprintf("CM_BRP_PORT=%d", devSrv.BRPPort),
+			)
+		}
 	}
 
 	// Create tmux session with CM_* env vars (+ dev server ports if available).
@@ -136,6 +149,13 @@ func (o *Orchestrator) BuildCheckpoint(worldID, cpID string) {
 		return
 	}
 
+	// Look up world template type.
+	w, wErr := o.db.GetWorld(ctx, worldID)
+	templateType := "3d"
+	if wErr == nil {
+		templateType = w.TemplateType
+	}
+
 	worldName := o.worldName(ctx, worldID)
 
 	// Notify: build started.
@@ -144,7 +164,7 @@ func (o *Orchestrator) BuildCheckpoint(worldID, cpID string) {
 
 	// Build (server binary + WASM client).
 	isInitial := !cp.ParentCheckpointID.Valid
-	if buildErr := o.builder.Build(&cp, isInitial); buildErr != nil {
+	if buildErr := o.builder.Build(&cp, isInitial, templateType); buildErr != nil {
 		o.logger.Error("build failed", "cpID", cpID, "error", buildErr)
 		_, _ = o.db.UpdateCheckpointStatus(ctx, sqlc.UpdateCheckpointStatusParams{
 			Status:   "failed",
@@ -180,18 +200,25 @@ func (o *Orchestrator) BuildCheckpoint(worldID, cpID string) {
 		})
 	}
 
-	// Stop old game servers for this world before starting the new one.
-	o.worldManager.GameServers.StopByWorldExcept(worldID, cpID)
+	// Start game server (3D only).
+	var serverPort int
+	if templateType != "2d" {
+		// Stop old game servers for this world before starting the new one.
+		o.worldManager.GameServers.StopByWorldExcept(worldID, cpID)
 
-	// Start game server.
-	srv, err := o.worldManager.GameServers.Connect(worldID, cpID, cp.DirPath)
-	if err != nil {
-		o.logger.Error("failed to start game server", "cpID", cpID, "error", err)
-	} else {
-		_, _ = o.db.UpdateCheckpointServerPort(ctx, sqlc.UpdateCheckpointServerPortParams{
-			ServerPort: sql.NullInt64{Int64: int64(srv.Port), Valid: true},
-			ID:         cpID,
-		})
+		srv, srvErr := o.worldManager.GameServers.Connect(worldID, cpID, cp.DirPath)
+		if srvErr != nil {
+			o.logger.Error("failed to start game server", "cpID", cpID, "error", srvErr)
+		} else {
+			serverPort = srv.Port
+			_, _ = o.db.UpdateCheckpointServerPort(
+				ctx,
+				sqlc.UpdateCheckpointServerPortParams{
+					ServerPort: sql.NullInt64{Int64: int64(srv.Port), Valid: true},
+					ID:         cpID,
+				},
+			)
+		}
 	}
 
 	// Notify: build completed.
@@ -202,11 +229,6 @@ func (o *Orchestrator) BuildCheckpoint(worldID, cpID string) {
 
 	o.createAndPublishMessage(ctx, events.EventBuildCompleted, worldID, cpID,
 		fmt.Sprintf("%s checkpoint ready: '%s'", worldName, promptSnippet))
-
-	serverPort := 0
-	if srv != nil {
-		serverPort = srv.Port
-	}
 
 	o.eventBus.Publish(worldID, map[string]any{
 		"event":      events.EventBuildCompleted,

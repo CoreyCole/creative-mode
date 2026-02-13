@@ -1,13 +1,19 @@
 package login
 
-import "creative-mode/harness/views/layout"
+import (
+	"creative-mode/harness/views/layout"
+	"github.com/coreycole/datastarui/components/button"
+)
 
 templ Page(devMode bool) {
 	@layout.Base("Login") {
-		<div class="login-container">
-			<h1>Creative Mode</h1>
-			<p>Collaborative game development with AI</p>
-			<a href="/auth/github/login" class="btn btn-primary">Sign in with GitHub</a>
+		<div class="flex flex-col items-center justify-center min-h-screen gap-4">
+			<h1 class="text-3xl font-bold">Creative Mode</h1>
+			<p class="text-muted-foreground">Collaborative game development with AI</p>
+			<a href="/auth/github/login"
+				class="inline-flex items-center justify-center rounded-md bg-primary text-primary-foreground shadow-xs hover:bg-primary/90 h-9 px-4 py-2 text-sm font-medium">
+				Sign in with GitHub
+			</a>
 			if devMode {
 				@DevLoginForm()
 			}
@@ -16,17 +22,19 @@ templ Page(devMode bool) {
 }
 
 templ DevLoginForm() {
-	<div class="dev-login">
-		<h3>Dev Login</h3>
-		<hr class="dev-divider"/>
-		<form class="dev-login-form" action="/dev/auth/login" method="POST">
-			<input class="dev-input" type="text" name="username" placeholder="Username" required/>
-			<select class="dev-select" name="role">
+	<div class="mt-6 p-5 border border-dashed border-amber-500 rounded-lg text-center">
+		<h3 class="text-amber-500 text-sm font-semibold mb-3">Dev Login</h3>
+		<hr class="border-t border-border mb-4"/>
+		<form class="flex flex-col gap-2" action="/dev/auth/login" method="POST">
+			<input class="px-3 py-2 border border-input rounded-md bg-background text-foreground text-sm" type="text" name="username" placeholder="Username" required/>
+			<select class="px-3 py-2 border border-input rounded-md bg-background text-foreground text-sm" name="role">
 				<option value="user">user</option>
 				<option value="admin">admin</option>
 				<option value="pending">pending</option>
 			</select>
-			<button class="btn btn-primary" type="submit">Dev Sign In</button>
+			@button.Button(button.ButtonArgs{Type: "submit"}) {
+				Dev Sign In
+			}
 		</form>
 	</div>
 }

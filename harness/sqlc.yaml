@@ -2,7 +2,7 @@ version: "2"
 sql:
   - engine: "sqlite"
     queries: "internal/db/queries"
-    schema: "internal/db/migrations/001_initial.sql"
+    schema: "internal/db/migrations/"
     gen:
       go:
         package: "sqlc"
@@ -28,6 +28,7 @@ sql:
           dir_path: "DirPath"
           wasm_path: "WasmPath"
           server_port: "ServerPort"
+          template_type: "TemplateType"
           prompt_text: "PromptText"
           last_accessed_at: "LastAccessedAt"
         overrides:

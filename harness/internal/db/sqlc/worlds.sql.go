@@ -11,15 +11,16 @@ import (
 )
 
 const createWorld = `-- name: CreateWorld :exec
-INSERT INTO worlds (id, name, description, created_by)
-VALUES (?, ?, ?, ?)
+INSERT INTO worlds (id, name, description, created_by, template_type)
+VALUES (?, ?, ?, ?, ?)
 `
 
 type CreateWorldParams struct {
-	ID          string
-	Name        string
-	Description sql.NullString
-	CreatedBy   sql.NullString
+	ID           string
+	Name         string
+	Description  sql.NullString
+	CreatedBy    sql.NullString
+	TemplateType string
 }
 
 func (q *Queries) CreateWorld(ctx context.Context, arg CreateWorldParams) error {
@@ -28,12 +29,13 @@ func (q *Queries) CreateWorld(ctx context.Context, arg CreateWorldParams) error 
 		arg.Name,
 		arg.Description,
 		arg.CreatedBy,
+		arg.TemplateType,
 	)
 	return err
 }
 
 const getWorld = `-- name: GetWorld :one
-SELECT id, name, description, created_by, created_at
+SELECT id, name, description, created_by, created_at, template_type
 FROM worlds WHERE id = ?
 `
 
@@ -46,12 +48,13 @@ func (q *Queries) GetWorld(ctx context.Context, id string) (World, error) {
 		&i.Description,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.TemplateType,
 	)
 	return i, err
 }
 
 const listWorlds = `-- name: ListWorlds :many
-SELECT id, name, description, created_by, created_at
+SELECT id, name, description, created_by, created_at, template_type
 FROM worlds ORDER BY created_at ASC
 `
 
@@ -70,6 +73,7 @@ func (q *Queries) ListWorlds(ctx context.Context) ([]World, error) {
 			&i.Description,
 			&i.CreatedBy,
 			&i.CreatedAt,
+			&i.TemplateType,
 		); err != nil {
 			return nil, err
 		}

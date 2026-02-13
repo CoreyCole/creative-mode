@@ -10,4 +10,5 @@ const (
 	EventClaudeToolUsePre  = "claude.tool_use.pre"
 	EventClaudeSessionStop = "claude.session_stopped"
 	EventClaudeRateLimited = "claude.rate_limited"
+	EventExecuteScript     = "execute_script"
 )

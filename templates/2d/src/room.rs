@@ -1,30 +1,42 @@
 //! Room loading, spawning, and navigation.
 //!
-//! Rooms are defined as JSON files in the `rooms/` directory. Each room has a
-//! background color and a list of hotspots with labels and actions.
+//! Rooms are loaded at runtime via HTTP as Bevy assets (`/assets/rooms/{id}.json`).
+//! Each room has a background color, an optional background image, and a list of
+//! hotspots with labels, optional images, and actions.
 
+use bevy::asset::{io::Reader, AssetLoader, LoadContext};
 use bevy::prelude::*;
+use bevy::reflect::TypePath;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 pub struct RoomPlugin;
 
 impl Plugin for RoomPlugin {
     fn build(&self, app: &mut App) {
+        app.init_asset::<RoomAsset>();
+        app.init_asset_loader::<RoomAssetLoader>();
         app.insert_resource(PendingNavigation(None));
+        app.insert_resource(CurrentRoom("lobby".to_string()));
+        app.insert_resource(RoomLoadState::Idle);
         app.add_systems(Startup, setup_camera);
         app.add_systems(Startup, load_initial_room.after(setup_camera));
-        app.add_systems(Update, handle_room_navigation);
+        app.add_systems(Update, (start_room_load, finish_room_load).chain());
+        #[cfg(target_family = "wasm")]
+        app.add_systems(Update, check_reload_request.before(start_room_load));
     }
 }
 
-// --- JSON Schema ---
+// --- JSON Schema / Asset ---
 
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Asset, TypePath, Deserialize, Clone, Debug)]
 #[allow(dead_code)]
-pub struct RoomDef {
+pub struct RoomAsset {
     pub id: String,
     pub name: String,
     pub background_color: String,
+    #[serde(default)]
+    pub background_image: Option<String>,
     pub hotspots: Vec<HotspotDef>,
 }
 
@@ -36,6 +48,8 @@ pub struct HotspotDef {
     pub y: f32,
     pub width: f32,
     pub height: f32,
+    #[serde(default)]
+    pub image: Option<String>,
     pub action: ActionDef,
 }
 
@@ -57,6 +71,40 @@ pub enum ActionDef {
     OpenEmbed { url: String },
 }
 
+// --- Asset Loader ---
+
+#[derive(Default, TypePath)]
+pub struct RoomAssetLoader;
+
+#[derive(Debug, Error)]
+pub enum RoomAssetLoaderError {
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("JSON parse error: {0}")]
+    Json(#[from] serde_json::error::Error),
+}
+
+impl AssetLoader for RoomAssetLoader {
+    type Asset = RoomAsset;
+    type Settings = ();
+    type Error = RoomAssetLoaderError;
+
+    async fn load(
+        &self,
+        reader: &mut dyn Reader,
+        _settings: &(),
+        _load_context: &mut LoadContext<'_>,
+    ) -> Result<Self::Asset, Self::Error> {
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).await?;
+        Ok(serde_json::from_slice(&bytes)?)
+    }
+
+    fn extensions(&self) -> &[&str] {
+        &["room.json"]
+    }
+}
+
 // --- ECS Components ---
 
 /// Marker for the current room's entities (despawned on navigation).
@@ -73,6 +121,10 @@ pub struct Hotspot {
     pub action: ActionDef,
 }
 
+/// Marker for hotspots that use an image sprite (affects hover behavior).
+#[derive(Component)]
+pub struct HasImage;
+
 /// Resource tracking the current room ID.
 #[derive(Resource)]
 pub struct CurrentRoom(pub String);
@@ -85,19 +137,15 @@ pub struct PendingNavigation(pub Option<String>);
 #[derive(Component)]
 pub struct DialogText;
 
-// --- Room Data ---
-
-/// Built-in room JSON files. Add new rooms here.
-const ROOM_DATA: &[(&str, &str)] = &[
-    ("lobby", include_str!("../rooms/lobby.json")),
-    ("garden", include_str!("../rooms/garden.json")),
-];
-
-pub fn find_room(id: &str) -> Option<RoomDef> {
-    ROOM_DATA
-        .iter()
-        .find(|(name, _)| *name == id)
-        .and_then(|(_, json)| serde_json::from_str(json).ok())
+/// Async room loading state machine.
+#[derive(Resource)]
+pub enum RoomLoadState {
+    Idle,
+    Loading {
+        handle: Handle<RoomAsset>,
+        room_id: String,
+    },
+    Ready,
 }
 
 // --- Systems ---
@@ -106,25 +154,20 @@ fn setup_camera(mut commands: Commands) {
     commands.spawn(Camera2d);
 }
 
-fn load_initial_room(mut commands: Commands) {
-    commands.insert_resource(CurrentRoom("lobby".to_string()));
-    if let Some(room) = find_room("lobby") {
-        spawn_room(&mut commands, &room);
-    }
+fn load_initial_room(mut pending: ResMut<PendingNavigation>) {
+    pending.0 = Some("lobby".to_string());
 }
 
-fn handle_room_navigation(
+/// Consumes `PendingNavigation`, despawns old room entities, kicks off async load.
+fn start_room_load(
     mut commands: Commands,
     mut pending: ResMut<PendingNavigation>,
-    room_entities: Query<Entity, With<RoomEntity>>,
+    mut load_state: ResMut<RoomLoadState>,
     mut current_room: ResMut<CurrentRoom>,
+    asset_server: Res<AssetServer>,
+    room_entities: Query<Entity, With<RoomEntity>>,
 ) {
     let Some(room_id) = pending.0.take() else {
-        return;
-    };
-
-    let Some(room) = find_room(&room_id) else {
-        warn!("Room not found: {}", room_id);
         return;
     };
 
@@ -133,15 +176,61 @@ fn handle_room_navigation(
         commands.entity(entity).despawn();
     }
 
-    current_room.0 = room_id;
-    spawn_room(&mut commands, &room);
+    let path = format!("rooms/{room_id}.room.json");
+
+    // If navigating to same room (reload), we need to force a re-fetch.
+    let handle: Handle<RoomAsset> = asset_server.load(&path);
+
+    current_room.0 = room_id.clone();
+    *load_state = RoomLoadState::Loading { handle, room_id };
+}
+
+/// Polls the asset handle; when ready, spawns the room.
+fn finish_room_load(
+    mut commands: Commands,
+    mut load_state: ResMut<RoomLoadState>,
+    room_assets: Res<Assets<RoomAsset>>,
+    asset_server: Res<AssetServer>,
+) {
+    let RoomLoadState::Loading { handle, room_id } = &*load_state else {
+        return;
+    };
+
+    let Some(room) = room_assets.get(handle) else {
+        return;
+    };
+
+    info!("Room loaded: {} ({})", room.name, room_id);
+    spawn_room(&mut commands, room, &asset_server);
+    *load_state = RoomLoadState::Ready;
+}
+
+/// WASM-only: checks `window.__reloadRoom` flag set by postMessage from harness.
+#[cfg(target_family = "wasm")]
+fn check_reload_request(current_room: Res<CurrentRoom>, mut pending: ResMut<PendingNavigation>) {
+    use wasm_bindgen::prelude::*;
+
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+
+    let Ok(val) = js_sys::Reflect::get(&window, &JsValue::from_str("__reloadRoom")) else {
+        return;
+    };
+
+    if val.is_truthy() {
+        // Clear the flag.
+        let _ = js_sys::Reflect::set(&window, &JsValue::from_str("__reloadRoom"), &JsValue::FALSE);
+        // Trigger re-navigation to the current room.
+        pending.0 = Some(current_room.0.clone());
+    }
 }
 
 /// Spawn all entities for a room: background, hotspot zones, labels.
-pub fn spawn_room(commands: &mut Commands, room: &RoomDef) {
+pub fn spawn_room(commands: &mut Commands, room: &RoomAsset, asset_server: &AssetServer) {
     let bg_color = parse_hex_color(&room.background_color);
 
-    // Background
+    // Background color
     commands.spawn((
         Sprite {
             color: bg_color,
@@ -151,6 +240,19 @@ pub fn spawn_room(commands: &mut Commands, room: &RoomDef) {
         Transform::from_xyz(0.0, 0.0, 0.0),
         RoomEntity,
     ));
+
+    // Background image (if present)
+    if let Some(ref bg_path) = room.background_image {
+        commands.spawn((
+            Sprite {
+                image: asset_server.load(bg_path),
+                custom_size: Some(Vec2::new(1280.0, 720.0)),
+                ..default()
+            },
+            Transform::from_xyz(0.0, 0.0, 0.5),
+            RoomEntity,
+        ));
+    }
 
     // Room title
     commands.spawn((
@@ -175,22 +277,41 @@ pub fn spawn_room(commands: &mut Commands, room: &RoomDef) {
             Vec2::new(hotspot.width, hotspot.height),
         );
 
-        // Hotspot background
-        commands.spawn((
-            Sprite {
-                color: Color::srgba(1.0, 1.0, 1.0, 0.1),
-                custom_size: Some(Vec2::new(hotspot.width, hotspot.height)),
-                ..default()
-            },
-            Transform::from_xyz(center_x, center_y, 1.0),
-            Hotspot {
-                id: hotspot.id.clone(),
-                label: hotspot.label.clone(),
-                bounds,
-                action: hotspot.action.clone(),
-            },
-            RoomEntity,
-        ));
+        // Hotspot background — image or translucent color
+        if let Some(ref img_path) = hotspot.image {
+            commands.spawn((
+                Sprite {
+                    image: asset_server.load(img_path),
+                    custom_size: Some(Vec2::new(hotspot.width, hotspot.height)),
+                    ..default()
+                },
+                Transform::from_xyz(center_x, center_y, 1.0),
+                Hotspot {
+                    id: hotspot.id.clone(),
+                    label: hotspot.label.clone(),
+                    bounds,
+                    action: hotspot.action.clone(),
+                },
+                HasImage,
+                RoomEntity,
+            ));
+        } else {
+            commands.spawn((
+                Sprite {
+                    color: Color::srgba(1.0, 1.0, 1.0, 0.1),
+                    custom_size: Some(Vec2::new(hotspot.width, hotspot.height)),
+                    ..default()
+                },
+                Transform::from_xyz(center_x, center_y, 1.0),
+                Hotspot {
+                    id: hotspot.id.clone(),
+                    label: hotspot.label.clone(),
+                    bounds,
+                    action: hotspot.action.clone(),
+                },
+                RoomEntity,
+            ));
+        }
 
         // Hotspot label
         commands.spawn((

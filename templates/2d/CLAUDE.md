@@ -89,18 +89,21 @@ The harness `game-loader.js` listens for these messages and dispatches navigatio
 | `src/interaction.rs` | Hover highlighting + click detection on hotspots |
 | `src/bridge.rs` | `postMessage` bridge to harness parent frame for navigation |
 | `src/debug.rs` | Debug query system (room/dialog/hotspot inspection via JS bridge) |
-| `rooms/*.json` | Room definitions (data-driven content) |
+| `rooms/*.room.json` | Room definitions (data-driven content, seeded to shared-assets on startup) |
 | `index.html` | Trunk entry point — canvas element, JS bridge, keyboard handler |
 | `Trunk.toml` | Trunk build config — wasm-bindgen version pin |
 | `Cargo.toml` | Rust dependencies — Bevy features, wasm-bindgen pin |
 
 ## Room JSON Schema
 
+Rooms are loaded at runtime via HTTP (`/assets/rooms/{id}.room.json`), not compiled into WASM. The harness seeds `data/shared-assets/rooms/` from `templates/2d/rooms/` on startup (won't overwrite existing files).
+
 ```json
 {
     "id": "room-id",
     "name": "Display Name",
     "background_color": "#1a1a2e",
+    "background_image": "rooms/bg.png",
     "hotspots": [
         {
             "id": "hotspot-id",
@@ -109,11 +112,15 @@ The harness `game-loader.js` listens for these messages and dispatches navigatio
             "y": 200.0,
             "width": 200.0,
             "height": 80.0,
+            "image": "rooms/hotspot.png",
             "action": { "type": "dialog", "text": "Hello!" }
         }
     ]
 }
 ```
+
+- `background_image` (optional): path relative to `/assets/`, rendered on top of background color at z=0.5
+- `image` on hotspots (optional): replaces the translucent color sprite with an image. Hover brightens instead of changing opacity.
 
 ### Coordinates
 
@@ -132,23 +139,17 @@ The harness `game-loader.js` listens for these messages and dispatches navigatio
 
 ## Adding a New Room
 
-1. Create `rooms/my-room.json` following the schema above
-2. Register it in `src/room.rs` in the `ROOM_DATA` array:
-   ```rust
-   const ROOM_DATA: &[(&str, &str)] = &[
-       ("lobby", include_str!("../rooms/lobby.json")),
-       ("garden", include_str!("../rooms/garden.json")),
-       ("my-room", include_str!("../rooms/my-room.json")),
-   ];
-   ```
+1. Create `rooms/my-room.room.json` following the schema above
+2. Place it in `data/shared-assets/rooms/` (or in `templates/2d/rooms/` for it to be seeded on startup)
 3. Add a hotspot in another room with `"action": {"type": "navigate_room", "room": "my-room"}`
+4. No WASM rebuild needed — click "Reload" in the overlay or refresh the page
 
-## Adding New Hotspot Visuals
+## Adding Images
 
-Currently hotspots are translucent white rectangles with text labels. To add sprites:
-1. Place PNG files in `assets/`
-2. Load them in `room.rs` `spawn_room()` using `asset_server.load("assets/my-sprite.png")`
-3. Attach `Sprite` components to hotspot entities
+1. Upload images via `POST /api/assets/upload` (multipart, `file` + optional `folder` field)
+2. Or place them directly in `data/shared-assets/`
+3. Reference them in room JSON: `"background_image": "rooms/bg.png"` or `"image": "rooms/sprite.png"` on hotspots
+4. Click "Reload" in the overlay to see changes without rebuilding
 
 ## Building a New 2D Game from This Template
 

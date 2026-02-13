@@ -27,6 +27,15 @@ document.addEventListener('keydown', function(e) {
   }
 }, { capture: true });
 
+// Forward backtick to parent when pointer is NOT locked.
+// When pointer IS locked, Bevy handles it via cursor-unlocked postMessage.
+document.addEventListener('keydown', function(e) {
+  if (e.code === 'Backquote' && !document.pointerLockElement) {
+    e.preventDefault();
+    window.parent.postMessage({ type: 'toggle-overlay' }, '*');
+  }
+});
+
 // Layer 2: Keyboard Lock API — capture system-level keys when pointer-locked.
 document.addEventListener('pointerlockchange', function() {
   if (document.pointerLockElement) {

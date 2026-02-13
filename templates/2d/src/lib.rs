@@ -24,6 +24,7 @@ pub fn run() {
                 ..default()
             })
             .set(AssetPlugin {
+                file_path: "/assets".to_string(),
                 meta_check: AssetMetaCheck::Never,
                 ..default()
             }),

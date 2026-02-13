@@ -24,10 +24,25 @@ document.addEventListener('keydown', function(e) {
   }
 }, { capture: true });
 
-// Bridge postMessage from harness overlay to WASM debug query system.
-// Parent sends: { type: 'debug-query', id: '...', query: {...} }
-// We write to window.__debugRequest, poll __debugResponse, then postMessage back.
+// Forward backtick to parent harness to toggle overlay.
+// Keyboard events in an iframe don't propagate to the parent window.
+document.addEventListener('keydown', function(e) {
+  if (e.code === 'Backquote' && !e.target.matches('input, textarea')) {
+    e.preventDefault();
+    window.parent.postMessage({ type: 'toggle-overlay' }, '*');
+  }
+});
+
+// Bridge postMessage from harness overlay to WASM.
 window.addEventListener('message', async (event) => {
+  // Reload room trigger from harness overlay.
+  if (event.data?.type === 'reload-room') {
+    window.__reloadRoom = true;
+    return;
+  }
+
+  // Debug query system: parent sends { type: 'debug-query', id: '...', query: {...} }
+  // We write to window.__debugRequest, poll __debugResponse, then postMessage back.
   if (event.data?.type !== 'debug-query') return;
 
   window.__debugRequest = JSON.stringify(event.data.query);

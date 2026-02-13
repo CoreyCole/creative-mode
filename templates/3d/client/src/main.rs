@@ -317,7 +317,7 @@ fn post_message_to_parent(_msg_type: &str) {}
 
 // --- Cursor Lock ---
 
-/// Lock cursor on click, unlock on Escape/Tab. Detects browser-initiated unlock.
+/// Lock cursor on click, unlock on Escape/Backquote. Detects browser-initiated unlock.
 /// Signals the parent harness frame to show/hide the overlay accordingly.
 fn cursor_lock_system(
     mouse_buttons: Res<ButtonInput<MouseButton>>,
@@ -344,8 +344,8 @@ fn cursor_lock_system(
         camera_state.cursor_locked = false;
     }
 
-    // Tab unlocks cursor and shows overlay
-    if keys.just_pressed(KeyCode::Tab) && camera_state.cursor_locked {
+    // Backquote unlocks cursor and shows overlay
+    if keys.just_pressed(KeyCode::Backquote) && camera_state.cursor_locked {
         cursor.grab_mode = CursorGrabMode::None;
         cursor.visible = true;
         camera_state.cursor_locked = false;

@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
 use crate::bridge::PendingBridgeAction;
-use crate::room::{ActionDef, DialogText, Hotspot, PendingNavigation, RoomEntity};
+use crate::room::{ActionDef, DialogText, HasImage, Hotspot, PendingNavigation, RoomEntity};
 
 pub struct InteractionPlugin;
 
@@ -14,11 +14,12 @@ impl Plugin for InteractionPlugin {
     }
 }
 
-/// Highlight hotspots on hover by changing sprite opacity.
+/// Highlight hotspots on hover by changing sprite opacity/tint.
 fn hotspot_hover(
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &GlobalTransform)>,
-    mut hotspots: Query<(&Hotspot, &mut Sprite)>,
+    mut color_hotspots: Query<(&Hotspot, &mut Sprite), Without<HasImage>>,
+    mut image_hotspots: Query<(&Hotspot, &mut Sprite), With<HasImage>>,
 ) {
     let Ok(window) = windows.single() else {
         return;
@@ -31,17 +32,30 @@ fn hotspot_hover(
         .and_then(|pos| camera.viewport_to_world_2d(camera_transform, pos).ok())
     else {
         // No cursor — reset all to default.
-        for (_, mut sprite) in hotspots.iter_mut() {
+        for (_, mut sprite) in color_hotspots.iter_mut() {
             sprite.color = Color::srgba(1.0, 1.0, 1.0, 0.1);
+        }
+        for (_, mut sprite) in image_hotspots.iter_mut() {
+            sprite.color = Color::WHITE;
         }
         return;
     };
 
-    for (hotspot, mut sprite) in hotspots.iter_mut() {
+    // Color hotspots: opacity change
+    for (hotspot, mut sprite) in color_hotspots.iter_mut() {
         if hotspot.bounds.contains(cursor_pos) {
             sprite.color = Color::srgba(1.0, 1.0, 1.0, 0.3);
         } else {
             sprite.color = Color::srgba(1.0, 1.0, 1.0, 0.1);
+        }
+    }
+
+    // Image hotspots: brighten on hover
+    for (hotspot, mut sprite) in image_hotspots.iter_mut() {
+        if hotspot.bounds.contains(cursor_pos) {
+            sprite.color = Color::srgba(1.2, 1.2, 1.2, 1.0);
+        } else {
+            sprite.color = Color::WHITE;
         }
     }
 }

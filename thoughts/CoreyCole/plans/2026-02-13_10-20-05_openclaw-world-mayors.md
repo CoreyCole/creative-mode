@@ -68,6 +68,26 @@ The alternative — calling the Anthropic Messages API directly from Go — woul
    - Env var is simpler for Docker deployment, already configured and passed through
    - Credential bridge adds macOS Keychain dependency that doesn't exist in the container
 
+5. **Two Discord bots** (not one shared bot)
+   - **Mayor bot**: Used by OpenClaw's discord.js adapter. Posts as the mayor persona. One gateway connection.
+   - **Harness bot**: Used by the Go harness. Runs `discordgo` gateway listener for message mirroring. Handles channel creation, permission management, and build event posting via REST API.
+   - Clean separation: no session conflicts from two libraries sharing one bot token
+   - Both bots are invited to the guild with appropriate permissions
+   - Rejected alternative: single bot with dual gateway connections (risk of session conflicts, confusing identity — build events and mayor responses appear from the same bot user)
+
+6. **Auth: Discord OAuth primary, GitHub linking** (not GitHub OAuth primary)
+   - Discord is the primary interaction channel — users need a Discord identity for channel permissions
+   - Discord OAuth provides: user ID (for channel `permission_overwrites`), username, avatar, guild membership
+   - GitHub OAuth kept as optional account linking (not login) — links GitHub username for code attribution in builds
+   - Replaces: `GITHUB_CLIENT_ID`/`GITHUB_CLIENT_SECRET` as primary auth → `DISCORD_CLIENT_ID`/`DISCORD_CLIENT_SECRET`
+   - DB schema: `discord_id` + `discord_username` become primary identity columns; `github_id` + `github_username` become nullable linking columns
+   - Channel invites become trivial: user's `discord_id` is known from auth, add `permission_overwrite` for that user ID
+
+7. **Private world channels by default** (not guild-visible)
+   - Channel created with `permission_overwrites` that deny @everyone and grant access to: both bots + world creator
+   - World creator can invite others via harness UI → adds `permission_overwrite` for the invited user's Discord ID
+   - Users must be authenticated (Discord OAuth) to be invited — their Discord user ID is in the DB
+
 ## Desired End State
 
 After this plan is complete:
@@ -233,9 +253,23 @@ environment:
   - CGO_ENABLED=1
   - DEV_MODE=true
   - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-  - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+  # Discord OAuth (primary auth)
+  - DISCORD_CLIENT_ID=${DISCORD_CLIENT_ID}
+  - DISCORD_CLIENT_SECRET=${DISCORD_CLIENT_SECRET}
+  # Two Discord bots
+  - DISCORD_MAYOR_BOT_TOKEN=${DISCORD_MAYOR_BOT_TOKEN}    # OpenClaw mayor persona
+  - DISCORD_HARNESS_BOT_TOKEN=${DISCORD_HARNESS_BOT_TOKEN}  # Listener + channel management
   - DISCORD_GUILD_ID=${DISCORD_GUILD_ID}
+  # GitHub linking (optional)
+  - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
+  - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
 ```
+
+**Two Discord bots**: Create two bot applications in the Discord Developer Portal:
+1. **Mayor bot** — the AI persona. Enable MESSAGE_CONTENT intent. Invite to guild with: Send Messages, Read Message History, View Channels.
+2. **Harness bot** — infrastructure. Enable MESSAGE_CONTENT intent. Invite to guild with: Manage Channels, Send Messages, Read Message History, View Channels, Manage Roles (for permission overwrites on private channels).
+
+**Discord OAuth**: Create an OAuth2 application (can reuse one of the bot applications). Set redirect URI to `{BASE_URL}/auth/discord/callback`. Scopes: `identify`, `guilds`.
 
 #### 4. Base OpenClaw config with Discord channel
 **File**: `harness/scripts/setup-openclaw.sh` (new)
@@ -261,9 +295,9 @@ cat > "$OPENCLAW_HOME/openclaw.json" << EOF
   },
   "bindings": [],
   "channels": {
-    $(if [ -n "$DISCORD_BOT_TOKEN" ]; then
+    $(if [ -n "$DISCORD_MAYOR_BOT_TOKEN" ]; then
       echo '"discord": {'
-      echo '  "token": "'$DISCORD_BOT_TOKEN'",'
+      echo '  "token": "'$DISCORD_MAYOR_BOT_TOKEN'",'
       echo '  "guildId": "'$DISCORD_GUILD_ID'"'
       echo '}'
     fi)
@@ -307,13 +341,26 @@ Add mayor personality fields to the world creation form and database. Add the `m
 
 ### Changes Required
 
-#### 1. Database Migration
-**File**: `harness/internal/db/migrations/004_mayor.sql` (new)
+#### 1. Database Migration — Discord auth + mayor columns
+**File**: `harness/internal/db/migrations/004_discord_auth_and_mayor.sql` (new)
 
 ```sql
+-- Discord OAuth as primary auth (replaces GitHub as login method)
+-- GitHub columns become nullable for optional account linking.
+ALTER TABLE users ADD COLUMN discord_id TEXT UNIQUE;
+ALTER TABLE users ADD COLUMN discord_username TEXT;
+
+-- Make github_id nullable for existing users (SQLite doesn't support ALTER COLUMN,
+-- so we keep the NOT NULL constraint on github_id for existing rows.
+-- New Discord-only users get github_id = NULL via the new UpsertDiscordUser query.
+-- NOTE: SQLite quirk — we can't drop NOT NULL on github_id without recreating the table.
+-- Instead, we set github_id to a sentinel value of 0 for Discord-only users and
+-- remove the UNIQUE constraint concern by making the UpsertDiscordUser query handle this.)
+
 -- Mayor identity
 ALTER TABLE worlds ADD COLUMN mayor_name TEXT NOT NULL DEFAULT 'Mayor';
 ALTER TABLE worlds ADD COLUMN mayor_personality TEXT;
+ALTER TABLE worlds ADD COLUMN mayor_secret TEXT;
 ALTER TABLE worlds ADD COLUMN discord_channel_id TEXT;
 
 -- Discord message mirror for browser UI
@@ -329,25 +376,36 @@ CREATE TABLE mayor_messages (
 );
 
 CREATE INDEX idx_mayor_messages_world ON mayor_messages(world_id, created_at);
+
+-- World channel access (tracks which users have been invited to a world's Discord channel)
+CREATE TABLE world_invites (
+    world_id TEXT NOT NULL REFERENCES worlds(id),
+    user_id TEXT NOT NULL REFERENCES users(id),
+    invited_by TEXT NOT NULL REFERENCES users(id),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (world_id, user_id)
+);
 ```
+
+**Migration strategy for existing users**: Existing users have `github_id` set (NOT NULL) and `discord_id = NULL`. They'll need to re-authenticate via Discord OAuth on next login. The GitHub link remains in their profile. New migration path: Discord login → if `discord_id` matches existing row, update it; if no match but user later links GitHub, match by `github_id` and merge.
 
 #### 2. Register migration
 **File**: `harness/internal/db/db.go`
-**Changes**: Add `004_mayor.sql` to the `migrationFiles` slice and add bootstrap detection
+**Changes**: Add `004_discord_auth_and_mayor.sql` to the `migrationFiles` slice and add bootstrap detection
 
 In the `migrationFiles` slice (around line 93-97), add:
 ```go
-"004_mayor.sql",
+"004_discord_auth_and_mayor.sql",
 ```
 
-In `bootstrapExistingMigrations()`, add detection for the mayor column:
+In `bootstrapExistingMigrations()`, add detection:
 ```go
-// Check for migration 004 (mayor columns)
-var hasMayorName bool
-row = tx.QueryRow("SELECT COUNT(*) > 0 FROM pragma_table_info('worlds') WHERE name = 'mayor_name'")
-_ = row.Scan(&hasMayorName)
-if hasMayorName {
-    _, _ = tx.Exec("INSERT OR IGNORE INTO _migrations (filename) VALUES ('004_mayor.sql')")
+// Check for migration 004 (Discord auth + mayor columns)
+var hasDiscordID bool
+row = tx.QueryRow("SELECT COUNT(*) > 0 FROM pragma_table_info('users') WHERE name = 'discord_id'")
+_ = row.Scan(&hasDiscordID)
+if hasDiscordID {
+    _, _ = tx.Exec("INSERT OR IGNORE INTO _migrations (filename) VALUES ('004_discord_auth_and_mayor.sql')")
 }
 ```
 
@@ -380,13 +438,113 @@ SELECT * FROM mayor_messages WHERE world_id = ? AND created_at > ? ORDER BY crea
 SELECT * FROM mayor_messages WHERE discord_message_id = ? LIMIT 1;
 ```
 
+**File**: `harness/internal/db/queries/users.sql`
+**Changes**: Add Discord auth queries alongside existing GitHub queries
+
+```sql
+-- name: UpsertDiscordUser :exec
+INSERT INTO users (id, discord_id, discord_username, avatar_url, role)
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(discord_id) DO UPDATE SET
+    discord_username = excluded.discord_username,
+    avatar_url = excluded.avatar_url,
+    last_seen_at = CURRENT_TIMESTAMP;
+
+-- name: GetUserByDiscordID :one
+SELECT * FROM users WHERE discord_id = ?;
+
+-- name: LinkGitHub :exec
+UPDATE users SET github_id = ?, github_username = ? WHERE id = ?;
+
+-- name: UnlinkGitHub :exec
+UPDATE users SET github_id = NULL, github_username = NULL WHERE id = ?;
+```
+
+**File**: `harness/internal/db/queries/world_invites.sql` (new)
+```sql
+-- name: InviteUserToWorld :exec
+INSERT OR IGNORE INTO world_invites (world_id, user_id, invited_by)
+VALUES (?, ?, ?);
+
+-- name: GetWorldInvites :many
+SELECT wi.*, u.discord_username, u.avatar_url
+FROM world_invites wi
+JOIN users u ON u.id = wi.user_id
+WHERE wi.world_id = ?
+ORDER BY wi.created_at ASC;
+
+-- name: RemoveWorldInvite :exec
+DELETE FROM world_invites WHERE world_id = ? AND user_id = ?;
+
+-- name: IsUserInvitedToWorld :one
+SELECT COUNT(*) > 0 FROM world_invites WHERE world_id = ? AND user_id = ?;
+```
+
 #### 4. Regenerate sqlc
 Run `just generate` to update:
-- `harness/internal/db/sqlc/models.go` — `World` struct gets `MayorName`, `MayorPersonality`, `DiscordChannelID`; new `MayorMessage` struct
+- `harness/internal/db/sqlc/models.go` — `User` struct gets `DiscordID`, `DiscordUsername` (nullable); `World` struct gets `MayorName`, `MayorPersonality`, `MayorSecret`, `DiscordChannelID`; new `MayorMessage` and `WorldInvite` structs
+- `harness/internal/db/sqlc/users.sql.go` — new Discord auth query functions
 - `harness/internal/db/sqlc/worlds.sql.go` — `CreateWorldParams` gets new fields
 - `harness/internal/db/sqlc/mayor_messages.sql.go` — new query functions
+- `harness/internal/db/sqlc/world_invites.sql.go` — new query functions
 
-#### 5. World Creation Form — Add mayor fields
+#### 5. Discord OAuth — Replace GitHub as primary auth
+**File**: `harness/internal/auth/auth.go`
+**Changes**: Replace GitHub OAuth flow with Discord OAuth, keep GitHub as linking
+
+Discord OAuth flow:
+1. Redirect to `https://discord.com/oauth2/authorize?client_id={ID}&redirect_uri={URI}&response_type=code&scope=identify+guilds`
+2. Callback receives `code`, exchange at `https://discord.com/api/oauth2/token`
+3. Fetch user info from `https://discord.com/api/users/@me`
+4. Upsert user by `discord_id`, create session
+
+```go
+type Config struct {
+    DiscordClientID     string
+    DiscordClientSecret string
+    // GitHub linking (optional, not for login)
+    GitHubClientID      string
+    GitHubClientSecret  string
+    BaseURL             string
+}
+
+// discordUser represents the Discord API user response
+type discordUser struct {
+    ID            string `json:"id"`
+    Username      string `json:"username"`
+    Discriminator string `json:"discriminator"`
+    Avatar        string `json:"avatar"`
+    GlobalName    string `json:"global_name"`
+}
+
+func (u *discordUser) AvatarURL() string {
+    if u.Avatar == "" {
+        return ""
+    }
+    return fmt.Sprintf("https://cdn.discordapp.com/avatars/%s/%s.png", u.ID, u.Avatar)
+}
+```
+
+**Routes**:
+```go
+// Replace GitHub OAuth routes:
+// GET  /auth/discord/login     → redirect to Discord authorize
+// GET  /auth/discord/callback  → exchange code, create session
+// POST /auth/logout            → clear session (unchanged)
+//
+// GitHub linking (authenticated users only):
+// GET  /auth/github/link       → redirect to GitHub authorize
+// GET  /auth/github/callback   → exchange code, update user's github_id/github_username
+// POST /auth/github/unlink     → clear github_id/github_username
+```
+
+**File**: `harness/views/login/login.templ`
+**Changes**: Replace "Sign in with GitHub" with "Sign in with Discord"
+
+**File**: `harness/views/lobby/lobby.templ` or new settings view
+**Changes**: Add "Link GitHub Account" button (shows GitHub username if linked, unlink option)
+
+#### 6. World Creation Form — Add mayor fields
 **File**: `harness/views/lobby/lobby.templ`
 **Changes**: Add mayor name and personality inputs to the create world form
 
@@ -424,7 +582,7 @@ Replace the existing form (lines 50-66) with an expanded version:
 </form>
 ```
 
-#### 6. Handler — Accept mayor fields
+#### 7. Handler — Accept mayor fields
 **File**: `harness/internal/server/server.go`
 **Changes**: Add mayor fields to the `handleCreateWorld` request struct and pass to `CreateWorld`
 
@@ -445,7 +603,7 @@ if req.MayorName == "" {
 }
 ```
 
-#### 7. WorldManager.CreateWorld — Accept and store mayor fields
+#### 8. WorldManager.CreateWorld — Accept and store mayor fields
 **File**: `harness/internal/world/manager.go`
 **Changes**: Extend `CreateWorld` signature and pass mayor fields to DB
 
@@ -478,6 +636,11 @@ if err := txQ.CreateWorld(ctx, sqlc.CreateWorldParams{
 - [ ] `just lint` passes
 
 #### Manual Verification:
+- [ ] Discord OAuth login works: clicking "Sign in with Discord" → Discord authorize → callback → session created → redirected to lobby
+- [ ] User record has `discord_id` and `discord_username` populated
+- [ ] GitHub linking works: authenticated user clicks "Link GitHub" → GitHub authorize → callback → `github_id`/`github_username` updated
+- [ ] GitHub unlinking works: user clicks "Unlink GitHub" → columns cleared
+- [ ] Existing GitHub-only users can still access the app (but need to re-auth via Discord on next login)
 - [ ] World creation form shows mayor name + personality fields
 - [ ] Creating a world stores mayor_name and mayor_personality in DB
 - [ ] Existing worlds still load (default `mayor_name = 'Mayor'`, null personality)
@@ -508,28 +671,76 @@ import (
 )
 
 type Manager struct {
-    openclawHome   string
-    openclawBin    string // path to openclaw CLI binary
-    harnessURL     string
-    discordToken   string
-    discordGuildID string
-    logger         *slog.Logger
+    openclawHome      string
+    openclawBin       string // path to openclaw CLI binary
+    harnessURL        string
+    harnessBotToken   string // Harness bot — channel management, build events, listener
+    mayorBotToken     string // Mayor bot — OpenClaw persona (needed for permission overwrites)
+    mayorBotID        string // Resolved at startup via Discord API
+    harnessBotID      string // Resolved at startup via Discord API
+    discordGuildID    string
+    logger            *slog.Logger
 }
 
-func NewManager(openclawHome, openclawBin, harnessURL, discordToken, discordGuildID string, logger *slog.Logger) *Manager {
-    return &Manager{
-        openclawHome:   openclawHome,
-        openclawBin:    openclawBin,
-        harnessURL:     harnessURL,
-        discordToken:   discordToken,
-        discordGuildID: discordGuildID,
-        logger:         logger,
+func NewManager(openclawHome, openclawBin, harnessURL, harnessBotToken, mayorBotToken, discordGuildID string, logger *slog.Logger) (*Manager, error) {
+    m := &Manager{
+        openclawHome:    openclawHome,
+        openclawBin:     openclawBin,
+        harnessURL:      harnessURL,
+        harnessBotToken: harnessBotToken,
+        mayorBotToken:   mayorBotToken,
+        discordGuildID:  discordGuildID,
+        logger:          logger,
     }
+
+    // Resolve bot user IDs at startup (needed for channel permission_overwrites)
+    var err error
+    m.harnessBotID, err = m.resolveBotUserID(harnessBotToken)
+    if err != nil {
+        return nil, fmt.Errorf("resolving harness bot ID: %w", err)
+    }
+    m.mayorBotID, err = m.resolveBotUserID(mayorBotToken)
+    if err != nil {
+        return nil, fmt.Errorf("resolving mayor bot ID: %w", err)
+    }
+
+    return m, nil
+}
+
+// resolveBotUserID calls Discord GET /users/@me to get the bot's user ID
+func (m *Manager) resolveBotUserID(token string) (string, error) {
+    req, _ := http.NewRequest("GET", "https://discord.com/api/v10/users/@me", nil)
+    req.Header.Set("Authorization", "Bot "+token)
+    resp, err := http.DefaultClient.Do(req)
+    if err != nil {
+        return "", err
+    }
+    defer resp.Body.Close()
+    var user struct{ ID string `json:"id"` }
+    if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
+        return "", err
+    }
+    return user.ID, nil
+}
+
+// IsGatewayHealthy checks if the OpenClaw gateway is responsive.
+// Called before routing prompts through Discord to avoid silent failures.
+func (m *Manager) IsGatewayHealthy() bool {
+    ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+    defer cancel()
+
+    req, _ := http.NewRequestWithContext(ctx, "GET", "http://localhost:18789/health", nil)
+    resp, err := http.DefaultClient.Do(req)
+    if err != nil {
+        return false
+    }
+    resp.Body.Close()
+    return resp.StatusCode == http.StatusOK
 }
 
 // ProvisionAgent creates an OpenClaw agent for a world using the CLI,
 // writes workspace files, creates a Discord channel, and binds them together.
-func (m *Manager) ProvisionAgent(worldID, worldName, mayorName, mayorPersonality, templateType string) (discordChannelID string, err error) {
+func (m *Manager) ProvisionAgent(worldID, worldName, mayorName, mayorPersonality, templateType, creatorDiscordID string) (discordChannelID string, err error) {
     agentID := "world-" + worldID
     workspaceDir := filepath.Join(m.openclawHome, "workspaces", worldID)
 
@@ -566,9 +777,9 @@ func (m *Manager) ProvisionAgent(worldID, worldName, mayorName, mayorPersonality
         return "", err
     }
 
-    // 4. Create Discord channel for this world
+    // 4. Create private Discord channel for this world
     if m.discordGuildID != "" {
-        discordChannelID, err = m.createDiscordChannel(worldName)
+        discordChannelID, err = m.createPrivateDiscordChannel(worldName, creatorDiscordID)
         if err != nil {
             m.logger.Error("failed to create Discord channel", "worldID", worldID, "error", err)
             // Non-fatal — mayor works without Discord
@@ -768,14 +979,15 @@ running game server.
 
 ## Usage
 ` + "```" + `bash
-curl {{.HarnessURL}}/api/mayor/status?world_id={{.WorldID}}
+curl {{.HarnessURL}}/api/mayor/status?world_id={{.WorldID}} \
+  -H "X-Mayor-Secret: {{.MayorSecret}}"
 ` + "```" + `
 
 Returns: current checkpoint, build status, server port, recent changes
 `
 ```
 
-#### 5. Discord channel creation
+#### 7. Discord channel creation
 **File**: `harness/internal/mayor/discord.go` (new)
 
 ```go
@@ -788,12 +1000,31 @@ import (
     "net/http"
 )
 
-// createDiscordChannel creates a text channel in the guild for a world
-func (m *Manager) createDiscordChannel(worldName string) (string, error) {
+// createPrivateDiscordChannel creates a private text channel in the guild.
+// Only the two bots and the world creator can see it. Uses the harness bot token
+// (which has Manage Channels permission).
+func (m *Manager) createPrivateDiscordChannel(worldName, creatorDiscordID string) (string, error) {
+    // Permission overwrite types: 0 = role, 1 = member
+    // Permission bits: VIEW_CHANNEL = 0x400, SEND_MESSAGES = 0x800,
+    //   READ_MESSAGE_HISTORY = 0x10000, MANAGE_CHANNELS = 0x10
+    viewAndSend := "68608"  // VIEW_CHANNEL | SEND_MESSAGES | READ_MESSAGE_HISTORY
+    viewSendManage := "68624" // + MANAGE_CHANNELS
+    denyView := "1024"      // VIEW_CHANNEL
+
     payload := map[string]any{
         "name":  sanitizeChannelName(worldName),
         "type":  0, // GUILD_TEXT
         "topic": fmt.Sprintf("Mayor channel for world: %s", worldName),
+        "permission_overwrites": []map[string]any{
+            // Deny @everyone (role ID = guild ID)
+            {"id": m.discordGuildID, "type": 0, "deny": denyView},
+            // Allow harness bot (manage + view + send)
+            {"id": m.harnessBotID, "type": 1, "allow": viewSendManage},
+            // Allow mayor bot (view + send)
+            {"id": m.mayorBotID, "type": 1, "allow": viewAndSend},
+            // Allow world creator (view + send)
+            {"id": creatorDiscordID, "type": 1, "allow": viewAndSend},
+        },
     }
 
     body, _ := json.Marshal(payload)
@@ -801,7 +1032,7 @@ func (m *Manager) createDiscordChannel(worldName string) (string, error) {
         fmt.Sprintf("https://discord.com/api/v10/guilds/%s/channels", m.discordGuildID),
         bytes.NewReader(body),
     )
-    req.Header.Set("Authorization", "Bot "+m.discordToken)
+    req.Header.Set("Authorization", "Bot "+m.harnessBotToken)
     req.Header.Set("Content-Type", "application/json")
 
     resp, err := http.DefaultClient.Do(req)
@@ -811,8 +1042,8 @@ func (m *Manager) createDiscordChannel(worldName string) (string, error) {
     defer resp.Body.Close()
 
     if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-        body, _ := io.ReadAll(resp.Body)
-        return "", fmt.Errorf("Discord API returned %d: %s", resp.StatusCode, string(body))
+        respBody, _ := io.ReadAll(resp.Body)
+        return "", fmt.Errorf("Discord API returned %d: %s", resp.StatusCode, string(respBody))
     }
 
     var result struct {
@@ -823,6 +1054,53 @@ func (m *Manager) createDiscordChannel(worldName string) (string, error) {
     }
 
     return result.ID, nil
+}
+
+// InviteUserToChannel adds a permission overwrite for a user on a world's Discord channel.
+// Called when the world creator invites someone via the harness UI.
+func (m *Manager) InviteUserToChannel(channelID, userDiscordID string) error {
+    viewAndSend := "68608" // VIEW_CHANNEL | SEND_MESSAGES | READ_MESSAGE_HISTORY
+    payload := map[string]any{
+        "type":  1, // member
+        "allow": viewAndSend,
+    }
+
+    body, _ := json.Marshal(payload)
+    req, _ := http.NewRequest("PUT",
+        fmt.Sprintf("https://discord.com/api/v10/channels/%s/permissions/%s", channelID, userDiscordID),
+        bytes.NewReader(body),
+    )
+    req.Header.Set("Authorization", "Bot "+m.harnessBotToken)
+    req.Header.Set("Content-Type", "application/json")
+
+    resp, err := http.DefaultClient.Do(req)
+    if err != nil {
+        return fmt.Errorf("adding channel permission: %w", err)
+    }
+    defer resp.Body.Close()
+
+    if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+        respBody, _ := io.ReadAll(resp.Body)
+        return fmt.Errorf("Discord API returned %d: %s", resp.StatusCode, string(respBody))
+    }
+
+    return nil
+}
+
+// RevokeUserFromChannel removes a user's permission overwrite from a world's Discord channel.
+func (m *Manager) RevokeUserFromChannel(channelID, userDiscordID string) error {
+    req, _ := http.NewRequest("DELETE",
+        fmt.Sprintf("https://discord.com/api/v10/channels/%s/permissions/%s", channelID, userDiscordID),
+        nil,
+    )
+    req.Header.Set("Authorization", "Bot "+m.harnessBotToken)
+
+    resp, err := http.DefaultClient.Do(req)
+    if err != nil {
+        return fmt.Errorf("removing channel permission: %w", err)
+    }
+    resp.Body.Close()
+    return nil
 }
 
 // postToDiscord sends a message to a Discord channel
@@ -841,7 +1119,7 @@ func (m *Manager) postToDiscordReturningID(channelID, content string) (string, e
         fmt.Sprintf("https://discord.com/api/v10/channels/%s/messages", channelID),
         bytes.NewReader(body),
     )
-    req.Header.Set("Authorization", "Bot "+m.discordToken)
+    req.Header.Set("Authorization", "Bot "+m.harnessBotToken)
     req.Header.Set("Content-Type", "application/json")
 
     resp, err := http.DefaultClient.Do(req)
@@ -893,7 +1171,7 @@ func generateID() string {
 }
 ```
 
-#### 6. OpenClaw CLI integration
+#### 8. OpenClaw CLI integration
 **File**: `harness/internal/mayor/openclaw.go` (new)
 
 Uses the `openclaw` CLI for agent management instead of direct file writes. The CLI handles config normalization, agent ID validation, workspace scaffolding, and duplicate detection — no risk of schema drift if OpenClaw's config format evolves.
@@ -1005,15 +1283,16 @@ func (m *Manager) deleteAgent(agentID string) error {
 - No `flock` needed — OpenClaw handles its own file locking
 - No risk of schema drift — if OpenClaw changes its config format, the CLI still works
 
-#### 8. Hook into CreateWorld
+#### 9. Hook into CreateWorld
 **File**: `harness/internal/world/manager.go`
 **Changes**: After the DB transaction succeeds, call mayor provisioning and store the Discord channel ID. Also register the new channel with the Discord listener.
 
 ```go
 // After the DB transaction, before the background build goroutine:
 if m.mayorManager != nil {
+    // user.DiscordID is available because Discord OAuth is the primary auth
     discordChannelID, err := m.mayorManager.ProvisionAgent(
-        worldID, name, mayorName, mayorPersonality, templateType,
+        worldID, name, mayorName, mayorPersonality, templateType, user.DiscordID.String,
     )
     if err != nil {
         m.logger.Error("failed to provision mayor", "worldID", worldID, "error", err)
@@ -1173,7 +1452,8 @@ func (m *Manager) PostToDiscordAndMirror(db *sqlc.Queries, worldID, channelID, c
         return err
     }
 
-    // Mirror to SQLite
+    // Mirror to SQLite (INSERT OR IGNORE + UNIQUE(discord_message_id)
+    // handles the race with the discordgo listener)
     return db.InsertMayorMessage(context.Background(), sqlc.InsertMayorMessageParams{
         ID:               generateID(),
         WorldID:          worldID,
@@ -1181,7 +1461,7 @@ func (m *Manager) PostToDiscordAndMirror(db *sqlc.Queries, worldID, channelID, c
         AuthorType:       authorType,
         AuthorName:       authorName,
         Content:          content,
-        CreatedAt:        time.Now(),
+        CreatedAt:        time.Now(), // OK to use time.Now() here — we just created the message
     })
 }
 ```
@@ -1396,7 +1676,7 @@ if discordToken := os.Getenv("DISCORD_BOT_TOKEN"); discordToken != "" {
 }
 ```
 
-#### 5. Chat component — render mayor_messages
+#### 3. Chat component — render mayor_messages
 **File**: `harness/views/world/chat.templ` (new)
 
 A templ component that renders `mayor_messages` for the current world. Styled to match the harness UI, with distinct visual treatment for user messages, mayor messages, and system/build events.
@@ -1414,16 +1694,16 @@ templ MayorChat(messages []sqlc.MayorMessage, mayorName string) {
 }
 ```
 
-The chat component is updated via Datastar SSE when new messages arrive. New messages use `data-merge-mode="append"` to add to the `#mayor-chat` container without re-rendering the entire list (see section 8 below for SSE details).
+The chat component is updated via Datastar SSE when new messages arrive. New messages use `data-merge-mode="append"` to add to the `#mayor-chat` container without re-rendering the entire list (see section 6 below for SSE details).
 
-#### 6. Add DB query for channel map
+#### 4. Add DB query for channel map
 **File**: `harness/internal/db/queries/worlds.sql`
 ```sql
 -- name: GetWorldsWithDiscordChannels :many
 SELECT id, discord_channel_id FROM worlds WHERE discord_channel_id IS NOT NULL;
 ```
 
-#### 7. Update prompt handler to route through Discord
+#### 5. Update prompt handler to route through Discord
 **File**: `harness/internal/server/server.go`
 **Changes**: `handlePrompt` posts to Discord instead of directly calling `Orchestrator.HandlePrompt`
 
@@ -1461,7 +1741,7 @@ func (s *Server) handlePrompt(c echo.Context) error {
 }
 ```
 
-#### 8. Add chat component to world overlay + SSE append strategy
+#### 6. Add chat component to world overlay + SSE append strategy
 **File**: `harness/views/world/overlay.templ`
 **Changes**: Include the mayor chat component and SSE listener for new messages
 
@@ -1545,7 +1825,8 @@ The chat container also uses `data-on-load="this.scrollTop = this.scrollHeight"`
 | OpenClaw source | Docker image | Cloned from GitHub |
 | `openclaw` CLI | Docker image PATH | Used by harness for agent management (`agents add`, `config set`) |
 | `discordgo` | Go module | `github.com/bwmarrin/discordgo` — Discord Gateway listener |
-| Discord bot + token | `.env` | Required from Phase 1 (must have MESSAGE_CONTENT intent enabled) |
+| `google/uuid` | Go module | `github.com/google/uuid` — ID generation for mayor_messages |
+| Discord bot + token | `.env` | Required from Phase 1 (must have MESSAGE_CONTENT intent enabled in Discord Developer Portal) |
 | Discord guild ID | `.env` | Server where world channels are created |
 | `ANTHROPIC_API_KEY` | Already configured | Used by both Claude Code and OpenClaw (env var, not credential bridge) |
 
@@ -1567,6 +1848,5 @@ The chat container also uses `data-on-load="this.scrollTop = this.scrollHeight"`
 - DB schema: `harness/internal/db/migrations/001_initial.sql`
 - World creation form: `harness/views/lobby/lobby.templ:50-66`
 - OpenClaw docs: https://docs.openclaw.ai/concepts/multi-agent
-- OpenClaw Claude Code skill: https://github.com/Enderfga/openclaw-claude-code-skill
 - Nano Banana API: https://ai.google.dev/gemini-api/docs/image-generation
 - Discord API: https://discord.com/developers/docs/resources/channel

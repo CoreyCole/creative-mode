@@ -4,7 +4,7 @@
 //! background color and a list of hotspots with labels and actions.
 
 use bevy::prelude::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 pub struct RoomPlugin;
 
@@ -39,7 +39,7 @@ pub struct HotspotDef {
     pub action: ActionDef,
 }
 
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Deserialize, Serialize, Clone, Debug)]
 #[serde(tag = "type")]
 pub enum ActionDef {
     #[serde(rename = "dialog")]

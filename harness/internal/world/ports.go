@@ -8,9 +8,12 @@ import (
 const (
 	gameServerMinPort = 9001
 	gameServerMaxPort = 9999
+
+	trunkMinPort = 8081
+	trunkMaxPort = 8180
 )
 
-// PortAllocator manages a pool of ports for game servers.
+// PortAllocator manages a pool of ports.
 type PortAllocator struct {
 	mu      sync.Mutex
 	inUse   map[int]bool
@@ -18,12 +21,12 @@ type PortAllocator struct {
 	maxPort int
 }
 
-// NewPortAllocator creates a port allocator for the range 9001-9999.
-func NewPortAllocator() *PortAllocator {
+// NewPortAllocator creates a port allocator for the given range.
+func NewPortAllocator(minPort, maxPort int) *PortAllocator {
 	return &PortAllocator{
 		inUse:   make(map[int]bool),
-		minPort: gameServerMinPort,
-		maxPort: gameServerMaxPort,
+		minPort: minPort,
+		maxPort: maxPort,
 	}
 }
 

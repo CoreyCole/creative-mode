@@ -342,42 +342,74 @@ func (m *Manager) SetUserPosition(
 	})
 }
 
-// EnsureTemplateWorld is an idempotent startup function that ensures a
-// "Template World" exists with running dev servers (cargo watch + trunk serve).
-// Creates it if missing, recovers it if stale from a crash.
-func (m *Manager) EnsureTemplateWorld(ctx context.Context) (string, error) {
+// templateDisplayName returns a display-friendly name prefix for a template type.
+func templateDisplayName(tmplType string) string {
+	return strings.ToUpper(tmplType)
+}
+
+// templateWorldName returns the full world name for a template type,
+// e.g. "3D Template World", "2D Template World".
+func templateWorldName(tmplType string) string {
+	return templateDisplayName(tmplType) + " Template World"
+}
+
+// EnsureTemplateWorlds is an idempotent startup function that ensures a
+// template world exists for each template type with running dev servers.
+// Creates them if missing, recovers them if stale from a crash.
+func (m *Manager) EnsureTemplateWorlds(ctx context.Context) error {
+	for tmplType, tmplDir := range m.templateDirs {
+		if err := m.ensureSingleTemplateWorld(ctx, tmplType, tmplDir); err != nil {
+			m.logger.Error("failed to ensure template world",
+				"templateType", tmplType, "error", err)
+		}
+	}
+	return nil
+}
+
+// ensureSingleTemplateWorld ensures a single template world exists and has
+// running dev servers.
+func (m *Manager) ensureSingleTemplateWorld(
+	ctx context.Context, templateType, templateDir string,
+) error {
+	expectedName := templateWorldName(templateType)
+
 	// Search for existing template world.
 	worlds, err := m.db.ListWorlds(ctx)
 	if err != nil {
-		return "", fmt.Errorf("listing worlds: %w", err)
+		return fmt.Errorf("listing worlds: %w", err)
 	}
 
 	for _, w := range worlds {
-		if w.Name != "Template World" {
+		if w.Name != expectedName {
 			continue
 		}
 
-		worldID, ensureErr := m.ensureTemplateDevReady(ctx, w.ID)
+		_, ensureErr := m.ensureTemplateDevReady(ctx, w.ID, templateType, templateDir)
 		if ensureErr != nil {
-			return "", fmt.Errorf("ensuring template dev ready: %w", ensureErr)
+			return fmt.Errorf("ensuring template dev ready: %w", ensureErr)
 		}
 
-		return worldID, nil
+		m.logger.Info("template world ready",
+			"templateType", templateType, "worldID", w.ID)
+		return nil
 	}
 
-	// No template world — create one in dev mode.
-	worldID, err := m.createTemplateWorldDev(ctx)
-	if err != nil {
-		return "", fmt.Errorf("creating template world (dev): %w", err)
+	// No template world of this type — create one in dev mode.
+	worldID, createErr := m.createTemplateWorldDev(ctx, templateType, templateDir)
+	if createErr != nil {
+		return fmt.Errorf("creating template world (dev): %w", createErr)
 	}
 
-	return worldID, nil
+	m.logger.Info("template world ready",
+		"templateType", templateType, "worldID", worldID)
+	return nil
 }
 
-// createTemplateWorldDev creates a template world that points directly at
-// m.templateDirs["3d"] (no file copy). Dev servers (cargo watch + trunk serve) handle
-// compilation automatically.
-func (m *Manager) createTemplateWorldDev(ctx context.Context) (string, error) {
+// createTemplateWorldDev creates a template world that points directly at the
+// template directory (no file copy). Dev servers handle compilation automatically.
+func (m *Manager) createTemplateWorldDev(
+	ctx context.Context, templateType, templateDir string,
+) (string, error) {
 	worldID := uuid.New().String()[:8]
 	cpID := uuid.New().String()[:8]
 
@@ -395,12 +427,12 @@ func (m *Manager) createTemplateWorldDev(ctx context.Context) (string, error) {
 
 	if err := qtx.CreateWorld(ctx, sqlc.CreateWorldParams{
 		ID:   worldID,
-		Name: "Template World",
+		Name: templateWorldName(templateType),
 		Description: sql.NullString{
-			String: "Auto-provisioned default world",
+			String: "Auto-provisioned " + templateType + " template world",
 			Valid:  true,
 		},
-		TemplateType: "3d",
+		TemplateType: templateType,
 	}); err != nil {
 		return "", fmt.Errorf("inserting world: %w", err)
 	}
@@ -409,7 +441,7 @@ func (m *Manager) createTemplateWorldDev(ctx context.Context) (string, error) {
 		ID:      cpID,
 		WorldID: worldID,
 		Status:  "ready",
-		DirPath: m.templateDirs["3d"],
+		DirPath: templateDir,
 	}); err != nil {
 		return "", fmt.Errorf("inserting root checkpoint: %w", err)
 	}
@@ -419,20 +451,23 @@ func (m *Manager) createTemplateWorldDev(ctx context.Context) (string, error) {
 	}
 
 	// Start dev servers.
-	if err := m.startTemplateDevServers(ctx, worldID, cpID); err != nil {
-		return "", fmt.Errorf("starting dev servers: %w", err)
+	startErr := m.startTemplateDevServers(
+		ctx, worldID, cpID, templateType, templateDir,
+	)
+	if startErr != nil {
+		return "", fmt.Errorf("starting dev servers: %w", startErr)
 	}
 
 	m.logger.Info("template world created (dev mode)",
-		"worldID", worldID, "cpID", cpID)
+		"templateType", templateType, "worldID", worldID, "cpID", cpID)
 
 	return worldID, nil
 }
 
 // ensureTemplateDevReady handles an existing template world: ensures dir_path
-// points at m.templateDirs["3d"] (migrates if stale) and starts dev servers.
+// points at the correct template directory (migrates if stale) and starts dev servers.
 func (m *Manager) ensureTemplateDevReady(
-	ctx context.Context, worldID string,
+	ctx context.Context, worldID, templateType, templateDir string,
 ) (string, error) {
 	checkpoints, err := m.db.GetCheckpointTree(ctx, worldID)
 	if err != nil {
@@ -446,12 +481,12 @@ func (m *Manager) ensureTemplateDevReady(
 	cp := checkpoints[0]
 
 	// Migrate dir_path to templateDir if stale (e.g. from a prior prod setup).
-	if cp.DirPath != m.templateDirs["3d"] {
+	if cp.DirPath != templateDir {
 		m.logger.Info("migrating template world dir_path",
 			"worldID", worldID, "cpID", cp.ID,
-			"old", cp.DirPath, "new", m.templateDirs["3d"])
+			"old", cp.DirPath, "new", templateDir)
 		if err := m.db.UpdateCheckpointDirPath(ctx, sqlc.UpdateCheckpointDirPathParams{
-			DirPath: m.templateDirs["3d"],
+			DirPath: templateDir,
 			ID:      cp.ID,
 		}); err != nil {
 			return "", fmt.Errorf("updating dir_path: %w", err)
@@ -459,42 +494,53 @@ func (m *Manager) ensureTemplateDevReady(
 	}
 
 	// Start dev servers (idempotent — reuses existing sessions).
-	if err := m.startTemplateDevServers(ctx, worldID, cp.ID); err != nil {
-		return "", fmt.Errorf("starting dev servers: %w", err)
+	startErr := m.startTemplateDevServers(
+		ctx, worldID, cp.ID, templateType, templateDir,
+	)
+	if startErr != nil {
+		return "", fmt.Errorf("starting dev servers: %w", startErr)
 	}
 
 	return worldID, nil
 }
 
-// startTemplateDevServers starts cargo watch (game server) and trunk serve
-// (WASM client) for the template world. Both are idempotent — they reuse
-// existing tmux sessions if alive.
+// startTemplateDevServers starts dev servers for a template world.
+// 3D: cargo watch (game server) + trunk serve.
+// 2D: trunk serve only (no game server).
+// Both are idempotent — they reuse existing tmux sessions if alive.
 func (m *Manager) startTemplateDevServers(
-	ctx context.Context, worldID, cpID string,
+	ctx context.Context, worldID, cpID, templateType, templateDir string,
 ) error {
-	// Start cargo watch game server.
-	srv, err := m.GameServers.ConnectDev(worldID, cpID, m.templateDirs["3d"])
-	if err != nil {
-		return fmt.Errorf("starting dev game server: %w", err)
+	gamePort := 0
+
+	// 3D worlds need a game server (cargo watch).
+	if templateType == "3d" {
+		srv, err := m.GameServers.ConnectDev(worldID, cpID, templateDir)
+		if err != nil {
+			return fmt.Errorf("starting dev game server: %w", err)
+		}
+
+		gamePort = srv.Port
+
+		// Sync server port to DB.
+		_, _ = m.db.UpdateCheckpointServerPort(ctx, sqlc.UpdateCheckpointServerPortParams{
+			ServerPort: sql.NullInt64{Int64: int64(srv.Port), Valid: true},
+			ID:         cpID,
+		})
 	}
 
-	// Sync server port to DB.
-	_, _ = m.db.UpdateCheckpointServerPort(ctx, sqlc.UpdateCheckpointServerPortParams{
-		ServerPort: sql.NullInt64{Int64: int64(srv.Port), Valid: true},
-		ID:         cpID,
-	})
-
-	// Start trunk serve.
+	// All template types get trunk serve.
 	trunkPort, err := m.GameServers.StartTrunkServe(
-		worldID, cpID, m.templateDirs["3d"],
+		worldID, cpID, templateDir,
 	)
 	if err != nil {
 		return fmt.Errorf("starting trunk serve: %w", err)
 	}
 
 	m.logger.Info("template dev servers running",
+		"templateType", templateType,
 		"worldID", worldID, "cpID", cpID,
-		"gamePort", srv.Port, "trunkPort", trunkPort)
+		"gamePort", gamePort, "trunkPort", trunkPort)
 
 	return nil
 }

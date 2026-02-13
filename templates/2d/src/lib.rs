@@ -1,4 +1,6 @@
 mod bridge;
+#[cfg(target_family = "wasm")]
+mod debug;
 mod interaction;
 mod room;
 
@@ -30,6 +32,9 @@ pub fn run() {
     app.add_plugins(room::RoomPlugin);
     app.add_plugins(interaction::InteractionPlugin);
     app.add_plugins(bridge::BridgePlugin);
+
+    #[cfg(target_family = "wasm")]
+    app.add_systems(Update, debug::process_debug_queries);
 
     app.run();
 }

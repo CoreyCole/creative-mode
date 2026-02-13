@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -132,11 +133,11 @@ func main() {
 			continue
 		}
 
-		// Check if this is the template world's dev server — keep it alive.
+		// Check if this is a template world's dev server — keep it alive.
 		isTemplateDev := false
 		if srv.Mode == world.GameServerModeDev {
 			w, wErr := database.GetWorld(context.Background(), srv.WorldID)
-			if wErr == nil && w.Name == "Template World" {
+			if wErr == nil && strings.HasSuffix(w.Name, "Template World") {
 				isTemplateDev = true
 			}
 		}
@@ -170,12 +171,9 @@ func main() {
 		}
 	}
 
-	// Auto-provision template world (non-fatal).
-	templateWorldID, templateErr := worldManager.EnsureTemplateWorld(ctx)
-	if templateErr != nil {
-		logger.Error("failed to ensure template world", "error", templateErr)
-	} else {
-		logger.Info("template world ready", "worldID", templateWorldID)
+	// Auto-provision template worlds for all template types (non-fatal).
+	if templateErr := worldManager.EnsureTemplateWorlds(ctx); templateErr != nil {
+		logger.Error("failed to ensure template worlds", "error", templateErr)
 	}
 
 	// Set up event bus.

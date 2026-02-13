@@ -22,9 +22,6 @@ const serverSessionParts = 4
 // session name: cm-trunk-{worldID}-{cpID}.
 const trunkSessionParts = 4
 
-// defaultTrunkPort is used when TEMPLATE_TRUNK_PORT is not set.
-const defaultTrunkPort = 8081
-
 // GameServerMode distinguishes production (release binary) from dev (cargo watch).
 type GameServerMode string
 
@@ -70,11 +67,12 @@ func trunkSessionName(worldID, cpID string) string {
 // GameServerManager manages game server processes running in tmux sessions.
 // Sessions survive harness restarts; Recover() rediscovers them on startup.
 type GameServerManager struct {
-	mu      sync.Mutex
-	servers map[string]*GameServer // key: "{worldID}/{cpID}"
-	ports   *PortAllocator
-	logger  *slog.Logger
-	logsDir string
+	mu         sync.Mutex
+	servers    map[string]*GameServer // key: "{worldID}/{cpID}"
+	ports      *PortAllocator
+	trunkPorts *PortAllocator
+	logger     *slog.Logger
+	logsDir    string
 }
 
 // NewGameServerManager creates a new game server manager.
@@ -82,10 +80,11 @@ func NewGameServerManager(
 	logger *slog.Logger, logsDir string,
 ) *GameServerManager {
 	return &GameServerManager{
-		servers: make(map[string]*GameServer),
-		ports:   NewPortAllocator(),
-		logger:  logger,
-		logsDir: logsDir,
+		servers:    make(map[string]*GameServer),
+		ports:      NewPortAllocator(gameServerMinPort, gameServerMaxPort),
+		trunkPorts: NewPortAllocator(trunkMinPort, trunkMaxPort),
+		logger:     logger,
+		logsDir:    logsDir,
 	}
 }
 
@@ -242,6 +241,28 @@ func (m *GameServerManager) GetServer(worldID, cpID string) *GameServer {
 		return nil
 	}
 
+	// Trunk-only entries (Port: 0) have no game server session.
+	// Check trunk session liveness instead.
+	if srv.Port == 0 {
+		if srv.TrunkSessionName == "" {
+			return nil
+		}
+		alive := exec.CommandContext( //nolint:gosec // G204: controlled args
+			context.Background(), "tmux", "has-session",
+			"-t", srv.TrunkSessionName,
+		).Run() == nil
+		if !alive {
+			if srv.TrunkPort > 0 {
+				m.trunkPorts.Release(srv.TrunkPort)
+			}
+			delete(m.servers, key)
+			m.logger.Info("cleaned up dead trunk-only entry",
+				"key", key, "trunkPort", srv.TrunkPort)
+			return nil
+		}
+		return srv
+	}
+
 	if !srv.IsAlive() {
 		m.ports.Release(srv.Port)
 		delete(m.servers, key)
@@ -272,10 +293,15 @@ func (m *GameServerManager) Disconnect(worldID, cpID string) {
 			context.Background(),
 			"tmux", "kill-session", "-t", srv.TrunkSessionName,
 		).Run()
+		if srv.TrunkPort > 0 {
+			m.trunkPorts.Release(srv.TrunkPort)
+		}
 	}
 
 	_ = srv.Stop()
-	m.ports.Release(srv.Port)
+	if srv.Port > 0 {
+		m.ports.Release(srv.Port)
+	}
 	delete(m.servers, key)
 	m.logger.Info("disconnected game server",
 		"worldID", worldID, "cpID", cpID, "port", srv.Port)
@@ -292,8 +318,20 @@ func (m *GameServerManager) StopByWorldExcept(worldID, keepCPID string) {
 			continue
 		}
 
+		if srv.TrunkSessionName != "" {
+			_ = exec.CommandContext( //nolint:gosec // G204: controlled args
+				context.Background(),
+				"tmux", "kill-session", "-t", srv.TrunkSessionName,
+			).Run()
+			if srv.TrunkPort > 0 {
+				m.trunkPorts.Release(srv.TrunkPort)
+			}
+		}
+
 		_ = srv.Stop()
-		m.ports.Release(srv.Port)
+		if srv.Port > 0 {
+			m.ports.Release(srv.Port)
+		}
 		delete(m.servers, key)
 		m.logger.Info("stopped old game server",
 			"worldID", worldID, "cpID", srv.CPID, "port", srv.Port)
@@ -313,9 +351,14 @@ func (m *GameServerManager) Shutdown() {
 				context.Background(),
 				"tmux", "kill-session", "-t", srv.TrunkSessionName,
 			).Run()
+			if srv.TrunkPort > 0 {
+				m.trunkPorts.Release(srv.TrunkPort)
+			}
 		}
 		_ = srv.Stop()
-		m.ports.Release(srv.Port)
+		if srv.Port > 0 {
+			m.ports.Release(srv.Port)
+		}
 		delete(m.servers, key)
 		m.logger.Info("game server stopped (shutdown)", "key", key)
 	}
@@ -389,6 +432,7 @@ func (m *GameServerManager) Recover() {
 	}
 
 	// Second pass: recover trunk serve sessions and attach to existing servers.
+	// Trunk-only sessions (e.g. 2D worlds with no game server) get a Port:0 entry.
 	for _, line := range lines {
 		if !strings.HasPrefix(line, "cm-trunk-") {
 			continue
@@ -413,15 +457,20 @@ func (m *GameServerManager) Recover() {
 
 		srv, tracked := m.servers[key]
 		if !tracked {
-			// Orphaned trunk session — will be cleaned up by ReapOrphans.
-			m.logger.Warn("trunk session has no matching server",
-				"session", line)
-
-			continue
+			// Trunk-only session (e.g. 2D world) — create a Port:0 entry.
+			srv = &GameServer{
+				SessionName: serverSessionName(worldID, cpID),
+				Port:        0,
+				WorldID:     worldID,
+				CPID:        cpID,
+				Mode:        GameServerModeDev,
+			}
+			m.servers[key] = srv
 		}
 
 		srv.TrunkPort = trunkPort
 		srv.TrunkSessionName = line
+		m.trunkPorts.MarkInUse(trunkPort)
 
 		m.logger.Info("recovered trunk serve",
 			"worldID", worldID,
@@ -556,8 +605,9 @@ func (m *GameServerManager) RecoveredServers() []*GameServer {
 }
 
 // StartTrunkServe creates a tmux session running trunk serve for the WASM
-// client. The trunk port is read from TEMPLATE_TRUNK_PORT env (default 8081).
-// Must be called after the game server is already tracked in the servers map.
+// client. A port is allocated from the trunk port pool (8081-8180).
+// If no game server entry exists (e.g. 2D worlds), one is auto-created with
+// Port: 0.
 func (m *GameServerManager) StartTrunkServe(
 	worldID, cpID, checkpointDir string,
 ) (int, error) {
@@ -567,7 +617,15 @@ func (m *GameServerManager) StartTrunkServe(
 
 	srv, ok := m.servers[key]
 	if !ok {
-		return 0, fmt.Errorf("no game server for %s", key)
+		// Auto-create a trunk-only entry (e.g. 2D worlds with no game server).
+		srv = &GameServer{
+			SessionName: serverSessionName(worldID, cpID),
+			Port:        0,
+			WorldID:     worldID,
+			CPID:        cpID,
+			Mode:        GameServerModeDev,
+		}
+		m.servers[key] = srv
 	}
 
 	// Already running?
@@ -578,22 +636,27 @@ func (m *GameServerManager) StartTrunkServe(
 		if alive {
 			return srv.TrunkPort, nil
 		}
-		// Stale — will recreate below.
+		// Stale — release old port and recreate below.
+		m.trunkPorts.Release(srv.TrunkPort)
 	}
 
-	trunkPort := defaultTrunkPort
-	if envPort := os.Getenv("TEMPLATE_TRUNK_PORT"); envPort != "" {
-		if p, err := strconv.Atoi(envPort); err == nil {
-			trunkPort = p
-		}
+	trunkPort, err := m.trunkPorts.Allocate()
+	if err != nil {
+		return 0, fmt.Errorf("no available trunk ports: %w", err)
 	}
 
 	sessionName := trunkSessionName(worldID, cpID)
+
+	// Use client/ subdirectory if it has index.html, otherwise use checkpointDir directly.
 	clientDir := filepath.Join(checkpointDir, "client")
+	if _, statErr := os.Stat(filepath.Join(clientDir, "index.html")); statErr != nil {
+		clientDir = checkpointDir
+	}
 
 	logDir := filepath.Join(m.logsDir, "worlds", worldID, cpID)
-	if err := os.MkdirAll(logDir, 0o750); err != nil {
-		return 0, fmt.Errorf("creating log directory: %w", err)
+	if mkErr := os.MkdirAll(logDir, 0o750); mkErr != nil {
+		m.trunkPorts.Release(trunkPort)
+		return 0, fmt.Errorf("creating log directory: %w", mkErr)
 	}
 
 	// Kill any stale session with the same name.
@@ -610,6 +673,7 @@ func (m *GameServerManager) StartTrunkServe(
 		"-e", fmt.Sprintf("TRUNK_PORT=%d", trunkPort),
 	).Run()
 	if createErr != nil {
+		m.trunkPorts.Release(trunkPort)
 		return 0, fmt.Errorf("creating trunk tmux session: %w", createErr)
 	}
 
@@ -634,6 +698,7 @@ func (m *GameServerManager) StartTrunkServe(
 			context.Background(),
 			"tmux", "kill-session", "-t", sessionName,
 		).Run()
+		m.trunkPorts.Release(trunkPort)
 		return 0, fmt.Errorf("sending trunk serve command: %w", sendErr)
 	}
 
@@ -670,6 +735,9 @@ func (m *GameServerManager) StopTrunkServe(worldID, cpID string) {
 		"worldID", worldID, "cpID", cpID,
 		"session", srv.TrunkSessionName)
 
+	if srv.TrunkPort > 0 {
+		m.trunkPorts.Release(srv.TrunkPort)
+	}
 	srv.TrunkPort = 0
 	srv.TrunkSessionName = ""
 }

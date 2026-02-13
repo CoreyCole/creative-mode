@@ -6,7 +6,36 @@ allowed-tools: Bash(curl:*), Bash(playwright-cli:*)
 
 # Bevy Debug Queries
 
-Three ways to inspect ECS state at runtime, listed from easiest to most manual.
+## Debug CLI (preferred)
+
+The `just debug` command handles auth, endpoint routing, and output formatting automatically:
+
+```bash
+# Any world
+just debug <worldID> status              # world status (template type, build, server)
+just debug <worldID> list                # list queryable types (client)
+just debug <worldID> resource <name>     # query a resource (client)
+
+# 2D worlds
+just debug <worldID> room                # current room + hotspots
+just debug <worldID> dialog              # dialog visibility + text
+just debug <worldID> click <id>          # trigger hotspot by ID
+
+# 3D worlds
+just debug <worldID> query <comp...>     # server ECS query (BRP)
+just debug <worldID> resources           # list server resources (BRP)
+just debug <worldID> components <entity> # list components on entity (BRP)
+
+# Raw pass-through
+just debug <worldID> client '<json>'     # raw client debug query
+just debug <worldID> server '<json>'     # raw server BRP query
+```
+
+Cookie is auto-extracted from `playwright-cli` persistent session. Override with `COOKIE=<value> just debug ...`.
+
+---
+
+Below are the manual methods (fallback when the CLI is unavailable).
 
 ## 1. Client State via Harness (Phase 3 — preferred)
 

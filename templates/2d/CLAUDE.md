@@ -245,41 +245,19 @@ The 2D template has a debug query system (`src/debug.rs`) that lets you inspect 
 | `{"type": "hotspots"}` | Alias for `room` query |
 | `{"type": "click", "hotspot_id": "..."}` | `{ok, hotspot_id, action_type}` — triggers the hotspot action directly |
 
-**Via harness proxy** (requires auth cookie):
+**Via debug CLI** (recommended):
+```bash
+just debug $WORLD room          # current room + hotspots
+just debug $WORLD dialog        # dialog visibility + text
+just debug $WORLD click portal  # trigger hotspot by ID
+```
+
+**Via curl** (fallback — requires manual cookie):
 ```bash
 COOKIE=$(playwright-cli cookie-get session)
-
-# Get current room and all hotspots
 curl -s -X POST -b "session=$COOKIE" \
   http://localhost:8080/world/$WORLD/client-debug \
   -d '{"type": "room"}' | python3 -m json.tool
-
-# Check if a dialog is visible
-curl -s -X POST -b "session=$COOKIE" \
-  http://localhost:8080/world/$WORLD/client-debug \
-  -d '{"type": "dialog"}'
-```
-
-**Via playwright-cli direct JS bridge:**
-```bash
-playwright-cli run-code "async page => {
-  const frame = page.frameLocator('#game-frame');
-  const result = await frame.locator('#bevy-canvas').evaluate(el => {
-    const w = el.ownerDocument.defaultView;
-    w.__debugRequest = JSON.stringify({type: 'room'});
-    return new Promise(resolve => {
-      const poll = setInterval(() => {
-        if (w.__debugResponse) {
-          const r = JSON.parse(w.__debugResponse);
-          w.__debugResponse = null;
-          clearInterval(poll);
-          resolve(r);
-        }
-      }, 16);
-    });
-  });
-  console.log(JSON.stringify(result, null, 2));
-}"
 ```
 
 ## Testing & Verification
@@ -289,36 +267,24 @@ playwright-cli run-code "async page => {
 The `click` debug query triggers a hotspot's action directly by ID — no coordinate math, no overlay management, no canvas clicking. This is the easiest way to test interactions.
 
 ```bash
-COOKIE=$(playwright-cli cookie-get session)
-
 # 1. See what's in the current room
-curl -s -X POST -b "session=$COOKIE" \
-  http://localhost:8080/world/$WORLD/client-debug \
-  -d '{"type": "room"}'
+just debug $WORLD room
 # → {"room_id": "lobby", "hotspots": [{"id": "welcome-sign", ...}, {"id": "portal", ...}]}
 
 # 2. Click a dialog hotspot
-curl -s -X POST -b "session=$COOKIE" \
-  http://localhost:8080/world/$WORLD/client-debug \
-  -d '{"type": "click", "hotspot_id": "welcome-sign"}'
+just debug $WORLD click welcome-sign
 # → {"ok": true, "hotspot_id": "welcome-sign", "action_type": "dialog"}
 
 # 3. Verify the dialog appeared
-curl -s -X POST -b "session=$COOKIE" \
-  http://localhost:8080/world/$WORLD/client-debug \
-  -d '{"type": "dialog"}'
+just debug $WORLD dialog
 # → {"visible": true, "text": "Welcome to Creative Mode! Click hotspots to interact."}
 
 # 4. Navigate to another room
-curl -s -X POST -b "session=$COOKIE" \
-  http://localhost:8080/world/$WORLD/client-debug \
-  -d '{"type": "click", "hotspot_id": "portal"}'
+just debug $WORLD click portal
 # → {"ok": true, "hotspot_id": "portal", "action_type": "navigate_room"}
 
 # 5. Verify room changed
-curl -s -X POST -b "session=$COOKIE" \
-  http://localhost:8080/world/$WORLD/client-debug \
-  -d '{"type": "room"}'
+just debug $WORLD room
 # → {"room_id": "garden", ...}
 ```
 
@@ -350,11 +316,11 @@ playwright-cli run-code "async page => {
 
 1. Open world page, wait for WASM load
 2. `playwright-cli screenshot` + `playwright-cli console error` — check for load issues
-3. Query room state: `curl ... -d '{"type": "room"}'`
-4. Click a dialog hotspot: `curl ... -d '{"type": "click", "hotspot_id": "welcome-sign"}'`
-5. Verify dialog: `curl ... -d '{"type": "dialog"}'`
-6. Navigate rooms: `curl ... -d '{"type": "click", "hotspot_id": "portal"}'`
-7. Verify room changed: `curl ... -d '{"type": "room"}'` → `room_id: "garden"`
+3. Query room state: `just debug $WORLD room`
+4. Click a dialog hotspot: `just debug $WORLD click welcome-sign`
+5. Verify dialog: `just debug $WORLD dialog`
+6. Navigate rooms: `just debug $WORLD click portal`
+7. Verify room changed: `just debug $WORLD room` → `room_id: "garden"`
 8. Final `playwright-cli console error` check
 
 ## Key Patterns

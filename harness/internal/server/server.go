@@ -711,10 +711,16 @@ func (s *Server) handleWorldStatus(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "checkpoint not found")
 	}
 
+	w, err := s.DB.GetWorld(ctx, worldID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get world")
+	}
+
 	result := map[string]any{
 		"world_id":      worldID,
 		"checkpoint_id": cpID,
 		"build_status":  cp.Status,
+		"template_type": w.TemplateType,
 	}
 
 	if gs := s.WorldManager.GameServers.GetServer(worldID, cpID); gs != nil {

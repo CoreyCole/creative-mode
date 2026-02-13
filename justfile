@@ -21,5 +21,9 @@ setup:
     ./scripts/setup.sh
     just setup-playwright
 
+# Debug: query world game state (run `just debug --help` for commands)
+debug worldID +args='--help':
+    ./scripts/debug.sh {{worldID}} {{args}}
+
 sync-thoughts:
     ./scripts/sync-thoughts.sh

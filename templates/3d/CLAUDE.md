@@ -140,27 +140,18 @@ Both server and client ECS state are queryable at runtime via HTTP. Any type wit
 
 **Server state** (via Bevy Remote Protocol — JSON-RPC 2.0):
 
-If `$CM_BRP_PORT` is set, you can query the dev server directly (no auth needed):
+Via debug CLI (recommended):
+```bash
+just debug $WORLD query shared::protocol::PlayerPosition
+just debug $WORLD resources
+just debug $WORLD components 42
+```
+
+Via dev server directly (no auth needed, if `$CM_BRP_PORT` is set):
 ```bash
 curl -s -X POST http://localhost:$CM_BRP_PORT \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","method":"world.query","id":1,"params":{"data":{"components":["shared::protocol::PlayerPosition"]}}}'
-```
-
-Via harness proxy (requires browser auth cookie):
-```bash
-# Query player positions + colors via harness proxy
-curl -X POST http://localhost:8080/world/<worldID>/debug \
-  -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","method":"world.query","id":1,"params":{"data":{"components":["shared::protocol::PlayerPosition"]}}}'
-
-# List all resources
-curl -X POST http://localhost:8080/world/<worldID>/debug \
-  -d '{"jsonrpc":"2.0","method":"world.list_resources","id":1}'
-
-# List components on a specific entity
-curl -X POST http://localhost:8080/world/<worldID>/debug \
-  -d '{"jsonrpc":"2.0","method":"world.list_components","id":1,"params":{"entity":42}}'
 ```
 
 **Client state** (via playwright JS bridge):

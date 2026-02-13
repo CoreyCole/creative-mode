@@ -76,3 +76,21 @@ just check          # verify Go + Rust + WASM all compile
 just fmt            # format all code
 just setup          # run setup (includes playwright-cli)
 ```
+
+## Debug CLI
+
+Query world game state from the terminal. Handles auth, endpoint routing, and output formatting for both 2D and 3D worlds.
+
+| Command | Purpose |
+|---------|---------|
+| `just debug <world> status` | World status (template type, build, server) |
+| `just debug <world> room` | 2D: current room + hotspots |
+| `just debug <world> dialog` | 2D: dialog visibility + text |
+| `just debug <world> click <id>` | 2D: trigger hotspot by ID |
+| `just debug <world> query <comp...>` | 3D: server ECS query |
+| `just debug <world> resources` | 3D: list server resources |
+| `just debug <world> client '<json>'` | Raw client debug query |
+| `just debug <world> server '<json>'` | Raw server BRP query |
+
+Cookie is auto-extracted from `playwright-cli` (requires `--persistent` session).
+Override with `COOKIE=<value> just debug ...`.

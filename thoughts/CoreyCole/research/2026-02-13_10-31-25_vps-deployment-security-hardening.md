@@ -9,6 +9,7 @@ tags: [research, codebase, security, deployment, tailscale, docker, vps, hardeni
 status: complete
 last_updated: 2026-02-13
 last_updated_by: CoreyCole
+last_updated_note: "Updated with architectural decisions: Tailscale-only access, WebSocket proxy through harness, Tailscale Serve for TLS, no public domain needed"
 ---
 
 # Research: VPS Deployment Security Hardening with Tailscale
@@ -21,11 +22,18 @@ last_updated_by: CoreyCole
 
 ## Research Question
 
-We want to deploy the creative-mode harness to a shared VPS with sensitive API keys. What security hardening is needed — both at the VPS/infrastructure level and within the application itself? We plan to use Tailscale for SSH access over a private network.
+We want to deploy the creative-mode harness to a shared VPS with sensitive API keys. What security hardening is needed — both at the VPS/infrastructure level and within the application itself? We plan to use Tailscale as the exclusive access method (no public internet exposure).
+
+## Key Architectural Decisions
+
+1. **Tailscale-only access** — The harness will never be publicly accessible. All users must be on the tailnet. A separate public server will handle deployed games later.
+2. **WebSocket reverse proxy through harness** — Game server WebSocket connections are proxied through the harness (`/world/{id}/ws` → `localhost:{port}`), eliminating the need to expose game port ranges. Only one port (8080) leaves the container.
+3. **Tailscale Serve for TLS** — No Caddy, no purchased domain. Tailscale Serve provides automatic HTTPS at `https://{machine}.{tailnet}.ts.net` with valid Let's Encrypt certs.
+4. **No public ports at all** — UFW denies all incoming on public interfaces. Only `tailscale0` interface accepts traffic.
 
 ## Summary
 
-The creative-mode harness is currently a **development-only setup** with no production hardening. There are significant security gaps at every level: the Docker container runs as root, there's no TLS, no rate limiting on HTTP endpoints, no security headers, dev-mode endpoints have no auth, and the Claude Code integration runs with `--dangerously-skip-permissions`. Deploying to a shared VPS requires hardening at three layers: (1) VPS/OS level (Tailscale, firewall, SSH), (2) Docker/container level (non-root user, port restrictions, secrets management), and (3) application level (TLS termination, security headers, rate limiting, input validation).
+The creative-mode harness is currently a **development-only setup** with no production hardening. There are significant security gaps at every level: the Docker container runs as root, there's no TLS, no rate limiting on HTTP endpoints, no security headers, dev-mode endpoints have no auth, and the Claude Code integration runs with `--dangerously-skip-permissions`. Deploying to a shared VPS requires hardening at three layers: (1) VPS/OS level (Tailscale, firewall, SSH), (2) Docker/container level (non-root user, single-port exposure, secrets management), and (3) application level (WebSocket proxy, security headers, rate limiting, input validation). Tailscale Serve handles TLS termination — no reverse proxy or domain purchase needed.
 
 ---
 
@@ -91,12 +99,34 @@ The creative-mode harness is currently a **development-only setup** with no prod
 ### Architecture Overview
 
 ```
-Internet ──> [VPS:80/443] ──> Caddy (TLS termination) ──> Docker:8080 (harness)
-                 |
-            (all other ports blocked from internet)
-                 |
-Tailscale ──> [VPS:tailscale0] ──> SSH, admin, game ports, monitoring
+┌─────────────────────────────────────────────────────────────┐
+│ VPS                                                         │
+│                                                             │
+│  Public interface (eth0): ALL PORTS BLOCKED                 │
+│                                                             │
+│  Tailscale interface (tailscale0):                          │
+│    ┌──────────────────────────────────────────────────┐     │
+│    │ tailscale serve (TLS termination)                │     │
+│    │ https://{machine}.{tailnet}.ts.net                │     │
+│    │         │                                        │     │
+│    │         ▼                                        │     │
+│    │   localhost:8080 (harness Docker container)      │     │
+│    │         │                                        │     │
+│    │    ┌────┴─────────────────┐                      │     │
+│    │    │ /world/{id}/ws       │  (WebSocket proxy)   │     │
+│    │    │      │               │                      │     │
+│    │    │      ▼               │                      │     │
+│    │    │ localhost:900x       │  (game servers)      │     │
+│    │    │ (inside container)   │                      │     │
+│    │    └──────────────────────┘                      │     │
+│    └──────────────────────────────────────────────────┘     │
+│                                                             │
+│  SSH: Tailscale SSH only (no public sshd)                   │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
 ```
+
+**Zero public ports.** The VPS is invisible to the internet. All access is through Tailscale.
 
 ### Step 1: Base OS Hardening
 
@@ -145,14 +175,14 @@ sudo systemctl restart sshd
 
 ### Step 4: Firewall (UFW)
 
+Since this is Tailscale-only (no public web ports), the firewall is simple:
+
 ```bash
 sudo ufw default deny incoming
 sudo ufw default allow outgoing
-sudo ufw allow 80/tcp      # HTTP (for HTTPS redirect)
-sudo ufw allow 443/tcp     # HTTPS
-sudo ufw allow in on tailscale0  # All Tailscale traffic
+sudo ufw allow in on tailscale0  # All Tailscale traffic — the ONLY ingress rule
 sudo ufw enable
-# Do NOT allow port 22 from anywhere
+# No port 22, no port 80, no port 443 on public interface
 ```
 
 **Docker bypasses UFW** via iptables `DOCKER` chain. Add to `/etc/ufw/after.rules`:
@@ -163,12 +193,13 @@ sudo ufw enable
 :DOCKER-USER - [0:0]
 -A DOCKER-USER -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
 -A DOCKER-USER -i tailscale0 -j RETURN
--A DOCKER-USER -p tcp --dport 80 -j RETURN
--A DOCKER-USER -p tcp --dport 443 -j RETURN
+# Drop ALL traffic from public interface to Docker containers
 -A DOCKER-USER -i eth0 -j DROP
 COMMIT
 # END DOCKER-USER RULES
 ```
+
+This is even simpler than a public-facing setup — no HTTP/HTTPS exceptions needed.
 
 ### Step 5: Fail2Ban
 
@@ -244,15 +275,14 @@ services:
   harness:
     build: .
     ports:
-      # Only expose port 8080 on localhost — Caddy will proxy to it
+      # Single port — Tailscale Serve proxies to this
       - "127.0.0.1:8080:8080"
-      # Game server ports on Tailscale only (for direct client connections)
-      - "100.x.y.z:9001-9100:9001-9100"
-      # Do NOT expose trunk ports (8081-8180) in production
+      # No game server ports exposed — harness proxies WebSocket internally
+      # No trunk ports — no WASM hot-reload in production
     environment:
       - CGO_ENABLED=1
       - DEV_MODE=false          # CRITICAL: disable dev endpoints
-      - HARNESS_URL=https://your-domain.com
+      - HARNESS_URL=https://{machine}.{tailnet}.ts.net
       - CM_HOOK_SECRET=${CM_HOOK_SECRET}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
     env_file: .env
@@ -267,57 +297,92 @@ services:
 
 Key changes from dev:
 - `DEV_MODE=false` — disables `/dev/rebuild`, `/dev/auth/login`, `/dev/sse`
-- `HARNESS_URL=https://...` — enables `Secure` flag on cookies
+- `HARNESS_URL=https://{machine}.{tailnet}.ts.net` — enables `Secure` flag on cookies
 - `CM_HOOK_SECRET` set — protects `/api/claude-event`
-- Port 8080 bound to `127.0.0.1` — only accessible via reverse proxy
-- Trunk ports not exposed — no WASM hot-reload in production
-- Game ports on Tailscale IP — only accessible to authenticated users
+- **Single port** (8080) bound to `127.0.0.1` — Tailscale Serve proxies to it
+- **No game server ports exposed** — harness reverse-proxies WebSocket connections internally
+- No trunk ports — no WASM hot-reload in production
 - Reduced volume mounts — no full project tree
 
-### TLS Termination (Caddy)
+### TLS Termination (Tailscale Serve)
 
-Caddy provides automatic HTTPS with Let's Encrypt:
+No Caddy or domain purchase needed. Tailscale Serve provides automatic HTTPS with valid Let's Encrypt certs on `*.ts.net`:
 
+```bash
+# On the VPS: proxy HTTPS → harness container
+tailscale serve https / http://localhost:8080
 ```
-# /etc/caddy/Caddyfile
-your-domain.com {
-    reverse_proxy localhost:8080
 
-    header {
-        Strict-Transport-Security "max-age=31536000; includeSubDomains"
-        X-Content-Type-Options "nosniff"
-        X-Frame-Options "SAMEORIGIN"
-        Referrer-Policy "strict-origin-when-cross-origin"
-        Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' wss://your-domain.com"
+This gives you `https://{machine}.{tailnet}.ts.net` with:
+- Valid TLS certificate (auto-renewed)
+- Only accessible to tailnet members
+- HTTPS → HTTP proxy to the container
+
+For security headers, add them as Echo middleware in the harness (since Tailscale Serve doesn't have a header injection feature like Caddy):
+
+```go
+e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+    return func(c echo.Context) error {
+        h := c.Response().Header()
+        h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+        h.Set("X-Content-Type-Options", "nosniff")
+        h.Set("X-Frame-Options", "SAMEORIGIN")
+        h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+        return next(c)
     }
-}
+})
 ```
+
+### Game Server WebSocket Proxy (Decided)
+
+**Decision: Reverse-proxy game WebSocket connections through the harness.**
+
+Instead of exposing game server ports (9001-9100) outside the container, the harness proxies WebSocket connections:
+
+```
+Browser WASM client
+    → wss://{machine}.{tailnet}.ts.net/world/{worldID}/ws
+    → Tailscale Serve (TLS termination)
+    → localhost:8080 (harness)
+    → localhost:{gamePort} (game server inside container)
+```
+
+**Why this works:**
+- The harness already tracks `worldID → gamePort` via `GameServerManager`
+- Only one port (8080) needs to leave the container
+- WebSocket connections inherit session auth from the `/world/*` middleware chain
+- No dynamic firewall/port management when worlds are created/forked
+- Game servers don't need their own TLS or authentication
+
+**Implementation needed in harness:**
+1. Add a WebSocket reverse proxy handler at `GET /world/:worldID/ws`
+2. Look up game server port from `GameServerManager`
+3. Proxy the WebSocket connection to `ws://localhost:{port}`
+4. Use `net/http/httputil.ReverseProxy` or a lightweight WebSocket proxy
+5. Update WASM client to connect to relative URL (`/world/{id}/ws`) instead of `ws://localhost:{port}`
+
+**What changes in the client** (`templates/3d/client/src/main.rs`):
+- Currently reads `server_port` from URL query param and connects to `ws://localhost:{port}`
+- Change to connect to `ws://{window.location.host}/world/{worldID}/ws`
+- The harness already passes `worldID` context; just needs to pass it to the iframe
 
 ### Application Code Hardening TODO
 
-These are changes needed in the Go harness code:
+Changes needed in the Go harness code:
 
-1. **Add Dockerfile `USER` directive** — run as non-root user
-2. **Add HTTP rate limiting middleware** — Echo has `middleware.RateLimiter`
-3. **Add request body size limits** — `e.Use(middleware.BodyLimit("1M"))`
-4. **Add server timeouts** — configure `ReadTimeout`, `WriteTimeout`, `IdleTimeout`
-5. **Add security headers middleware** — or rely on Caddy (above)
-6. **Fix logout cookie flags** — match creation flags (`auth.go:252-257`)
-7. **Add chat/prompt length limits** — prevent resource exhaustion
-8. **Add `postMessage` origin validation** — `game-loader.js:5-6`
-9. **Set `CM_HOOK_SECRET`** — and update hook scripts to send it
-10. **Generate real Lightyear protocol credentials** — `shared/src/protocol.rs:14-15`
+1. **Add WebSocket reverse proxy** — `GET /world/:worldID/ws` → `localhost:{gamePort}` (eliminates exposed game ports)
+2. **Add Dockerfile `USER` directive** — run as non-root user
+3. **Add security headers middleware** — HSTS, X-Content-Type-Options, X-Frame-Options, Referrer-Policy
+4. **Add HTTP rate limiting middleware** — Echo has `middleware.RateLimiter`
+5. **Add request body size limits** — `e.Use(middleware.BodyLimit("1M"))`
+6. **Add server timeouts** — configure `ReadTimeout`, `WriteTimeout`, `IdleTimeout`
+7. **Fix logout cookie flags** — match creation flags (`auth.go:252-257`)
+8. **Add chat/prompt length limits** — prevent resource exhaustion
+9. **Add `postMessage` origin validation** — `game-loader.js:5-6`
+10. **Set `CM_HOOK_SECRET`** — and update hook scripts to send it
 11. **Create `.env.example`** — document required environment variables
 
-### Game Server Port Strategy (Production)
-
-For production, game clients connect to WebSocket servers directly. Two options:
-
-**Option A: Proxy through Caddy** — Add WebSocket proxy rules for game server ports. Clients connect to `wss://your-domain.com/game/{port}`. Keeps everything behind TLS.
-
-**Option B: Direct Tailscale access** — Game ports exposed only on Tailscale IP. Users must be on the tailnet. More secure but limits who can play.
-
-**Option C: Direct public ports with WASM** — Since game clients are WASM running in the browser, the browser needs to reach the game server port. This likely requires public exposure of game ports, but with proper Lightyear authentication (non-null keys).
+Note: Lightyear protocol credentials (`templates/3d/shared/src/protocol.rs:14-15`) are less critical now since game servers are only reachable inside the container, but should still be generated properly for defense in depth.
 
 ---
 

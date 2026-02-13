@@ -741,6 +741,7 @@ Use your bash tool to call the harness build API with a detailed prompt:
 ` + "```" + `bash
 curl -X POST {{.HarnessURL}}/api/mayor/build \
   -H "Content-Type: application/json" \
+  -H "X-Mayor-Secret: {{.MayorSecret}}" \
   -d '{"world_id": "{{.WorldID}}", "prompt": "<your detailed build prompt>"}'
 ` + "```" + `
 
@@ -1433,29 +1434,49 @@ func (s *Server) handlePrompt(c echo.Context) error {
     // If world has a mayor + Discord channel, route through Discord
     world, _ := s.DB.GetWorld(c.Request().Context(), worldID)
     if world.DiscordChannelID.Valid && s.MayorManager != nil {
-        // Post user message to Discord — mayor picks it up via OpenClaw
-        content := fmt.Sprintf("**%s**: %s", user.GitHubUsername, input.PromptText)
-        s.MayorManager.PostToDiscordAndMirror(
-            s.DB, worldID, world.DiscordChannelID.String,
-            content, "user", user.GitHubUsername,
-        )
+        // Health check: verify OpenClaw gateway is responsive before routing
+        // through Discord. If the gateway is down, the mayor won't respond
+        // and the user gets no feedback.
+        if !s.MayorManager.IsGatewayHealthy() {
+            s.Logger.Warn("OpenClaw gateway unhealthy, falling back to direct pipeline",
+                "worldID", worldID)
+            // Fall through to direct pipeline below
+        } else {
+            // Post user message to Discord — mayor picks it up via OpenClaw
+            content := fmt.Sprintf("**%s**: %s", user.GitHubUsername, input.PromptText)
+            s.MayorManager.PostToDiscordAndMirror(
+                s.DB, worldID, world.DiscordChannelID.String,
+                content, "user", user.GitHubUsername,
+            )
 
-        // Clear prompt input
-        sse := datastar.NewSSE(c.Response().Writer, c.Request())
-        sse.MergeSignals([]byte(`{"prompt_text":""}`))
-        return nil
+            // Clear prompt input
+            sse := datastar.NewSSE(c.Response().Writer, c.Request())
+            sse.MergeSignals([]byte(`{"prompt_text":""}`))
+            return nil
+        }
     }
 
-    // Fallback: direct pipeline (no mayor configured)
+    // Fallback: direct pipeline (no mayor configured, or gateway unhealthy)
     // ... existing HandlePrompt code ...
 }
 ```
 
-#### 4. Add chat component to world overlay
+#### 8. Add chat component to world overlay + SSE append strategy
 **File**: `harness/views/world/overlay.templ`
 **Changes**: Include the mayor chat component and SSE listener for new messages
 
-The chat appears alongside the existing prompt box. When new `mayor.message` SSE events arrive, Datastar appends the message to the chat container.
+The chat appears alongside the existing prompt box. When new `mayor.message` SSE events arrive, the server sends a Datastar `merge-fragments` SSE event with the rendered message HTML and `data-merge-mode="append"` targeting `#mayor-chat`. This appends the new message div without re-rendering existing messages.
+
+```go
+// In the SSE event handler for mayor.message:
+sse.MergeFragments(
+    mayorChatMessage(authorType, authorName, content),  // templ component renders one message div
+    datastar.WithMergeMode(datastar.MergeModeAppend),
+    datastar.WithSelector("#mayor-chat"),
+)
+```
+
+The chat container also uses `data-on-load="this.scrollTop = this.scrollHeight"` to auto-scroll to the latest message on initial load, and the SSE append handler scrolls after each new message.
 
 ### Success Criteria
 

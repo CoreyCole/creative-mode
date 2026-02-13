@@ -396,7 +396,15 @@ Note: Lightyear protocol credentials (`templates/3d/shared/src/protocol.rs:14-15
 - Session recording available for compliance
 
 ### Docker + Tailscale: Host-Level (Simplest)
-Install Tailscale on the VPS host. Bind admin ports to Tailscale IP in docker-compose. No sidecar containers needed.
+Install Tailscale on the VPS host. Container binds to `127.0.0.1:8080`. Tailscale Serve proxies to it. No sidecar containers needed — the simplest possible setup.
+
+### Tailscale Serve: No Caddy, No Domain
+Tailscale Serve acts as the TLS-terminating reverse proxy:
+- Automatic HTTPS certs for `*.ts.net` domains
+- Only accessible to tailnet members
+- One command: `tailscale serve https / http://localhost:8080`
+- The resulting URL (e.g., `https://creative-mode.tail12345.ts.net`) becomes `HARNESS_URL`
+- GitHub OAuth callback URL also uses this `*.ts.net` domain
 
 ### Emergency Access
 - Keep VPS provider console access enabled (DigitalOcean Droplet Console, etc.)
@@ -408,6 +416,9 @@ Install Tailscale on the VPS host. Bind admin ports to Tailscale IP in docker-co
 - Consider tailnet lock for cryptographic node verification
 - Use OAuth clients (not auth keys) for long-lived server registrations
 
+### Future: Public Game Server (Separate)
+The deployed game will eventually be served from a separate public-facing server. That server will have its own domain, Caddy/nginx, and public ports. The harness VPS remains Tailscale-only — it is the development environment, never the production game host.
+
 ---
 
 ## Deployment Checklist
@@ -417,28 +428,31 @@ Install Tailscale on the VPS host. Bind admin ports to Tailscale IP in docker-co
 - [ ] Install Tailscale, register with `tag:server,tag:production`
 - [ ] Enable Tailscale SSH (`tailscale set --ssh`)
 - [ ] Disable key expiry in admin console
-- [ ] Configure Tailscale ACLs
-- [ ] Lock down sshd to Tailscale IP only
-- [ ] Configure UFW (80, 443, tailscale0 only)
+- [ ] Configure Tailscale ACLs (groups, tags, SSH rules)
+- [ ] Lock down sshd to Tailscale IP only (fallback on port 2222)
+- [ ] Configure UFW (deny all incoming, allow only `tailscale0`)
 - [ ] Add DOCKER-USER iptables rules for Docker/UFW compatibility
 - [ ] Install and configure Fail2Ban
 - [ ] Configure Docker daemon security (`/etc/docker/daemon.json`)
-- [ ] Install Caddy for TLS termination
-- [ ] Verify: SSH via public IP fails, SSH via Tailscale works, HTTPS works
+- [ ] Configure Tailscale Serve (`tailscale serve https / http://localhost:8080`)
+- [ ] Set up GitHub OAuth app with `*.ts.net` callback URL
+- [ ] Verify: SSH via public IP fails, SSH via Tailscale works, HTTPS via `*.ts.net` works
 
 ### Application Hardening
-- [ ] Create production docker-compose variant (`DEV_MODE=false`)
-- [ ] Set `HARNESS_URL` to production HTTPS URL
+- [ ] Implement WebSocket reverse proxy (`/world/:worldID/ws` → game server)
+- [ ] Update WASM client to use relative WebSocket URL instead of `ws://localhost:{port}`
+- [ ] Create production docker-compose (`DEV_MODE=false`, single port `127.0.0.1:8080`)
+- [ ] Set `HARNESS_URL` to `https://{machine}.{tailnet}.ts.net`
 - [ ] Set `CM_HOOK_SECRET` environment variable
 - [ ] Create `.env.example` for documentation
 - [ ] Add `USER` directive to Dockerfile (non-root)
+- [ ] Add security headers middleware (HSTS, X-Content-Type-Options, etc.)
 - [ ] Add HTTP rate limiting middleware
 - [ ] Add request body size limits
 - [ ] Add server read/write timeouts
 - [ ] Fix logout cookie flags
 - [ ] Add chat/prompt length limits
 - [ ] Add `postMessage` origin validation in game-loader.js
-- [ ] Decide game server port strategy (proxy vs direct)
 
 ---
 
@@ -470,11 +484,17 @@ Install Tailscale on the VPS host. Bind admin ports to Tailscale IP in docker-co
 3. **Docker bypasses UFW**: This is a well-known issue. The DOCKER-USER chain rules in `/etc/ufw/after.rules` are essential.
 4. **Cookie security is well-designed**: The conditional `Secure` flag based on `HARNESS_URL` means setting it to an HTTPS URL automatically enables secure cookies.
 5. **sqlc prevents SQL injection**: All database access uses generated parameterized queries — this is solid.
+6. **Tailscale-only simplifies everything**: No public ports means no Caddy, no domain, simpler firewall rules, and the WebSocket proxy through the harness means game ports stay internal to the container.
+7. **Single-port container**: With the WebSocket proxy, the entire harness (HTTP, SSE, WebSocket game connections) runs through one port. This is the ideal Docker setup — minimal surface area.
+
+## Resolved Questions
+
+1. ~~**Game server port strategy**~~: **Decided — WebSocket reverse proxy through harness.** Browser connects to `/world/{id}/ws`, harness proxies to `localhost:{port}` inside the container. No game ports exposed.
+2. ~~**Domain name**~~: **Not needed.** Tailscale Serve provides `https://{machine}.{tailnet}.ts.net` with valid TLS certs. GitHub OAuth callback URL uses this domain.
+3. ~~**Public access**~~: **Never.** Harness is Tailscale-only. A separate public server will host deployed games later.
 
 ## Open Questions
 
-1. **Game server port strategy**: How will browser WASM clients reach game WebSocket servers? Through Caddy proxy, or direct? This affects whether game ports need public exposure.
-2. **Claude Code sandboxing**: Is `--dangerously-skip-permissions` required, or can we restrict it? This is the single biggest attack surface.
-3. **Multi-user Tailscale access**: Who else needs VPS access? This determines ACL complexity.
-4. **Domain name**: What domain will the production harness use? Needed for Caddy config and OAuth callback URL.
-5. **VPS provider**: Which provider? Affects console access, provider-level firewall options, and Docker storage driver.
+1. **Claude Code sandboxing**: Is `--dangerously-skip-permissions` required, or can we restrict it? This is the single biggest attack surface.
+2. **Multi-user Tailscale access**: Who else needs VPS access? This determines ACL complexity.
+3. **VPS provider**: Which provider? Affects console access, provider-level firewall options, and Docker storage driver.

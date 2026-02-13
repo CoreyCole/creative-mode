@@ -36,10 +36,38 @@ The alternative — calling the Anthropic Messages API directly from Go — woul
 
 ### Key Discoveries
 - OpenClaw's multi-agent routing (`~/.openclaw/openclaw.json` `agents.list[]` + `bindings[]`) maps perfectly to one-agent-per-world
-- Each agent gets isolated workspace (`AGENTS.md`, `SOUL.md`, `MEMORY.md`, skills/, sessions/)
+- Each agent gets isolated workspace (`AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`, skills/, sessions/)
 - `openclaw-claude-code-skill` npm package bridges Claude Code capabilities into OpenClaw via MCP
 - OpenClaw's Discord adapter (`discord.js`) supports per-channel → per-agent routing via bindings
+- OpenClaw CLI has `agents add --non-interactive --json` for programmatic agent management
+- Config hot-reload (200ms cache) picks up agent changes without gateway restart
 - Nano Banana (Google Gemini image gen) available via `@google/genai` npm — future mayor capability
+
+### Architectural Decisions (resolved via research)
+
+1. **Agent management: OpenClaw CLI** (not file writes, not WebSocket RPC)
+   - `openclaw agents add --non-interactive --json` + `openclaw config set` from Go via `exec.Command`
+   - CLI handles config normalization, workspace scaffolding, duplicate detection, file locking
+   - No gateway dependency (operates directly on config files)
+   - No risk of schema drift — OpenClaw owns its own config format
+   - Rejected alternatives: direct file writes (fragile, reimplements OpenClaw logic), WebSocket RPC (requires gateway running, complex auth handshake)
+
+2. **Message sync: `discordgo` listener in harness** (not OpenClaw webhook)
+   - OpenClaw has NO outbound webhook mechanism — plugin hooks are in-process TypeScript only
+   - Harness runs `discordgo` Gateway listener to mirror all world channel messages to SQLite
+   - Single persistent WebSocket connection, filtered to guild message events
+   - Rejected alternatives: OpenClaw plugin (requires shipping TypeScript, coupling to internals), WebSocket RPC subscription (complex, adds OpenClaw dependency for reads), polling (adds latency)
+
+3. **Build event format: text prefixes** (not Discord @mentions)
+   - `[BUILD COMPLETE]` / `[BUILD FAILED]` instead of `@MayorName`
+   - Discord @mentions require `<@USER_ID>` format — fragile and requires looking up bot user ID
+   - Mayor's `AGENTS.md` instructs it to watch for these prefixes
+   - Simpler, more observable, works even if bot user ID changes
+
+4. **API key: `ANTHROPIC_API_KEY` env var** (not credential bridge)
+   - OpenClaw can read Claude Code's OAuth tokens from keychain via credential bridge
+   - Env var is simpler for Docker deployment, already configured and passed through
+   - Credential bridge adds macOS Keychain dependency that doesn't exist in the container
 
 ## Desired End State
 
@@ -48,7 +76,7 @@ After this plan is complete:
 1. **Every world has a mayor** — auto-provisioned on world creation with user-defined personality
 2. **Discord is the primary interface** — each world gets a Discord channel; users message the mayor from their phone
 3. **Harness UI mirrors Discord** — messages are stored in SQLite, rendered with Datastar/templ, no Discord account required to view
-4. **Discord is the communication bus** — the harness posts build events to Discord @mentioning the mayor; OpenClaw picks them up naturally (no custom webhook loop)
+4. **Discord is the communication bus** — the harness posts build events to Discord with `[BUILD]` prefixes; OpenClaw picks them up naturally (no custom webhook loop)
 5. **Mayor learns over time** — OpenClaw's autonomous context management means the mayor accumulates knowledge about its world, remembers user preferences, and references past builds — like a real mayor who knows every street and building in their town
 6. **Existing pipeline intact** — the mayor composes detailed prompts and calls the harness build API; `ForkCheckpoint` → Claude Code → hooks → `BuildCheckpoint` still works as-is
 
@@ -96,17 +124,17 @@ Discord Channel (source of truth)
    |    Existing Pipeline: ForkCheckpoint → Claude Code → hooks → BuildCheckpoint
    |         |
    |         v (build complete/failed)
-   |    Harness posts to Discord: "@Mayor build complete for checkpoint abc123"
+   |    Harness posts to Discord: "[BUILD COMPLETE] checkpoint abc123 — summary"
    |         |
-   |         v OpenClaw picks up the @mention
+   |         v OpenClaw picks up the message (AGENTS.md instructs mayor to watch for [BUILD] prefix)
    |    Mayor summarizes results in Discord thread
    |
-   +--- Harness mirrors all Discord messages → SQLite → Datastar/templ UI
+   +--- discordgo listener in harness mirrors ALL Discord messages → SQLite → Datastar/templ UI
 ```
 
 ### No Webhook Loop
 
-The key insight: instead of a custom webhook bridge between the harness and OpenClaw, the harness simply **posts build events to Discord** @mentioning the mayor. OpenClaw is already listening on the Discord channel, so it picks up the message naturally. This means:
+The key insight: instead of a custom webhook bridge between the harness and OpenClaw, the harness simply **posts build events to Discord** with a `[BUILD COMPLETE]` or `[BUILD FAILED]` prefix. The mayor's `AGENTS.md` instructs it to watch for these prefixes. OpenClaw is already listening on the Discord channel, so it picks up the message naturally. (Discord @mentions require `<@USER_ID>` format which is fragile — text prefixes are simpler and just as effective since the mayor is the only agent bound to the channel.) This means:
 
 - No `/api/mayor/event` webhook endpoint
 - No `mayor/notifier.go` package
@@ -114,14 +142,17 @@ The key insight: instead of a custom webhook bridge between the harness and Open
 - Discord thread context is preserved — the mayor sees build results in the same conversation where the user made the request
 - Everything is observable — read the Discord channel to see the full history
 
-### Message Mirroring
+### Message Mirroring via `discordgo` Listener
+
+The harness runs a `discordgo` listener (Go Discord library) that watches all world Discord channels. Every message — from users, the mayor, and the harness itself — is mirrored to SQLite and pushed to browsers via SSE.
 
 ```
 Discord channel (source of truth)
       |
-      | (events flow in via OpenClaw webhook or bot gateway)
+      | discordgo listener in harness (Go, same process)
+      | watches all world channels via Discord Gateway WebSocket
       v
-SQLite mayor_messages table
+SQLite mayor_messages table (deduplicated by discord_message_id)
       |
       | (SSE push on insert)
       v
@@ -129,6 +160,8 @@ Datastar/templ chat component in world overlay
 ```
 
 Users in the browser see the same conversation without needing a Discord account. Users on their phone use Discord directly.
+
+This replaces the original plan's `handleMayorMessageSync` webhook endpoint, which had no caller — OpenClaw has no built-in outbound webhook mechanism. The `discordgo` listener solves this cleanly: Discord is the single bus, and the harness simply listens to it.
 
 ---
 
@@ -461,21 +494,24 @@ import (
     "encoding/json"
     "fmt"
     "os"
+    "os/exec"
     "path/filepath"
     "text/template"
 )
 
 type Manager struct {
     openclawHome   string
+    openclawBin    string // path to openclaw CLI binary
     harnessURL     string
     discordToken   string
     discordGuildID string
     logger         *slog.Logger
 }
 
-func NewManager(openclawHome, harnessURL, discordToken, discordGuildID string, logger *slog.Logger) *Manager {
+func NewManager(openclawHome, openclawBin, harnessURL, discordToken, discordGuildID string, logger *slog.Logger) *Manager {
     return &Manager{
         openclawHome:   openclawHome,
+        openclawBin:    openclawBin,
         harnessURL:     harnessURL,
         discordToken:   discordToken,
         discordGuildID: discordGuildID,
@@ -483,41 +519,46 @@ func NewManager(openclawHome, harnessURL, discordToken, discordGuildID string, l
     }
 }
 
-// ProvisionAgent creates an OpenClaw agent workspace for a world,
-// creates a Discord channel, and binds them together.
+// ProvisionAgent creates an OpenClaw agent for a world using the CLI,
+// writes workspace files, creates a Discord channel, and binds them together.
 func (m *Manager) ProvisionAgent(worldID, worldName, mayorName, mayorPersonality, templateType string) (discordChannelID string, err error) {
-    agentDir := filepath.Join(m.openclawHome, "agents", worldID, "agent")
+    agentID := "world-" + worldID
     workspaceDir := filepath.Join(m.openclawHome, "workspaces", worldID)
 
-    // Create directory structure
+    // 1. Create agent via OpenClaw CLI — handles config registration,
+    //    workspace scaffolding, directory creation, agent ID normalization
+    if err := m.createAgentViaCLI(agentID, workspaceDir); err != nil {
+        return "", fmt.Errorf("creating OpenClaw agent: %w", err)
+    }
+
+    // 2. Create skill directories (CLI doesn't create these)
     for _, dir := range []string{
-        agentDir,
-        workspaceDir,
         filepath.Join(workspaceDir, "skills", "world-build"),
         filepath.Join(workspaceDir, "skills", "world-status"),
-        filepath.Join(workspaceDir, "memory"),
     } {
         if err := os.MkdirAll(dir, 0o750); err != nil {
             return "", fmt.Errorf("creating dir %s: %w", dir, err)
         }
     }
 
-    // Generate SOUL.md from user personality input
+    // 3. Write workspace files — OpenClaw injects these into the agent's system prompt
     if err := m.writeSoul(workspaceDir, mayorName, mayorPersonality, worldName); err != nil {
         return "", err
     }
-
-    // Generate AGENTS.md with structured workflow
     if err := m.writeAgents(workspaceDir, worldID, worldName, mayorName, templateType); err != nil {
         return "", err
     }
-
-    // Write skill definitions
+    if err := m.writeIdentity(workspaceDir, mayorName); err != nil {
+        return "", err
+    }
+    if err := m.writeUser(workspaceDir, worldName); err != nil {
+        return "", err
+    }
     if err := m.writeSkills(workspaceDir, worldID); err != nil {
         return "", err
     }
 
-    // Create Discord channel for this world
+    // 4. Create Discord channel for this world
     if m.discordGuildID != "" {
         discordChannelID, err = m.createDiscordChannel(worldName)
         if err != nil {
@@ -526,9 +567,12 @@ func (m *Manager) ProvisionAgent(worldID, worldName, mayorName, mayorPersonality
         }
     }
 
-    // Register agent in OpenClaw config with Discord binding
-    if err := m.registerAgent(worldID, discordChannelID); err != nil {
-        return discordChannelID, err
+    // 5. Bind agent to Discord channel via CLI config set
+    if discordChannelID != "" {
+        if err := m.bindAgentToDiscord(agentID, discordChannelID); err != nil {
+            m.logger.Error("failed to bind agent to Discord", "worldID", worldID, "error", err)
+            // Non-fatal — agent works without Discord binding
+        }
     }
 
     return discordChannelID, nil
@@ -617,8 +661,8 @@ you understand, plan, and collaborate.
 - If it implies a change, offer to build it
 
 ## Workflow: When you receive a build event from the harness
-- The harness will @mention you with build status (complete/failed)
-- Summarize the results for the user in the thread
+- The harness posts messages with [BUILD COMPLETE] or [BUILD FAILED] prefix
+- When you see these prefixed messages, summarize the results for the user in the thread
 - If the build failed, analyze the error and suggest fixes
 
 ## Important
@@ -629,29 +673,68 @@ you understand, plan, and collaborate.
 `
 ```
 
-#### 4. Skill definitions
+#### 4. IDENTITY.md generation
+**File**: `harness/internal/mayor/identity.go` (new)
+
+OpenClaw expects `IDENTITY.md` with the agent's name and visual identity. This is injected into the system prompt every turn.
+
+```go
+package mayor
+
+const identityTemplate = `# Identity
+
+- **Name**: {{.MayorName}}
+- **Role**: World Mayor
+- **Emoji**: 🏛️
+`
+```
+
+#### 5. USER.md generation
+**File**: `harness/internal/mayor/user.go` (new)
+
+OpenClaw expects `USER.md` to describe who the agent is talking to. For world mayors, this describes the world context rather than a specific user (since all users in a world share one mayor).
+
+```go
+package mayor
+
+const userTemplate = `# User Context
+
+You serve the builders of **{{.WorldName}}**. Multiple users may message you —
+address them by name when you know it. You'll see their Discord username in
+the conversation.
+`
+```
+
+#### 6. Skill definitions (SKILL.md with YAML frontmatter)
 **File**: `harness/internal/mayor/skills.go` (new)
+
+OpenClaw skills require `SKILL.md` files with YAML frontmatter (name, description). The agent sees skill metadata in its context and loads the full `SKILL.md` on demand.
 
 ```go
 package mayor
 
 // world-build skill: triggers the existing checkpoint/build pipeline
-const worldBuildSkill = `# World Build
+// Written to: {workspace}/skills/world-build/SKILL.md
+const worldBuildSkill = `---
+name: world-build
+description: Trigger a build to modify the world via the harness build pipeline
+metadata: |
+  {"skillKey": "world-build", "emoji": "hammer"}
+---
+
+# World Build
 
 Trigger a build to modify the world. This forks the current checkpoint,
 launches Claude Code to make the changes, compiles, and deploys.
 
 ## Usage
-Call the harness build API with a detailed prompt describing the changes.
+Use your bash tool to call the harness build API with a detailed prompt:
 
-## API
-POST {{.HarnessURL}}/api/mayor/build
-Content-Type: application/json
-
-{
-  "world_id": "{{.WorldID}}",
-  "prompt": "<your detailed build prompt here>"
-}
+` + "```" + `bash
+curl -X POST {{.HarnessURL}}/api/mayor/build \
+  -H "Content-Type: application/json" \
+  -d '{"world_id": "{{.WorldID}}", "prompt": "<your detailed build prompt>"}'
+` + "```" + `
 
 ## Guidelines
 - The prompt should be specific and self-contained
@@ -661,13 +744,23 @@ Content-Type: application/json
 `
 
 // world-status skill: check current build/world status
-const worldStatusSkill = `# World Status
+// Written to: {workspace}/skills/world-status/SKILL.md
+const worldStatusSkill = `---
+name: world-status
+description: Check the current state of the world — build status, active checkpoint, running game server
+metadata: |
+  {"skillKey": "world-status", "emoji": "mag"}
+---
+
+# World Status
 
 Check the current state of the world — build status, active checkpoint,
 running game server.
 
-## API
-GET {{.HarnessURL}}/api/mayor/status?world_id={{.WorldID}}
+## Usage
+` + "```" + `bash
+curl {{.HarnessURL}}/api/mayor/status?world_id={{.WorldID}}
+` + "```" + `
 
 Returns: current checkpoint, build status, server port, recent changes
 `
@@ -739,87 +832,93 @@ func (m *Manager) postToDiscord(channelID, content string) error {
 }
 ```
 
-#### 6. OpenClaw config registration with Discord binding
-**File**: `harness/internal/mayor/config.go` (new)
+#### 6. OpenClaw CLI integration
+**File**: `harness/internal/mayor/openclaw.go` (new)
+
+Uses the `openclaw` CLI for agent management instead of direct file writes. The CLI handles config normalization, agent ID validation, workspace scaffolding, and duplicate detection — no risk of schema drift if OpenClaw's config format evolves.
 
 ```go
 package mayor
 
-// registerAgent adds/updates an agent entry in openclaw.json with Discord binding
-func (m *Manager) registerAgent(worldID, discordChannelID string) error {
-    configPath := filepath.Join(m.openclawHome, "openclaw.json")
+import (
+    "encoding/json"
+    "fmt"
+    "os"
+    "os/exec"
+)
 
-    data, err := os.ReadFile(configPath)
+// createAgentViaCLI registers a new agent in OpenClaw config via the CLI.
+// Handles: config registration, workspace dir creation, session transcripts dir,
+// IDENTITY.md scaffolding, agent ID normalization, duplicate detection.
+func (m *Manager) createAgentViaCLI(agentID, workspaceDir string) error {
+    cmd := exec.Command(m.openclawBin, "agents", "add", agentID,
+        "--workspace", workspaceDir,
+        "--non-interactive",
+        "--json",
+    )
+    cmd.Env = append(os.Environ(), "OPENCLAW_HOME="+m.openclawHome)
+
+    output, err := cmd.CombinedOutput()
     if err != nil {
-        return fmt.Errorf("reading openclaw config: %w", err)
+        return fmt.Errorf("openclaw agents add: %s: %w", string(output), err)
     }
 
-    var config map[string]any
-    if err := json.Unmarshal(data, &config); err != nil {
-        return fmt.Errorf("parsing openclaw config: %w", err)
+    // Parse JSON output to confirm success
+    var result struct {
+        OK      bool   `json:"ok"`
+        AgentID string `json:"agentId"`
+    }
+    if err := json.Unmarshal(output, &result); err != nil {
+        m.logger.Warn("could not parse openclaw agents add output", "output", string(output))
     }
 
-    agentID := "world-" + worldID
+    return nil
+}
 
-    // Add agent to agents.list
-    agents := config["agents"].(map[string]any)
-    list := agents["list"].([]any)
+// bindAgentToDiscord adds a Discord channel binding for the agent via CLI config set.
+// Uses dot-path notation to append to the bindings array.
+func (m *Manager) bindAgentToDiscord(agentID, discordChannelID string) error {
+    // Build the binding JSON
+    binding := fmt.Sprintf(
+        `[{"agentId":"%s","match":{"channel":"discord","peer":{"kind":"channel","id":"%s"}}}]`,
+        agentID, discordChannelID,
+    )
 
-    newAgent := map[string]any{
-        "id":        agentID,
-        "workspace": filepath.Join(m.openclawHome, "workspaces", worldID),
-        "agentDir":  filepath.Join(m.openclawHome, "agents", worldID, "agent"),
-    }
+    cmd := exec.Command(m.openclawBin, "config", "set", "bindings", "--json", binding)
+    cmd.Env = append(os.Environ(), "OPENCLAW_HOME="+m.openclawHome)
 
-    found := false
-    for i, a := range list {
-        if ag, ok := a.(map[string]any); ok && ag["id"] == agentID {
-            list[i] = newAgent
-            found = true
-            break
-        }
-    }
-    if !found {
-        list = append(list, newAgent)
-    }
-    agents["list"] = list
-    config["agents"] = agents
-
-    // Add Discord channel binding if channel was created
-    if discordChannelID != "" {
-        bindings := config["bindings"].([]any)
-        binding := map[string]any{
-            "agentId": agentID,
-            "match": map[string]any{
-                "channel": "discord",
-                "peer": map[string]any{
-                    "kind": "channel",
-                    "id":   discordChannelID,
-                },
-            },
-        }
-        // Remove existing binding for this agent, if any
-        filtered := make([]any, 0, len(bindings))
-        for _, b := range bindings {
-            if bm, ok := b.(map[string]any); ok && bm["agentId"] != agentID {
-                filtered = append(filtered, b)
-            }
-        }
-        filtered = append(filtered, binding)
-        config["bindings"] = filtered
-    }
-
-    out, err := json.MarshalIndent(config, "", "  ")
+    output, err := cmd.CombinedOutput()
     if err != nil {
-        return fmt.Errorf("marshaling openclaw config: %w", err)
+        return fmt.Errorf("openclaw config set bindings: %s: %w", string(output), err)
     }
-    return os.WriteFile(configPath, out, 0o644)
+
+    return nil
+}
+
+// deleteAgent removes an agent and its workspace via CLI.
+func (m *Manager) deleteAgent(agentID string) error {
+    cmd := exec.Command(m.openclawBin, "agents", "delete", agentID, "--force")
+    cmd.Env = append(os.Environ(), "OPENCLAW_HOME="+m.openclawHome)
+
+    output, err := cmd.CombinedOutput()
+    if err != nil {
+        return fmt.Errorf("openclaw agents delete: %s: %w", string(output), err)
+    }
+
+    return nil
 }
 ```
 
-#### 7. Hook into CreateWorld
+**Why CLI over file writes**: The original plan wrote `openclaw.json` directly from Go, reimplementing config normalization, agent ID validation, and workspace scaffolding. The CLI approach delegates all of this to OpenClaw's own tooling:
+- `openclaw agents add --non-interactive --json` creates the agent, scaffolds the workspace, and updates config atomically
+- `openclaw config set` handles config patching with proper validation
+- `openclaw agents delete --force` handles cleanup including binding pruning
+- No `flock` needed — OpenClaw handles its own file locking
+- No risk of schema drift — if OpenClaw changes its config format, the CLI still works
+
+#### 8. Hook into CreateWorld
 **File**: `harness/internal/world/manager.go`
-**Changes**: After the DB transaction succeeds, call mayor provisioning and store the Discord channel ID
+**Changes**: After the DB transaction succeeds, call mayor provisioning and store the Discord channel ID. Also register the new channel with the Discord listener.
 
 ```go
 // After the DB transaction, before the background build goroutine:
@@ -836,27 +935,36 @@ if m.mayorManager != nil {
             DiscordChannelID: sql.NullString{String: discordChannelID, Valid: true},
             ID:               worldID,
         })
+        // Register with Discord listener so new messages are mirrored immediately
+        if m.discordListener != nil {
+            m.discordListener.RegisterChannel(discordChannelID, worldID)
+        }
     }
 }
 ```
 
-Add `mayorManager *mayor.Manager` to the `Manager` struct and `NewManager` constructor.
+Add `mayorManager *mayor.Manager` and `discordListener *discord.Listener` to the `Manager` struct and `NewManager` constructor.
 
 ### Success Criteria
 
 #### Automated Verification:
 - [ ] `go build ./...` compiles with new mayor package
 - [ ] `just lint` passes
-- [ ] Creating a world creates `data/openclaw/agents/{worldID}/` directory
-- [ ] Creating a world creates `data/openclaw/workspaces/{worldID}/` with AGENTS.md, SOUL.md, skills/
-- [ ] `openclaw.json` is updated with the new agent entry and Discord binding
+- [ ] `openclaw agents add` CLI is callable from the container
+- [ ] Creating a world creates `data/openclaw/workspaces/{worldID}/` with AGENTS.md, SOUL.md, IDENTITY.md, USER.md, skills/
+- [ ] `openclaw.json` is updated with the new agent entry (via CLI)
+- [ ] Discord binding is added to config (via `openclaw config set`)
 
 #### Manual Verification:
 - [ ] Create a world with mayor name "Pixel" and personality "enthusiastic retro game designer who loves pixel art"
 - [ ] Verify SOUL.md contains the personality text
 - [ ] Verify AGENTS.md references the world name and template type
+- [ ] Verify IDENTITY.md has mayor name
+- [ ] Verify USER.md has world context
+- [ ] Verify skill directories have SKILL.md with YAML frontmatter
 - [ ] Verify Discord channel was created in the guild
 - [ ] Verify `openclaw.json` has the agent registered with Discord binding
+- [ ] Run `openclaw agents list --json` inside container and see the new agent
 - [ ] Send a message in the Discord channel → mayor responds
 
 ---
@@ -864,7 +972,7 @@ Add `mayorManager *mayor.Manager` to the `Manager` struct and `NewManager` const
 ## Phase 4: Build Pipeline → Discord Events
 
 ### Overview
-Connect the existing build pipeline to Discord. When builds complete or fail, the harness posts to the world's Discord channel @mentioning the mayor. OpenClaw picks up the @mention naturally — no custom webhook needed. Also create the mayor build API that the mayor's skill calls to trigger builds.
+Connect the existing build pipeline to Discord. When builds complete or fail, the harness posts to the world's Discord channel with `[BUILD COMPLETE]` / `[BUILD FAILED]` prefixes. OpenClaw is already listening on the channel, and the mayor's `AGENTS.md` instructs it to respond to these build events. Also create the mayor build API that the mayor's skill calls to trigger builds.
 
 ### Changes Required
 
@@ -939,22 +1047,24 @@ func (s *Server) handleMayorStatus(c echo.Context) error {
 In the `BuildCheckpoint` flow, after publishing build events to the SSE bus:
 
 ```go
-// Post build result to Discord so the mayor picks it up
+// Post build result to Discord so the mayor picks it up.
+// Uses text prefixes [BUILD COMPLETE] / [BUILD FAILED] instead of @mentions —
+// Discord @mentions require <@USER_ID> format which is fragile.
+// The mayor's AGENTS.md instructs it to watch for these prefixes.
 if world.DiscordChannelID.Valid && o.mayorManager != nil {
-    mayorName := world.MayorName
     var msg string
     if buildErr == nil {
-        msg = fmt.Sprintf("@%s Build complete for checkpoint `%s`. Changes: %s",
-            mayorName, cpID, workSummary)
+        msg = fmt.Sprintf("[BUILD COMPLETE] Checkpoint `%s` deployed. Changes: %s",
+            cpID, workSummary)
     } else {
-        msg = fmt.Sprintf("@%s Build failed for checkpoint `%s`: %s",
-            mayorName, cpID, buildErr.Error())
+        msg = fmt.Sprintf("[BUILD FAILED] Checkpoint `%s`: %s",
+            cpID, buildErr.Error())
     }
     go o.mayorManager.PostToDiscord(world.DiscordChannelID.String, msg)
 }
 ```
 
-This is the entire "notification" system. No webhook endpoint, no notifier package, no OpenClaw internal API call. The harness just posts a message to Discord. OpenClaw is already listening.
+This is the entire "notification" system. No webhook endpoint, no notifier package, no OpenClaw internal API call. The harness just posts a message to Discord. OpenClaw is already listening on the channel and the mayor's `AGENTS.md` instructs it to respond to `[BUILD COMPLETE]` and `[BUILD FAILED]` prefixed messages.
 
 #### 4. Mirror harness-sent messages to SQLite
 When the harness posts to Discord (build events, or user messages from the browser — see Phase 5), also insert into `mayor_messages`:
@@ -990,21 +1100,200 @@ func (m *Manager) PostToDiscordAndMirror(db *sqlc.Queries, worldID, channelID, c
 
 #### Manual Verification:
 - [ ] Mayor build API triggers the full pipeline: fork → Claude Code → hooks → build → deploy
-- [ ] Build completion message appears in the world's Discord channel @mentioning the mayor
+- [ ] Build completion message appears in the world's Discord channel with `[BUILD COMPLETE]` prefix
 - [ ] Mayor responds in Discord summarizing the build results
-- [ ] Build failure message appears in Discord with error details
+- [ ] Build failure message appears in Discord with `[BUILD FAILED]` prefix and error details
 - [ ] Messages are mirrored in the `mayor_messages` table
 
 ---
 
-## Phase 5: Harness UI Chat + Prompt Routing
+## Phase 5: Discord Listener + Harness UI Chat + Prompt Routing
 
 ### Overview
-Render the mirrored Discord conversation in the world overlay using Datastar/templ. Route browser prompt submissions through Discord so the mayor receives them in the same channel. Users don't need a Discord account to participate.
+Add a `discordgo` listener to the harness that mirrors all Discord messages to SQLite. Render the conversation in the world overlay using Datastar/templ. Route browser prompt submissions through Discord so the mayor receives them in the same channel. Users don't need a Discord account to participate.
+
+**Key architecture change from original plan**: The original plan had a `handleMayorMessageSync` webhook endpoint that OpenClaw would POST to. Research revealed that OpenClaw has **no outbound webhook mechanism** — plugin hooks are in-process TypeScript only, not HTTP callbacks. The `discordgo` listener replaces this broken assumption: Discord is the single bus, and the harness listens to it directly.
 
 ### Changes Required
 
-#### 1. Chat component — render mayor_messages
+#### 1. Discord listener package
+**File**: `harness/internal/discord/listener.go` (new)
+
+A `discordgo`-based listener that connects to Discord's Gateway WebSocket, watches all world channels, and mirrors messages to SQLite. Runs in the same process as the harness.
+
+```go
+package discord
+
+import (
+    "context"
+    "database/sql"
+    "log/slog"
+    "time"
+
+    "github.com/bwmarrin/discordgo"
+)
+
+type Listener struct {
+    session    *discordgo.Session
+    db         *sqlc.Queries
+    eventBus   EventPublisher
+    channelMap map[string]string // discord_channel_id → world_id (loaded from DB)
+    logger     *slog.Logger
+}
+
+type EventPublisher interface {
+    PublishWorld(worldID string, data map[string]any)
+}
+
+func NewListener(token string, db *sqlc.Queries, eventBus EventPublisher, logger *slog.Logger) (*Listener, error) {
+    session, err := discordgo.New("Bot " + token)
+    if err != nil {
+        return nil, fmt.Errorf("creating Discord session: %w", err)
+    }
+
+    // Only need message events
+    session.Identify.Intents = discordgo.IntentsGuildMessages
+
+    l := &Listener{
+        session:    session,
+        db:         db,
+        eventBus:   eventBus,
+        channelMap: make(map[string]string),
+        logger:     logger,
+    }
+
+    session.AddHandler(l.handleMessage)
+
+    return l, nil
+}
+
+// Start connects to Discord Gateway and begins listening
+func (l *Listener) Start() error {
+    // Load channel→world mapping from DB
+    if err := l.refreshChannelMap(); err != nil {
+        return fmt.Errorf("loading channel map: %w", err)
+    }
+    return l.session.Open()
+}
+
+// Stop disconnects from Discord Gateway
+func (l *Listener) Stop() error {
+    return l.session.Close()
+}
+
+// RegisterChannel adds a new channel→world mapping (called when a world is created)
+func (l *Listener) RegisterChannel(discordChannelID, worldID string) {
+    l.channelMap[discordChannelID] = worldID
+}
+
+// handleMessage is called for every message in channels the bot can see
+func (l *Listener) handleMessage(s *discordgo.Session, m *discordgo.MessageCreate) {
+    // Look up which world this channel belongs to
+    worldID, ok := l.channelMap[m.ChannelID]
+    if !ok {
+        return // not a world channel, ignore
+    }
+
+    // Deduplicate — skip if we already have this Discord message
+    // (e.g., messages the harness itself posted via REST API)
+    _, err := l.db.GetMayorMessageByDiscordID(context.Background(), sql.NullString{
+        String: m.ID, Valid: true,
+    })
+    if err == nil {
+        return // already mirrored
+    }
+
+    // Classify author type
+    authorType := "user"
+    authorName := m.Author.Username
+    if m.Author.Bot {
+        // Could be the OpenClaw bot (mayor) or the harness bot
+        // Check if content has build prefix → system, otherwise → mayor
+        if isBuildEvent(m.Content) {
+            authorType = "system"
+            authorName = "Harness"
+        } else {
+            authorType = "mayor"
+        }
+    }
+
+    // Insert into SQLite
+    if err := l.db.InsertMayorMessage(context.Background(), sqlc.InsertMayorMessageParams{
+        ID:               generateID(),
+        WorldID:          worldID,
+        DiscordMessageID: sql.NullString{String: m.ID, Valid: true},
+        AuthorType:       authorType,
+        AuthorName:       authorName,
+        Content:          m.Content,
+        CreatedAt:        time.Now(),
+    }); err != nil {
+        l.logger.Error("failed to insert Discord message", "error", err, "worldID", worldID)
+        return
+    }
+
+    // Push SSE to connected browsers
+    l.eventBus.PublishWorld(worldID, map[string]any{
+        "type":        "mayor.message",
+        "author_type": authorType,
+        "author_name": authorName,
+        "content":     m.Content,
+    })
+}
+
+func isBuildEvent(content string) bool {
+    return strings.HasPrefix(content, "[BUILD COMPLETE]") ||
+        strings.HasPrefix(content, "[BUILD FAILED]")
+}
+
+// refreshChannelMap loads all discord_channel_id → world_id mappings from DB
+func (l *Listener) refreshChannelMap() error {
+    worlds, err := l.db.GetWorldsWithDiscordChannels(context.Background())
+    if err != nil {
+        return err
+    }
+    for _, w := range worlds {
+        if w.DiscordChannelID.Valid {
+            l.channelMap[w.DiscordChannelID.String] = w.ID
+        }
+    }
+    return nil
+}
+```
+
+**Why `discordgo` over OpenClaw plugin**: OpenClaw's plugin hooks (`message_sent`) are in-process TypeScript handlers, not HTTP callbacks. There is no built-in outbound webhook. A custom OpenClaw plugin would require shipping TypeScript code in the Docker image and coupling to OpenClaw internals. The `discordgo` listener is pure Go, runs in the harness process, and treats Discord as the canonical message bus — exactly matching the architecture.
+
+**Go dependency**: `github.com/bwmarrin/discordgo` — the standard Go Discord library. The harness already has a Discord REST integration for posting build events; `discordgo` adds Gateway WebSocket support for real-time listening.
+
+#### 2. Wire listener into harness startup
+**File**: `harness/main.go`
+**Changes**: Start the Discord listener alongside the server
+
+```go
+// After server setup, before server start:
+if discordToken := os.Getenv("DISCORD_BOT_TOKEN"); discordToken != "" {
+    discordListener, err := discord.NewListener(discordToken, queries, eventBus, logger)
+    if err != nil {
+        logger.Error("failed to create Discord listener", "error", err)
+    } else {
+        if err := discordListener.Start(); err != nil {
+            logger.Error("failed to start Discord listener", "error", err)
+        } else {
+            defer discordListener.Stop()
+            // Make listener available to mayor manager for RegisterChannel
+            server.DiscordListener = discordListener
+        }
+    }
+}
+```
+
+#### 3. Add DB query for channel map
+**File**: `harness/internal/db/queries/worlds.sql`
+```sql
+-- name: GetWorldsWithDiscordChannels :many
+SELECT id, discord_channel_id FROM worlds WHERE discord_channel_id IS NOT NULL;
+```
+
+#### 4. Chat component — render mayor_messages
 **File**: `harness/views/world/chat.templ` (new)
 
 A templ component that renders `mayor_messages` for the current world. Styled to match the harness UI, with distinct visual treatment for user messages, mayor messages, and system/build events.
@@ -1023,58 +1312,6 @@ templ MayorChat(messages []sqlc.MayorMessage, mayorName string) {
 ```
 
 The chat component is updated via Datastar SSE when new messages arrive.
-
-#### 2. Message sync — Discord → SQLite
-**File**: `harness/internal/mayor/sync.go` (new)
-
-OpenClaw can be configured to POST to the harness when it processes or sends a message. This endpoint receives those events and mirrors them to SQLite:
-
-```go
-// Route: POST /api/mayor/message-sync
-func (s *Server) handleMayorMessageSync(c echo.Context) error {
-    var msg struct {
-        WorldID          string `json:"world_id"`
-        DiscordMessageID string `json:"discord_message_id"`
-        AuthorType       string `json:"author_type"`
-        AuthorName       string `json:"author_name"`
-        Content          string `json:"content"`
-    }
-    if err := c.Bind(&msg); err != nil {
-        return echo.NewHTTPError(http.StatusBadRequest)
-    }
-
-    // Deduplicate — skip if we already have this Discord message
-    _, err := s.DB.GetMayorMessageByDiscordID(c.Request().Context(), sql.NullString{
-        String: msg.DiscordMessageID, Valid: true,
-    })
-    if err == nil {
-        return c.NoContent(http.StatusOK) // already mirrored
-    }
-
-    // Insert and push SSE update
-    if err := s.DB.InsertMayorMessage(c.Request().Context(), sqlc.InsertMayorMessageParams{
-        ID:               generateID(),
-        WorldID:          msg.WorldID,
-        DiscordMessageID: sql.NullString{String: msg.DiscordMessageID, Valid: true},
-        AuthorType:       msg.AuthorType,
-        AuthorName:       msg.AuthorName,
-        Content:          msg.Content,
-        CreatedAt:        time.Now(),
-    }); err != nil {
-        return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
-    }
-
-    // Push SSE to connected browsers
-    s.EventBus.PublishWorld(msg.WorldID, map[string]any{
-        "type":        "mayor.message",
-        "author_type": msg.AuthorType,
-        "author_name": msg.AuthorName,
-        "content":     msg.Content,
-    })
-
-    return c.NoContent(http.StatusOK)
-}
-```
 
 #### 3. Update prompt handler to route through Discord
 **File**: `harness/internal/server/server.go`
@@ -1131,11 +1368,12 @@ The chat appears alongside the existing prompt box. When new `mayor.message` SSE
 ## Testing Strategy
 
 ### Unit Tests
-- Mayor provisioning: `AGENTS.md` and `SOUL.md` generation with various personality inputs
-- Config registration: adding/updating agents in `openclaw.json`
+- Mayor provisioning: `AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md` generation with various personality inputs
+- Skill generation: SKILL.md files with correct YAML frontmatter
+- OpenClaw CLI integration: mock `exec.Command` to verify correct args passed to `openclaw agents add` and `openclaw config set`
 - Build API: request validation, checkpoint selection
 - Discord channel creation and binding
-- Message mirroring: deduplication, SQLite insert
+- Message mirroring: deduplication, SQLite insert, author type classification
 
 ### Integration Tests
 - Full flow: create world → provision mayor → Discord channel created → send message → mayor responds → build triggers → build completes → harness posts to Discord → mayor summarizes → browser shows full conversation
@@ -1156,8 +1394,9 @@ The chat appears alongside the existing prompt box. When new `mayor.message` SSE
 
 - **OpenClaw gateway** adds ~50-100MB RAM and <100ms latency to message processing
 - **Mayor → build API** is async — the mayor doesn't block waiting for builds
-- **Discord REST API** for posting messages — minimal overhead, no persistent connection needed from the harness
-- **Config file writes** are serialized per-world — no contention for concurrent world creation
+- **Discord REST API** for posting build events — minimal overhead
+- **`discordgo` Gateway** — single persistent WebSocket connection for listening to all world channels. Lightweight (~10MB RAM). Uses Discord Gateway intents to filter to only guild message events.
+- **OpenClaw CLI calls** — `openclaw agents add` takes ~1-2s (Node.js startup). Acceptable since world creation is already a heavyweight operation (template copy, DB transaction, Docker build). Not on the hot path.
 - **Discord rate limits** — OpenClaw handles these natively via `discord.js`; harness direct posts are infrequent (only build events)
 - **SQLite message mirroring** — minimal overhead, indexed by world_id + created_at
 
@@ -1174,9 +1413,11 @@ The chat appears alongside the existing prompt box. When new `mayor.message` SSE
 | Node.js 22+ | Docker image | For OpenClaw runtime |
 | pnpm | Docker image | OpenClaw package manager |
 | OpenClaw source | Docker image | Cloned from GitHub |
-| Discord bot + token | `.env` | Required from Phase 1 |
+| `openclaw` CLI | Docker image PATH | Used by harness for agent management (`agents add`, `config set`) |
+| `discordgo` | Go module | `github.com/bwmarrin/discordgo` — Discord Gateway listener |
+| Discord bot + token | `.env` | Required from Phase 1 (must have MESSAGE_CONTENT intent enabled) |
 | Discord guild ID | `.env` | Server where world channels are created |
-| `ANTHROPIC_API_KEY` | Already configured | Used by both Claude Code and OpenClaw |
+| `ANTHROPIC_API_KEY` | Already configured | Used by both Claude Code and OpenClaw (env var, not credential bridge) |
 
 ## Future Capabilities (Out of Scope)
 

@@ -284,7 +284,7 @@ mkdir -p "$OPENCLAW_HOME/agents"
 mkdir -p "$OPENCLAW_HOME/workspaces"
 
 # Base config — agents are added dynamically by the harness
-# Discord channel is configured if DISCORD_BOT_TOKEN is set
+# Discord channel is configured if DISCORD_MAYOR_BOT_TOKEN is set
 cat > "$OPENCLAW_HOME/openclaw.json" << EOF
 {
   "agent": {
@@ -334,10 +334,10 @@ Copy the 3D hooks to the 2D template so the build pipeline works for 2D worlds t
 
 ---
 
-## Phase 2: Mayor Personality + DB Schema
+## Phase 2: Discord Auth + Mayor Personality + DB Schema
 
 ### Overview
-Add mayor personality fields to the world creation form and database. Add the `mayor_messages` table for mirroring Discord conversations. When a user creates a world, they name their mayor and describe its personality.
+Switch authentication from GitHub OAuth to Discord OAuth (primary login). Add GitHub as optional account linking. Add mayor personality fields to the world creation form and database. Add the `mayor_messages` and `world_invites` tables. When a user creates a world, they name their mayor and describe its personality.
 
 ### Changes Required
 
@@ -1313,6 +1313,71 @@ if m.mayorManager != nil {
 
 Add `mayorManager *mayor.Manager` and `discordListener *discord.Listener` to the `Manager` struct and `NewManager` constructor.
 
+#### 10. World invite API endpoint
+**File**: `harness/internal/server/server.go`
+**Changes**: Add invite/revoke endpoints for world creators
+
+```go
+// In route registration (approved group):
+world := approved.Group("/world/:worldID")
+world.POST("/invite", s.handleWorldInvite)
+world.POST("/revoke", s.handleWorldRevoke)
+```
+
+**File**: `harness/internal/server/world_invite.go` (new)
+```go
+// handleWorldInvite adds a user to a world's Discord channel.
+// Only the world creator can invite. The invited user must have a Discord account
+// (logged in via Discord OAuth, so discord_id is known).
+func (s *Server) handleWorldInvite(c echo.Context) error {
+    worldID := c.Param("worldID")
+    user := c.Get("user").(*sqlc.User)
+
+    var req struct {
+        UserID string `json:"user_id" form:"user_id"` // harness user ID to invite
+    }
+    if err := c.Bind(&req); err != nil {
+        return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
+    }
+
+    // Verify caller is the world creator
+    world, err := s.DB.GetWorld(c.Request().Context(), worldID)
+    if err != nil {
+        return echo.NewHTTPError(http.StatusNotFound, "world not found")
+    }
+    if world.CreatedBy.String != user.ID {
+        return echo.NewHTTPError(http.StatusForbidden, "only the world creator can invite")
+    }
+
+    // Look up the invited user's Discord ID
+    invitedUser, err := s.DB.GetUserByID(c.Request().Context(), req.UserID)
+    if err != nil {
+        return echo.NewHTTPError(http.StatusNotFound, "user not found")
+    }
+    if !invitedUser.DiscordID.Valid {
+        return echo.NewHTTPError(http.StatusBadRequest, "user has no Discord account linked")
+    }
+
+    // Add Discord channel permission
+    if world.DiscordChannelID.Valid && s.MayorManager != nil {
+        if err := s.MayorManager.InviteUserToChannel(
+            world.DiscordChannelID.String, invitedUser.DiscordID.String,
+        ); err != nil {
+            return echo.NewHTTPError(http.StatusInternalServerError, "failed to add to Discord channel")
+        }
+    }
+
+    // Record invite in DB
+    _ = s.DB.InviteUserToWorld(c.Request().Context(), sqlc.InviteUserToWorldParams{
+        WorldID:   worldID,
+        UserID:    req.UserID,
+        InvitedBy: user.ID,
+    })
+
+    return c.JSON(http.StatusOK, map[string]string{"status": "invited"})
+}
+```
+
 ### Success Criteria
 
 #### Automated Verification:
@@ -1330,7 +1395,9 @@ Add `mayorManager *mayor.Manager` and `discordListener *discord.Listener` to the
 - [ ] Verify IDENTITY.md has mayor name
 - [ ] Verify USER.md has world context
 - [ ] Verify skill directories have SKILL.md with YAML frontmatter
-- [ ] Verify Discord channel was created in the guild
+- [ ] Verify Discord channel was created in the guild as **private** (not visible to @everyone)
+- [ ] Verify only the world creator and both bots can see the channel
+- [ ] Invite another user → they can now see and post in the channel
 - [ ] Verify `openclaw.json` has the agent registered with Discord binding
 - [ ] Run `openclaw agents list --json` inside container and see the new agent
 - [ ] Send a message in the Discord channel → mayor responds
@@ -1660,8 +1727,8 @@ func (l *Listener) refreshChannelMap() error {
 
 ```go
 // After server setup, before server start:
-if discordToken := os.Getenv("DISCORD_BOT_TOKEN"); discordToken != "" {
-    discordListener, err := discord.NewListener(discordToken, queries, eventBus, logger)
+if harnessBotToken := os.Getenv("DISCORD_HARNESS_BOT_TOKEN"); harnessBotToken != "" {
+    discordListener, err := discord.NewListener(harnessBotToken, queries, eventBus, logger)
     if err != nil {
         logger.Error("failed to create Discord listener", "error", err)
     } else {
@@ -1826,8 +1893,11 @@ The chat container also uses `data-on-load="this.scrollTop = this.scrollHeight"`
 | `openclaw` CLI | Docker image PATH | Used by harness for agent management (`agents add`, `config set`) |
 | `discordgo` | Go module | `github.com/bwmarrin/discordgo` — Discord Gateway listener |
 | `google/uuid` | Go module | `github.com/google/uuid` — ID generation for mayor_messages |
-| Discord bot + token | `.env` | Required from Phase 1 (must have MESSAGE_CONTENT intent enabled in Discord Developer Portal) |
-| Discord guild ID | `.env` | Server where world channels are created |
+| Discord OAuth app | Discord Developer Portal | `DISCORD_CLIENT_ID` + `DISCORD_CLIENT_SECRET` — primary auth. Scopes: `identify`, `guilds`. Redirect URI: `{BASE_URL}/auth/discord/callback` |
+| Discord Mayor bot | Discord Developer Portal | `DISCORD_MAYOR_BOT_TOKEN` — OpenClaw persona. Permissions: Send Messages, Read Message History, View Channels. Enable MESSAGE_CONTENT intent. |
+| Discord Harness bot | Discord Developer Portal | `DISCORD_HARNESS_BOT_TOKEN` — infrastructure. Permissions: Manage Channels, Manage Roles, Send Messages, Read Message History, View Channels. Enable MESSAGE_CONTENT intent. |
+| Discord guild ID | `.env` | `DISCORD_GUILD_ID` — server where world channels are created |
+| GitHub OAuth app | GitHub Developer Settings | `GITHUB_CLIENT_ID` + `GITHUB_CLIENT_SECRET` — optional account linking (not login). Scope: `read:user` |
 | `ANTHROPIC_API_KEY` | Already configured | Used by both Claude Code and OpenClaw (env var, not credential bridge) |
 
 ## Future Capabilities (Out of Scope)

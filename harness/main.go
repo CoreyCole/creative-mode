@@ -18,6 +18,7 @@ import (
 	"creative-mode/harness/internal/db"
 	"creative-mode/harness/internal/db/sqlc"
 	"creative-mode/harness/internal/events"
+	"creative-mode/harness/internal/gemini"
 	"creative-mode/harness/internal/logging"
 	"creative-mode/harness/internal/server"
 	"creative-mode/harness/internal/world"
@@ -46,6 +47,30 @@ func main() {
 			log.Fatalf("Failed to resolve %s template directory: %v", tmplType, tmplErr)
 		}
 		templateDirs[tmplType] = dir
+	}
+
+	// Seed default 2D room JSON files to shared-assets/rooms/.
+	roomsSrcDir := filepath.Join(templateDirs["2d"], "rooms")
+	roomsDstDir := filepath.Join(sharedAssetsDir, "rooms")
+	if mkdirErr := os.MkdirAll(roomsDstDir, 0o750); mkdirErr != nil {
+		log.Fatalf("Failed to create rooms directory: %v", mkdirErr)
+	}
+	if entries, readErr := os.ReadDir(roomsSrcDir); readErr == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			dst := filepath.Join(roomsDstDir, entry.Name())
+			if _, statErr := os.Stat(dst); statErr == nil {
+				continue // don't overwrite existing (user-edited) files
+			}
+			src := filepath.Join(roomsSrcDir, entry.Name())
+			data, rdErr := os.ReadFile(src) //nolint:gosec // trusted path
+			if rdErr != nil {
+				continue
+			}
+			_ = os.WriteFile(dst, data, 0o600)
+		}
 	}
 
 	// Initialize structured logger.
@@ -199,6 +224,15 @@ func main() {
 		}
 	}()
 
+	// Set up Gemini image generation (optional — requires GEMINI_API_KEY).
+	geminiClient, geminiErr := gemini.NewClient(ctx, os.Getenv("GEMINI_API_KEY"), logger)
+	if geminiErr != nil {
+		logger.Error("failed to create Gemini client", "error", geminiErr)
+	}
+	if geminiClient != nil {
+		logger.Info("Gemini image generation enabled")
+	}
+
 	// Set up Echo server.
 	e := echo.New()
 	srv := server.New(database, logger)
@@ -206,6 +240,7 @@ func main() {
 	srv.WorldManager = worldManager
 	srv.Orchestrator = orchestrator
 	srv.EventBus = eventBus
+	srv.GeminiClient = geminiClient
 	srv.DataDir = dataDir
 	srv.RegisterRoutes(e)
 

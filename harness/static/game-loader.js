@@ -1,6 +1,6 @@
 // Bridge postMessage from game iframe to harness overlay.
 // Game sends: { type: 'cursor-locked' } when mouse is captured,
-//             { type: 'cursor-unlocked' } when Tab releases mouse.
+//             { type: 'cursor-unlocked' } when backtick releases mouse.
 // We click hidden trigger buttons whose data-on:click sets Datastar signals.
 window.addEventListener('message', function(event) {
     if (!event.data || !event.data.type) return;
@@ -10,6 +10,9 @@ window.addEventListener('message', function(event) {
         if (el) el.click();
     } else if (event.data.type === 'cursor-unlocked') {
         var el = document.getElementById('game-cursor-unlock-trigger');
+        if (el) el.click();
+    } else if (event.data.type === 'toggle-overlay') {
+        var el = document.getElementById('game-overlay-toggle-trigger');
         if (el) el.click();
     } else if (event.data.type === 'navigate-world') {
         // 2D world navigation via postMessage from Bevy WASM
@@ -23,10 +26,10 @@ window.addEventListener('message', function(event) {
     }
 });
 
-// Focus the game iframe when overlay closes via Tab.
+// Focus the game iframe when overlay closes via backtick.
 // Pointer lock requires a user gesture from within the iframe itself,
 // so we can't auto-lock the cursor. But by focusing the iframe, the
-// user's next click or Tab press goes directly to the game.
+// user's next click goes directly to the game.
 window.focusGameFrame = function() {
     var frame = document.getElementById('game-frame');
     if (frame) frame.focus();

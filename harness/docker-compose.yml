@@ -18,6 +18,7 @@ services:
       - CGO_ENABLED=1
       - DEV_MODE=true
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
 
 volumes:
   go-mod-cache:

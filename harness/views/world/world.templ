@@ -40,10 +40,12 @@ templ Page(w sqlc.World, cp sqlc.Checkpoint, user *sqlc.User, signals OverlaySig
 			class="fixed top-0 left-0 w-screen h-screen z-10 pointer-events-none [&>*]:pointer-events-auto"
 			data-signals={ templ.JSONString(signals) }
 			data-init={ dsutil.GetSSENoCancel(fmt.Sprintf("/world/%s/events", w.ID)) }
-			data-on:keydown__window="evt.key === 'Tab' && !evt.target.matches('input, textarea') && (evt.preventDefault(), $overlay_expanded = !$overlay_expanded, !$overlay_expanded && window.focusGameFrame())">
+			data-on:keydown__window="evt.code === 'Backquote' && !evt.target.matches('input, textarea') && (evt.preventDefault(), $overlay_expanded = !$overlay_expanded, !$overlay_expanded && window.focusGameFrame())">
 			// Hidden triggers — clicked from game-loader.js postMessage bridge
 			<button id="game-cursor-lock-trigger" class="hidden" data-on:click="$overlay_expanded = false"></button>
 			<button id="game-cursor-unlock-trigger" class="hidden" data-on:click="$overlay_expanded = true; $unread_count = 0"></button>
+			<button id="game-overlay-toggle-trigger" class="hidden"
+				data-on:click="$overlay_expanded = !$overlay_expanded; !$overlay_expanded && window.focusGameFrame()"></button>
 			@Overlay(w, cp, checkpoints)
 		</div>
 		<script src="/static/game-loader.js"></script>

@@ -14,6 +14,13 @@ type OverlaySignals struct {
 	ShowCheckpointTree  bool   `json:"show_checkpoint_tree"`  //nolint:tagliatelle // Datastar signal names use snake_case
 	UnreadCount         int    `json:"unread_count"`          //nolint:tagliatelle // Datastar signal names use snake_case
 	RateLimitRetryAt    int64  `json:"rate_limit_retry_at"`   //nolint:tagliatelle // Datastar signal names use snake_case
+	ImagePrompt         string `json:"image_prompt"`          //nolint:tagliatelle // Datastar signal names use snake_case
+	ImageGenStatus      string `json:"image_gen_status"`      //nolint:tagliatelle // Datastar signal names use snake_case
+	ImageGenID          string `json:"image_gen_id"`          //nolint:tagliatelle // Datastar signal names use snake_case
+	ImagePreviewURL     string `json:"image_preview_url"`     //nolint:tagliatelle // Datastar signal names use snake_case
+	ImageSavedPath      string `json:"image_saved_path"`      //nolint:tagliatelle // Datastar signal names use snake_case
+	ImageErrorMsg       string `json:"image_error_msg"`       //nolint:tagliatelle // Datastar signal names use snake_case
+	ImageAspectRatio    string `json:"image_aspect_ratio"`    //nolint:tagliatelle // Datastar signal names use snake_case
 }
 
 // DefaultOverlaySignals returns the default signal state for a world overlay.
@@ -22,7 +29,9 @@ func DefaultOverlaySignals(worldID, cpID string) OverlaySignals {
 		CurrentWorldID:      worldID,
 		CurrentCheckpointID: cpID,
 		BuildStatus:         "idle",
-		OverlayExpanded:     true,
+		OverlayExpanded:     false,
 		ActiveTab:           "global",
+		ImageGenStatus:      "idle",
+		ImageAspectRatio:    "1:1",
 	}
 }

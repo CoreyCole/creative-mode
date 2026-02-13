@@ -23,6 +23,7 @@ import (
 	"creative-mode/harness/internal/db"
 	"creative-mode/harness/internal/db/sqlc"
 	"creative-mode/harness/internal/events"
+	"creative-mode/harness/internal/gemini"
 	"creative-mode/harness/internal/world"
 	"creative-mode/harness/views/admin"
 	"creative-mode/harness/views/lobby"
@@ -45,6 +46,7 @@ type Server struct {
 	WorldManager *world.Manager
 	Orchestrator *claude.Orchestrator
 	EventBus     *events.EventBus
+	GeminiClient *gemini.Client
 	DataDir      string
 	dev          *devState // nil when DEV_MODE is not set
 }
@@ -153,6 +155,14 @@ func (s *Server) RegisterRoutes(e *echo.Echo) {
 
 	// Chat (approved users).
 	approved.POST("/api/chat", s.handleChatMessage)
+
+	// Asset upload (approved users).
+	approved.POST("/api/assets/upload", s.handleAssetUpload)
+
+	// Image generation (approved users).
+	approved.POST("/api/images/generate", s.handleImageGenerate)
+	approved.GET("/api/images/preview/:genID", s.handleImagePreview)
+	approved.POST("/api/images/save", s.handleImageSave)
 
 	// Admin only.
 	adminGroup := authed.Group("/admin", auth.AdminMiddleware())

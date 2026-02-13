@@ -1,6 +1,9 @@
 package chat
 
-import "creative-mode/harness/views/shared"
+import (
+	"creative-mode/harness/views/imagegen"
+	"creative-mode/harness/views/shared"
+)
 
 // ChatPanel renders the tabbed chat UI for the world overlay.
 templ ChatPanel() {
@@ -15,11 +18,18 @@ templ ChatPanel() {
 			<button class="flex-1 py-2 bg-transparent border-b-2 border-transparent text-muted-foreground cursor-pointer text-[13px] hover:text-foreground/80"
 				data-on:click={ CE.SelectLineageTab() }
 				data-class={ CE.TabActiveClass("lineage") }>Lineage</button>
+			<button class="flex-1 py-2 bg-transparent border-b-2 border-transparent text-muted-foreground cursor-pointer text-[13px] hover:text-foreground/80"
+				data-on:click={ CE.SelectTab("image") }
+				data-class={ CE.TabActiveClass("image") }>Image</button>
 		</div>
-		<div id="chat-log" class="flex-1 overflow-y-auto px-3 py-2 flex flex-col gap-1"></div>
+		<div id="chat-log" class="flex-1 overflow-y-auto px-3 py-2 flex flex-col gap-1" data-show="$active_tab !== 'lineage' && $active_tab !== 'image'"></div>
 		<div id="lineage-view" class="flex-1 overflow-y-auto px-3 py-2 flex flex-col gap-1" data-show="$active_tab === 'lineage'" style="display: none;"></div>
-		<div class="flex gap-1.5 px-3 py-2 border-t border-border" data-show="$active_tab !== 'lineage'">
+		@imagegen.ImageGenPanel()
+		<div class="flex gap-1.5 px-3 py-2 border-t border-border" data-show="$active_tab !== 'lineage' && $active_tab !== 'image'">
 			@ChatInputBar()
+		</div>
+		<div class="flex gap-1.5 px-3 py-2 border-t border-border" data-show="$active_tab === 'image'" style="display: none;">
+			@imagegen.ImageGenInputBar()
 		</div>
 	</div>
 }

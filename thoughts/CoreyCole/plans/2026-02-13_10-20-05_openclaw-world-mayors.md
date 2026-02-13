@@ -34,22 +34,28 @@ The alternative — calling the Anthropic Messages API directly from Go — woul
 - `ANTHROPIC_API_KEY` already passed through to container
 - OpenClaw requires Node.js 22+ and pnpm
 
-### Key Discoveries
+### Key Discoveries (verified against `context/openclaw/` source)
 - OpenClaw's multi-agent routing (`~/.openclaw/openclaw.json` `agents.list[]` + `bindings[]`) maps perfectly to one-agent-per-world
-- Each agent gets isolated workspace (`AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`, skills/, sessions/)
-- OpenClaw's Discord adapter (`discord.js`) supports per-channel → per-agent routing via bindings
-- OpenClaw CLI has `agents add --non-interactive --json` for programmatic agent management
-- Config hot-reload (200ms cache) picks up agent changes without gateway restart
+- Each agent gets isolated workspace with bootstrap files: `AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md` (created by `ensureAgentWorkspace()` in `src/agents/workspace.ts:153-226`). **Note: `MEMORY.md` is NOT auto-created** — OpenClaw creates it during agent runs when the agent first writes to memory
+- OpenClaw's Discord adapter (`discord.js`) supports per-channel → per-agent routing via `peer`-based bindings: `{"agentId": "...", "match": {"channel": "discord", "peer": {"kind": "channel", "id": "CHANNEL_ID"}}}`. Route resolution priority: peer > parent-peer > guild+roles > guild > team > account > channel > default (see `src/routing/resolve-route.ts:185-292`)
+- OpenClaw CLI has `agents add --non-interactive --json` for programmatic agent management. Requires `--workspace` flag. Outputs structured JSON with `agentId`, `workspace`, `agentDir`, `bindings` fields
+- **`openclaw config set` does a FULL REPLACE** at the given path — it does NOT append. For bindings, we must use a read-modify-write pattern: `config get bindings --json` → append → `config set bindings --json`. The `agents add --bind` flag does incremental APPEND via `applyAgentBindings()` but uses a simpler format (`discord:accountId`) that doesn't support per-channel peer matching
+- Config hot-reload works via chokidar file watcher + `loadConfig()` time-based cache. Agent/binding changes are classified as `"none"` in the reload plan (no gateway restart needed). Next incoming message reads fresh config automatically
+- OpenClaw has an **HTTP hooks API** at `POST /hooks/agent` (Bearer auth, JSON body with `message`, `agentId`, `sessionKey`) — simpler than WebSocket for programmatic agent invocation. Could be useful for future harness→mayor communication beyond Discord-as-bus
+- OpenClaw exposes **session management** via WebSocket gateway methods: `sessions.list`, `sessions.preview`, `sessions.patch`, `sessions.reset`, `sessions.delete`, `sessions.compact`. Also `openclaw status --json` CLI for checking gateway/agent health
 - Nano Banana (Google Gemini image gen) available via `@google/genai` npm — future mayor capability
 
 ### Architectural Decisions (resolved via research)
 
 1. **Agent management: OpenClaw CLI** (not file writes, not WebSocket RPC)
-   - `openclaw agents add --non-interactive --json` + `openclaw config set` from Go via `exec.Command`
-   - CLI handles config normalization, workspace scaffolding, duplicate detection, file locking
-   - No gateway dependency (operates directly on config files)
+   - `openclaw agents add --non-interactive --json --workspace <dir>` + `openclaw config set bindings --json` from Go via `exec.Command`
+   - CLI handles config normalization, workspace scaffolding, duplicate detection, agent ID normalization (lowercase+sanitize), reserved ID rejection ("main")
+   - Workspace bootstrapping creates: AGENTS.md, SOUL.md, TOOLS.md, IDENTITY.md, USER.md, HEARTBEAT.md, BOOTSTRAP.md + git init + session transcripts dir
+   - We overwrite the bootstrap files with our own templates after `agents add` (CLI uses `wx` flag — only writes if file doesn't exist, but our templates are world-specific)
+   - `config set bindings` requires read-modify-write pattern (full replace, not append). `config get bindings --json` returns the current array
+   - No gateway dependency (operates directly on config files). `writeConfigFile()` calls `clearConfigCache()` so next message picks up changes
    - No risk of schema drift — OpenClaw owns its own config format
-   - Rejected alternatives: direct file writes (fragile, reimplements OpenClaw logic), WebSocket RPC (requires gateway running, complex auth handshake)
+   - Rejected alternatives: direct file writes (fragile, reimplements OpenClaw logic), WebSocket RPC (requires gateway running, complex auth handshake), `agents add --bind` flag (only supports `channel:accountId` format, not per-channel peer matching needed for same-guild routing)
 
 2. **Message sync: `discordgo` listener in harness** (not OpenClaw webhook)
    - OpenClaw has NO outbound webhook mechanism — plugin hooks are in-process TypeScript only
@@ -184,6 +190,32 @@ This replaces the original plan's `handleMayorMessageSync` webhook endpoint, whi
 
 ---
 
+## Phase 0: Discord OAuth Migration (Optional Pre-Phase)
+
+### Rationale
+
+Discord OAuth is currently bundled into Phase 2 alongside mayor personality fields and DB schema changes. However, the auth migration is a significant standalone change that:
+- Touches auth, middleware, views, DB schema, and dev mode — high blast radius
+- Is independently testable and shippable
+- Has no dependency on OpenClaw, mayors, or Discord bots
+- De-risks Phase 2 by isolating auth changes from mayor/schema changes
+
+**Recommendation**: Consider shipping Discord OAuth as Phase 0 if the auth migration feels risky or if you want early validation of the Discord OAuth flow before building mayor infrastructure on top of it. If you're comfortable with the combined scope, keep it in Phase 2.
+
+If extracted to Phase 0, it would include:
+- Migration `004_discord_auth.sql` (users table recreation + discord_id/discord_username columns only)
+- Discord OAuth handler (login, callback) replacing GitHub
+- GitHub linking handler (link, callback, unlink)
+- Middleware redirect path updates (`/auth/github/login` → `/auth/discord/login`)
+- Dev login update (fake Discord IDs instead of fake GitHub IDs)
+- View template updates (login page, lobby header, admin panel, pending page)
+- Messages query JOIN update (`discord_username` instead of `github_username`)
+- sqlc rename config updates
+
+Phase 2 would then only add mayor_name, mayor_personality, mayor_secret, discord_channel_id to worlds, plus mayor_messages and world_invites tables.
+
+---
+
 ## Phase 1: OpenClaw + Discord in Docker
 
 ### Overview
@@ -278,13 +310,17 @@ environment:
 ```bash
 #!/bin/bash
 # Initialize OpenClaw directory structure inside data/
+# OpenClaw CLI creates workspace dirs and state/agents/ dirs automatically
+# during `openclaw agents add`, so we only need the base dirs here.
 OPENCLAW_HOME="${1:-/data/openclaw}"
 
-mkdir -p "$OPENCLAW_HOME/agents"
+mkdir -p "$OPENCLAW_HOME/state"
 mkdir -p "$OPENCLAW_HOME/workspaces"
 
-# Base config — agents are added dynamically by the harness
-# Discord channel is configured if DISCORD_MAYOR_BOT_TOKEN is set
+# Base config — agents and bindings are added dynamically by the harness
+# via `openclaw agents add` and `openclaw config set bindings`.
+# Discord channel adapter is configured if DISCORD_MAYOR_BOT_TOKEN is set.
+# NOTE: The model should match what we want mayors to use. Update as needed.
 cat > "$OPENCLAW_HOME/openclaw.json" << EOF
 {
   "agent": {
@@ -347,15 +383,37 @@ Switch authentication from GitHub OAuth to Discord OAuth (primary login). Add Gi
 ```sql
 -- Discord OAuth as primary auth (replaces GitHub as login method)
 -- GitHub columns become nullable for optional account linking.
-ALTER TABLE users ADD COLUMN discord_id TEXT UNIQUE;
-ALTER TABLE users ADD COLUMN discord_username TEXT;
+--
+-- SQLite doesn't support ALTER COLUMN to drop NOT NULL, so we must recreate
+-- the users table to make github_id and github_username nullable.
+-- This is safe because we're early in development with few users.
 
--- Make github_id nullable for existing users (SQLite doesn't support ALTER COLUMN,
--- so we keep the NOT NULL constraint on github_id for existing rows.
--- New Discord-only users get github_id = NULL via the new UpsertDiscordUser query.
--- NOTE: SQLite quirk — we can't drop NOT NULL on github_id without recreating the table.
--- Instead, we set github_id to a sentinel value of 0 for Discord-only users and
--- remove the UNIQUE constraint concern by making the UpsertDiscordUser query handle this.)
+-- Step 1: Recreate users table with Discord as primary identity
+CREATE TABLE users_new (
+    id TEXT PRIMARY KEY,
+    -- Discord identity (primary auth)
+    discord_id TEXT UNIQUE,
+    discord_username TEXT,
+    -- GitHub identity (optional linking, nullable)
+    github_id INTEGER UNIQUE,        -- was NOT NULL, now nullable
+    github_username TEXT,             -- was NOT NULL, now nullable
+    avatar_url TEXT,
+    role TEXT NOT NULL DEFAULT 'pending',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Migrate existing users (they have github_id but no discord_id)
+INSERT INTO users_new (id, github_id, github_username, avatar_url, role, created_at, last_seen_at)
+SELECT id, github_id, github_username, avatar_url, role, created_at, last_seen_at FROM users;
+
+-- Drop old table and rename
+DROP TABLE users;
+ALTER TABLE users_new RENAME TO users;
+
+-- Step 2: Recreate sessions FK (SQLite recreates the table, so FKs are lost)
+-- Sessions table references users(id) which is preserved, so no change needed.
+-- The FK constraint is only enforced if PRAGMA foreign_keys=ON.
 
 -- Mayor identity
 ALTER TABLE worlds ADD COLUMN mayor_name TEXT NOT NULL DEFAULT 'Mayor';
@@ -387,7 +445,9 @@ CREATE TABLE world_invites (
 );
 ```
 
-**Migration strategy for existing users**: Existing users have `github_id` set (NOT NULL) and `discord_id = NULL`. They'll need to re-authenticate via Discord OAuth on next login. The GitHub link remains in their profile. New migration path: Discord login → if `discord_id` matches existing row, update it; if no match but user later links GitHub, match by `github_id` and merge.
+**Migration strategy for existing users**: Existing users have `github_id` set and `discord_id = NULL`. They'll need to re-authenticate via Discord OAuth on next login. The GitHub link remains in their profile. New migration path: Discord login → if `discord_id` matches existing row, update it; if no match but user later links GitHub, match by `github_id` and merge.
+
+**Why table recreation**: SQLite doesn't support `ALTER COLUMN` to change NOT NULL to nullable. The original `github_id INTEGER UNIQUE NOT NULL` constraint would reject new Discord-only users (who have no GitHub account). Recreating the table is the standard SQLite pattern for this.
 
 #### 2. Register migration
 **File**: `harness/internal/db/db.go`
@@ -539,10 +599,71 @@ func (u *discordUser) AvatarURL() string {
 ```
 
 **File**: `harness/views/login/login.templ`
-**Changes**: Replace "Sign in with GitHub" with "Sign in with Discord"
+**Changes**: Replace "Sign in with GitHub" with "Sign in with Discord". Update href to `/auth/discord/login`.
 
 **File**: `harness/views/lobby/lobby.templ` or new settings view
 **Changes**: Add "Link GitHub Account" button (shows GitHub username if linked, unlink option)
+
+**File**: `harness/internal/auth/middleware.go`
+**Changes**: Update redirect paths from `/auth/github/login` to `/auth/discord/login`:
+- `SessionMiddleware` line 24
+- `ApprovedMiddleware` line 64
+- `HandlePendingApproval` in auth.go line 267
+
+**File**: `harness/internal/auth/auth.go` — `HandleDevLogin`
+**Changes**: Update dev login to use Discord identity instead of GitHub:
+```go
+// Dev login now creates users with fake Discord IDs (since Discord is primary auth)
+func (h *Handler) HandleDevLogin(c echo.Context) error {
+    username := c.FormValue("username")
+    // Generate a deterministic fake discord_id from username (string, not int)
+    fakeDiscordID := fmt.Sprintf("dev-%d", fnv32a(username))
+
+    // Upsert user with fake Discord identity
+    _ = h.db.UpsertDiscordUser(ctx, sqlc.UpsertDiscordUserParams{
+        ID:              uuid.NewString(),
+        DiscordID:       sql.NullString{String: fakeDiscordID, Valid: true},
+        DiscordUsername: sql.NullString{String: username, Valid: true},
+        AvatarURL:       sql.NullString{},
+        Role:            role, // admin if first user, else "user" (not "pending" in dev mode)
+    })
+    // ... create session, set cookie, redirect ...
+}
+```
+
+**File**: All view templates using `user.GitHubUsername`
+**Changes**: Update to use `user.DiscordUsername.String` (nullable since it's the new column):
+- `harness/views/lobby/lobby.templ:22`
+- `harness/views/admin/admin.templ:26`
+- `harness/views/pending/pending.templ:14`
+- `harness/internal/server/server.go:632` (chat event username)
+- `harness/internal/server/events.go:81,104` (player joined/left SSE events)
+- `harness/internal/server/events.go:165-166` (chat history — currently uses `msg.GitHubUsername.String` from messages JOIN)
+
+**File**: `harness/internal/db/queries/messages.sql`
+**Changes**: Update the `GetRecentMessagesWithUser` query to JOIN on `u.discord_username` instead of `u.github_username`.
+
+**File**: `harness/sqlc.yaml`
+**Changes**: Add column renames for new fields:
+```yaml
+rename:
+  github_id: "GitHubID"
+  github_username: "GitHubUsername"
+  discord_id: "DiscordID"
+  discord_username: "DiscordUsername"
+  mayor_name: "MayorName"
+  mayor_personality: "MayorPersonality"
+  mayor_secret: "MayorSecret"
+  discord_channel_id: "DiscordChannelID"
+  discord_message_id: "DiscordMessageID"
+  discord_thread_id: "DiscordThreadID"
+  author_type: "AuthorType"
+  author_name: "AuthorName"
+  world_id: "WorldID"
+  user_id: "UserID"
+  invited_by: "InvitedBy"
+  template_type: "TemplateType"
+```
 
 #### 6. World Creation Form — Add mayor fields
 **File**: `harness/views/lobby/lobby.templ`
@@ -608,9 +729,12 @@ if req.MayorName == "" {
 **Changes**: Extend `CreateWorld` signature and pass mayor fields to DB
 
 ```go
+// Note: creatorDiscordID is needed for Discord channel permission_overwrites.
+// Since Discord OAuth is primary auth, every user has a discord_id in the DB.
+// The server handler passes user.DiscordID.String from the session context.
 func (m *Manager) CreateWorld(
     ctx context.Context,
-    name, description, userID, templateType, mayorName, mayorPersonality string,
+    name, description, userID, creatorDiscordID, templateType, mayorName, mayorPersonality string,
 ) (*sqlc.World, error) {
 ```
 
@@ -740,41 +864,52 @@ func (m *Manager) IsGatewayHealthy() bool {
 
 // ProvisionAgent creates an OpenClaw agent for a world using the CLI,
 // writes workspace files, creates a Discord channel, and binds them together.
-func (m *Manager) ProvisionAgent(worldID, worldName, mayorName, mayorPersonality, templateType, creatorDiscordID string) (discordChannelID string, err error) {
+// Returns the Discord channel ID and the mayor secret (for storing in DB).
+func (m *Manager) ProvisionAgent(worldID, worldName, mayorName, mayorPersonality, templateType, creatorDiscordID string) (discordChannelID, mayorSecret string, err error) {
     agentID := "world-" + worldID
     workspaceDir := filepath.Join(m.openclawHome, "workspaces", worldID)
+
+    // 0. Generate mayor secret for build API auth (embedded in skill SKILL.md)
+    secretBytes := make([]byte, 32)
+    if _, err := rand.Read(secretBytes); err != nil {
+        return "", "", fmt.Errorf("generating mayor secret: %w", err)
+    }
+    mayorSecret = hex.EncodeToString(secretBytes)
 
     // 1. Create agent via OpenClaw CLI — handles config registration,
     //    workspace scaffolding, directory creation, agent ID normalization
     if err := m.createAgentViaCLI(agentID, workspaceDir); err != nil {
-        return "", fmt.Errorf("creating OpenClaw agent: %w", err)
+        return "", "", fmt.Errorf("creating OpenClaw agent: %w", err)
     }
 
-    // 2. Create skill directories (CLI doesn't create these)
+    // 2. Create skill directories (CLI doesn't create these —
+    //    gateway file APIs only allow bootstrap set + MEMORY.md)
     for _, dir := range []string{
         filepath.Join(workspaceDir, "skills", "world-build"),
         filepath.Join(workspaceDir, "skills", "world-status"),
     } {
         if err := os.MkdirAll(dir, 0o750); err != nil {
-            return "", fmt.Errorf("creating dir %s: %w", dir, err)
+            return "", "", fmt.Errorf("creating dir %s: %w", dir, err)
         }
     }
 
-    // 3. Write workspace files — OpenClaw injects these into the agent's system prompt
+    // 3. Write workspace files — OpenClaw injects these into the agent's system prompt.
+    //    CLI creates bootstrap files with wx flag (skip if exists), but we overwrite
+    //    with our world-specific templates since they contain mayor personality, world name, etc.
     if err := m.writeSoul(workspaceDir, mayorName, mayorPersonality, worldName); err != nil {
-        return "", err
+        return "", "", err
     }
     if err := m.writeAgents(workspaceDir, worldID, worldName, mayorName, templateType); err != nil {
-        return "", err
+        return "", "", err
     }
     if err := m.writeIdentity(workspaceDir, mayorName); err != nil {
-        return "", err
+        return "", "", err
     }
     if err := m.writeUser(workspaceDir, worldName); err != nil {
-        return "", err
+        return "", "", err
     }
-    if err := m.writeSkills(workspaceDir, worldID); err != nil {
-        return "", err
+    if err := m.writeSkills(workspaceDir, worldID, mayorSecret); err != nil {
+        return "", "", err
     }
 
     // 4. Create private Discord channel for this world
@@ -786,7 +921,7 @@ func (m *Manager) ProvisionAgent(worldID, worldName, mayorName, mayorPersonality
         }
     }
 
-    // 5. Bind agent to Discord channel via CLI config set
+    // 5. Bind agent to Discord channel via CLI config set (read-modify-write pattern)
     if discordChannelID != "" {
         if err := m.bindAgentToDiscord(agentID, discordChannelID); err != nil {
             m.logger.Error("failed to bind agent to Discord", "worldID", worldID, "error", err)
@@ -794,7 +929,7 @@ func (m *Manager) ProvisionAgent(worldID, worldName, mayorName, mayorPersonality
         }
     }
 
-    return discordChannelID, nil
+    return discordChannelID, mayorSecret, nil
 }
 ```
 
@@ -1187,8 +1322,17 @@ import (
 )
 
 // createAgentViaCLI registers a new agent in OpenClaw config via the CLI.
-// Handles: config registration, workspace dir creation, session transcripts dir,
-// IDENTITY.md scaffolding, agent ID normalization, duplicate detection.
+// Verified against src/commands/agents.commands.add.ts:64-175:
+//   - Requires --workspace and agent name when --non-interactive
+//   - Normalizes agent ID (lowercase + sanitize), rejects reserved "main"
+//   - Checks for duplicates, errors if agent already exists
+//   - Adds agent to cfg.agents.list[], writes config via writeConfigFile()
+//   - Creates workspace dir with bootstrap files (AGENTS.md, SOUL.md, TOOLS.md,
+//     IDENTITY.md, USER.md, HEARTBEAT.md, BOOTSTRAP.md) using wx flag (skip if exists)
+//   - Creates session transcripts dir and agent state dir
+//   - Initializes git repo in new workspace
+//   - NOTE: MEMORY.md is NOT created — OpenClaw creates it on first agent memory write
+//   - We overwrite bootstrap files with our world-specific templates AFTER this call
 func (m *Manager) createAgentViaCLI(agentID, workspaceDir string) error {
     cmd := exec.Command(m.openclawBin, "agents", "add", agentID,
         "--workspace", workspaceDir,
@@ -1203,9 +1347,11 @@ func (m *Manager) createAgentViaCLI(agentID, workspaceDir string) error {
     }
 
     // Parse JSON output to confirm success
+    // Expected format: {"agentId":"...","name":"...","workspace":"...","agentDir":"...","model":"...","bindings":{...}}
     var result struct {
-        OK      bool   `json:"ok"`
-        AgentID string `json:"agentId"`
+        AgentID   string `json:"agentId"`
+        Workspace string `json:"workspace"`
+        AgentDir  string `json:"agentDir"`
     }
     if err := json.Unmarshal(output, &result); err != nil {
         m.logger.Warn("could not parse openclaw agents add output", "output", string(output))
@@ -1216,13 +1362,16 @@ func (m *Manager) createAgentViaCLI(agentID, workspaceDir string) error {
 
 // bindAgentToDiscord adds a Discord channel binding for the agent.
 //
-// CRITICAL: Must verify whether `openclaw config set bindings` REPLACES the entire
-// array or APPENDS to it. If it replaces, creating a second world would nuke
-// the first world's binding.
+// VERIFIED: `openclaw config set` does a FULL REPLACE at the given path
+// (see src/cli/config-cli.ts:312 — setAtPath does direct assignment).
+// The `agents add --bind` flag does incremental append but only supports
+// `channel:accountId` format, not the per-channel `peer` matching we need
+// for same-guild routing.
 //
 // Strategy: Read current bindings via `openclaw config get bindings --json`,
-// append the new binding, then write back the full array. This is safe regardless
-// of whether `config set` replaces or appends.
+// append the new binding, then write back the full array.
+// Uses `peer.kind:"channel"` + `peer.id:channelID` for per-channel routing
+// (highest priority in resolve-route.ts:231-234).
 func (m *Manager) bindAgentToDiscord(agentID, discordChannelID string) error {
     // 1. Read current bindings
     getCmd := exec.Command(m.openclawBin, "config", "get", "bindings", "--json")
@@ -1277,11 +1426,12 @@ func (m *Manager) deleteAgent(agentID string) error {
 ```
 
 **Why CLI over file writes**: The original plan wrote `openclaw.json` directly from Go, reimplementing config normalization, agent ID validation, and workspace scaffolding. The CLI approach delegates all of this to OpenClaw's own tooling:
-- `openclaw agents add --non-interactive --json` creates the agent, scaffolds the workspace, and updates config atomically
-- `openclaw config set` handles config patching with proper validation
+- `openclaw agents add --non-interactive --json` creates the agent, scaffolds the workspace, initializes git repo, and updates config atomically via `writeConfigFile()` which also calls `clearConfigCache()` so the gateway picks up changes immediately
+- `openclaw config get/set` handles config reading/patching with proper validation. Note: `config set` does full REPLACE at path (verified: `setAtPath()` does direct assignment at `src/cli/config-cli.ts:153`), so bindings must use read-modify-write pattern
 - `openclaw agents delete --force` handles cleanup including binding pruning
 - No `flock` needed — OpenClaw handles its own file locking
 - No risk of schema drift — if OpenClaw changes its config format, the CLI still works
+- **Alternative considered**: `config.patch` gateway method (RFC 7386 JSON merge patch) would allow incremental binding updates, but requires gateway to be running + WebSocket connection. CLI is simpler and works offline
 
 #### 9. Hook into CreateWorld
 **File**: `harness/internal/world/manager.go`
@@ -1290,13 +1440,20 @@ func (m *Manager) deleteAgent(agentID string) error {
 ```go
 // After the DB transaction, before the background build goroutine:
 if m.mayorManager != nil {
-    // user.DiscordID is available because Discord OAuth is the primary auth
-    discordChannelID, err := m.mayorManager.ProvisionAgent(
-        worldID, name, mayorName, mayorPersonality, templateType, user.DiscordID.String,
+    // creatorDiscordID is passed from the server handler (user.DiscordID.String from session)
+    discordChannelID, mayorSecret, err := m.mayorManager.ProvisionAgent(
+        worldID, name, mayorName, mayorPersonality, templateType, creatorDiscordID,
     )
     if err != nil {
         m.logger.Error("failed to provision mayor", "worldID", worldID, "error", err)
         // Non-fatal — world still works without mayor
+    }
+    // Store mayor_secret in DB (used by mayorAuthMiddleware to validate X-Mayor-Secret header)
+    if mayorSecret != "" {
+        _ = m.queries.UpdateWorldMayorSecret(ctx, sqlc.UpdateWorldMayorSecretParams{
+            MayorSecret: sql.NullString{String: mayorSecret, Valid: true},
+            ID:          worldID,
+        })
     }
     if discordChannelID != "" {
         _ = m.queries.UpdateWorldDiscordChannel(ctx, sqlc.UpdateWorldDiscordChannelParams{
@@ -1312,6 +1469,15 @@ if m.mayorManager != nil {
 ```
 
 Add `mayorManager *mayor.Manager` and `discordListener *discord.Listener` to the `Manager` struct and `NewManager` constructor.
+
+**New SQL query needed** (add to `worlds.sql`):
+```sql
+-- name: UpdateWorldMayorSecret :exec
+UPDATE worlds SET mayor_secret = ? WHERE id = ?;
+
+-- name: GetWorldByMayorSecret :one
+SELECT * FROM worlds WHERE mayor_secret = ?;
+```
 
 #### 10. World invite API endpoint
 **File**: `harness/internal/server/server.go`
@@ -1790,10 +1956,11 @@ func (s *Server) handlePrompt(c echo.Context) error {
             // Fall through to direct pipeline below
         } else {
             // Post user message to Discord — mayor picks it up via OpenClaw
-            content := fmt.Sprintf("**%s**: %s", user.GitHubUsername, input.PromptText)
+            // Uses DiscordUsername since Discord OAuth is primary auth (Phase 2)
+            content := fmt.Sprintf("**%s**: %s", user.DiscordUsername.String, input.PromptText)
             s.MayorManager.PostToDiscordAndMirror(
                 s.DB, worldID, world.DiscordChannelID.String,
-                content, "user", user.GitHubUsername,
+                content, "user", user.DiscordUsername.String,
             )
 
             // Clear prompt input
@@ -1824,6 +1991,44 @@ sse.MergeFragments(
 ```
 
 The chat container also uses `data-on-load="this.scrollTop = this.scrollHeight"` to auto-scroll to the latest message on initial load, and the SSE append handler scrolls after each new message.
+
+#### 7. Invite controls in chat component
+**File**: `harness/views/world/chat.templ`
+**Changes**: If the current user is the world creator, show invite controls below the chat
+
+The world creator sees a collapsible "Manage Access" section showing:
+- List of currently invited users (from `GetWorldInvites` query)
+- A user selector (dropdown of approved users) with "Invite" button
+- "Revoke" button next to each invited user
+
+```go
+templ WorldInviteControls(worldID string, invites []sqlc.GetWorldInvitesRow, isCreator bool) {
+    if isCreator {
+        <details class="mt-2 border border-dashed border-muted-foreground/30 rounded-md p-2">
+            <summary class="text-xs text-muted-foreground cursor-pointer">Manage Access</summary>
+            <div class="mt-2 space-y-2">
+                for _, inv := range invites {
+                    <div class="flex items-center justify-between text-xs">
+                        <span>{ inv.DiscordUsername.String }</span>
+                        <button
+                            data-on:click__prevent={fmt.Sprintf("@post('/world/%s/revoke', {body: {user_id: '%s'}})", worldID, inv.UserID)}
+                            class="text-red-400 hover:text-red-300"
+                        >Revoke</button>
+                    </div>
+                }
+                <form class="flex gap-2 mt-1"
+                    data-on:submit__prevent={fmt.Sprintf("@post('/world/%s/invite', {contentType: 'form'})", worldID)}
+                >
+                    <input name="user_id" placeholder="User ID" class="flex-1 text-xs border rounded px-2 py-1 bg-background" />
+                    <button type="submit" class="text-xs px-2 py-1 border rounded">Invite</button>
+                </form>
+            </div>
+        </details>
+    }
+}
+```
+
+**Note**: A proper user picker (dropdown of approved users with autocomplete) would be better UX than a raw user ID input. For MVP, the world creator can copy user IDs from the admin panel. A future iteration could add a user search endpoint.
 
 ### Success Criteria
 
@@ -1893,6 +2098,7 @@ The chat container also uses `data-on-load="this.scrollTop = this.scrollHeight"`
 | `openclaw` CLI | Docker image PATH | Used by harness for agent management (`agents add`, `config set`) |
 | `discordgo` | Go module | `github.com/bwmarrin/discordgo` — Discord Gateway listener |
 | `google/uuid` | Go module | `github.com/google/uuid` — ID generation for mayor_messages |
+| `crypto/rand` | Go stdlib | Mayor secret generation (32 random bytes, hex-encoded) |
 | Discord OAuth app | Discord Developer Portal | `DISCORD_CLIENT_ID` + `DISCORD_CLIENT_SECRET` — primary auth. Scopes: `identify`, `guilds`. Redirect URI: `{BASE_URL}/auth/discord/callback` |
 | Discord Mayor bot | Discord Developer Portal | `DISCORD_MAYOR_BOT_TOKEN` — OpenClaw persona. Permissions: Send Messages, Read Message History, View Channels. Enable MESSAGE_CONTENT intent. |
 | Discord Harness bot | Discord Developer Portal | `DISCORD_HARNESS_BOT_TOKEN` — infrastructure. Permissions: Manage Channels, Manage Roles, Send Messages, Read Message History, View Channels. Enable MESSAGE_CONTENT intent. |
@@ -1908,6 +2114,9 @@ The chat container also uses `data-on-load="this.scrollTop = this.scrollHeight"`
 - **Mayor-to-mayor communication** — worlds sharing knowledge
 - **Voice interaction** — voice messages to mayor via OpenClaw voice support
 - **Mayor personality evolution** — beyond OpenClaw's automatic memory, the SOUL.md itself could be periodically regenerated based on accumulated context
+- **HTTP hooks API integration** — OpenClaw's `POST /hooks/agent` (Bearer auth, JSON body) could replace Discord-as-bus for harness→mayor communication in certain flows (e.g., direct build result notification without going through Discord). Simpler than the current pattern of posting to Discord and relying on OpenClaw to pick it up
+- **Session management dashboard** — OpenClaw's `sessions.list`/`sessions.preview` gateway methods could power a "Mayor Status" panel in the harness showing active conversations, token usage, and memory state per world
+- **ACP (Agent Client Protocol)** — OpenClaw supports stdio-based agent-to-agent communication via ACP. Could enable mayor-to-mayor collaboration or a "supervisor" agent that oversees multiple world mayors
 
 ## References
 

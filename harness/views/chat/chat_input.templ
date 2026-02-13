@@ -11,7 +11,7 @@ templ ChatInputBar() {
 	@input.Input(input.InputArgs{
 		Placeholder: "Type a message...",
 		Class:       "flex-1 h-8 text-[13px]",
-		Attributes:  templ.Attributes{"data-bind-chat_text": true},
+		Attributes:  templ.Attributes{"data-bind:chat_text": true},
 	})
 	@button.Button(button.ButtonArgs{
 		Size: "sm",

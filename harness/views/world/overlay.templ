@@ -11,7 +11,7 @@ import (
 
 templ Overlay(w sqlc.World, cp sqlc.Checkpoint, checkpoints []sqlc.Checkpoint) {
 	// Expanded state
-	<div class="flex flex-col h-screen pointer-events-none [&>*]:pointer-events-auto" data-show="$overlay_expanded">
+	<div class="flex flex-col h-screen pointer-events-none [&>*]:pointer-events-auto" data-show="$overlay_expanded" style="display: none;">
 		@OverlayTopBar(w)
 		@CheckpointTree(checkpoints, cp.ID, w.ID)
 		<div class="flex-1 flex justify-end pointer-events-none overflow-hidden">
@@ -22,8 +22,8 @@ templ Overlay(w sqlc.World, cp sqlc.Checkpoint, checkpoints []sqlc.Checkpoint) {
 		</div>
 		@OverlayBottomBar(w)
 	</div>
-	// Minimized state — starts hidden (overlay_expanded defaults to true)
-	<div class="fixed bottom-4 right-4" data-show="!$overlay_expanded" style="display: none;">
+	// Minimized state — starts visible (overlay_expanded defaults to false)
+	<div class="fixed bottom-4 right-4" data-show="!$overlay_expanded">
 		<button class="w-12 h-12 rounded-full bg-primary/90 border-none text-primary-foreground font-bold text-sm cursor-pointer relative"
 			data-on:click={ OE.Expand() }>
 			CM
@@ -43,6 +43,9 @@ templ OverlayTopBar(w sqlc.World) {
 			@button.Button(button.ButtonArgs{Size: "sm", Variant: "outline", Attributes: templ.Attributes{"data-on:click": OE.ToggleTree()}}) {
 				Tree
 			}
+			@button.Button(button.ButtonArgs{Size: "sm", Variant: "outline", Attributes: templ.Attributes{"data-on:click": "document.getElementById('game-frame').contentWindow.postMessage({type:'reload-room'},'*')"}}) {
+				Reload
+			}
 			<a href="/"
 				class="inline-flex items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50 h-8 px-3 text-sm font-medium">
 				Lobby
@@ -60,7 +63,7 @@ templ OverlayBottomBar(w sqlc.World) {
 			@input.Input(input.InputArgs{
 				Placeholder: "Describe what to build...",
 				Class:       "flex-1",
-				Attributes:  templ.Attributes{"data-bind-prompt_text": true},
+				Attributes:  templ.Attributes{"data-bind:prompt_text": true},
 			})
 			@button.Button(button.ButtonArgs{
 				Attributes: templ.Attributes{

@@ -205,7 +205,7 @@ datastar.DeleteSSE("/path")  // DELETE SSE request
 ```
 
 > **IMPORTANT — Datastar v1.0.0-RC.6 attribute syntax**:
-> - **Event handlers use colon syntax**: `data-on:click`, `data-on:keydown`, etc. (NOT `data-on-click` with a dash — dashes break the plugin lookup via HTML dataset camelCase conversion)
+> - **All plugin suffixes use colon syntax**: `data-on:click`, `data-bind:chat_text`, etc. (NOT `data-on-click` or `data-bind-chat_text` with dashes — dashes break the plugin lookup because HTML's dataset API converts `data-bind-foo` → `bindFoo` via camelCase, mangling the plugin name)
 > - **SSE on load uses `data-init`**: NOT `data-on-load` (which registers a DOM `load` event that only fires on resource-loading elements like img/script/iframe, not divs)
 
 ## Datastar — Client-Side Attributes
@@ -234,7 +234,7 @@ Datastar is a hypermedia framework. All reactivity is declarative via `data-*` a
 | `data-text` | Bind text content to expression | `data-text="$count"` |
 | `data-show` | Conditional visibility | `data-show="$isVisible"` |
 | `data-class` | Conditional CSS classes (object syntax) | `data-class="{'active': $tab === 'chat'}"` |
-| `data-bind` | Two-way input binding | `data-bind-chatText` |
+| `data-bind` | Two-way input binding | `data-bind:chatText` |
 | `data-on:click` | Click handler | `data-on:click="$count++"` |
 | `data-init` | Run when element is first processed | `data-init="@get('/events')"` |
 | `data-on:keydown` | Keyboard handler | `data-on:keydown="evt.key === 'Enter' && @post('/send')"` |
@@ -411,3 +411,112 @@ For in-depth working examples of these patterns, see the `context/` directory:
 - **Event handling** — `data-on:click`, `data-on:keydown`, `data-on:click__outside`
 - **Conditional classes** — `data-class="{'active': $tab === 'chat'}"` (object syntax required)
 - **Fetch indicators** — `data-indicator-fetching`, `data-attr-disabled="$fetching"`
+
+## Datastar Best Practices (The Tao of Datastar)
+
+Reference: https://data-star.dev/guide/the_tao_of_datastar/
+
+### 1. Backend is the Source of Truth
+
+Most state should live on the server. The frontend is exposed to the user and should not be trusted as authoritative. Drive UI updates from the backend via HTML fragment patching, not by managing complex state as client-side signals.
+
+**Prefer `PatchElementTempl` over `MarshalAndPatchSignals`** for anything beyond simple input clearing:
+
+```go
+// GOOD — Server renders the UI state and patches the DOM
+sse.PatchElementTempl(views.ImagePreview(previewURL, status),
+    datastar.WithSelectorID("image-preview"))
+
+// AVOID — Managing complex server state as client signals
+sse.MarshalAndPatchSignals(map[string]any{
+    "image_gen_status": "complete",
+    "image_preview_url": "/api/images/preview/abc123",
+    "image_saved_path":  "/worlds/xyz/assets/sprite.png",
+    "image_error_msg":   "",
+})
+```
+
+`MarshalAndPatchSignals` is appropriate for clearing form inputs after submission (e.g., resetting `chat_text` to `""`), but should not be used to shuttle complex server state to the client.
+
+### 2. Use Signals Sparingly
+
+Signals should only be used for two things:
+
+1. **User input binding** — `data-bind:chat_text` on an input field so the value is sent with `@post`
+2. **Simple UI toggles** — `data-show="$expanded"`, tab selection, visibility flags
+
+If you find yourself defining signals for status strings, URLs, file paths, or other server-derived data, that state belongs in a server-rendered HTML fragment instead.
+
+### 3. How Signals Are Sent with Actions
+
+`@post`, `@get`, etc. **automatically include all signals** in the request (except those prefixed with `_`). No manual wiring is needed:
+
+- **GET requests**: signals sent as query parameters
+- **POST/PUT/PATCH/DELETE**: signals sent as JSON body under `{datastar: {…}}`
+
+To limit which signals are sent, use the `filterSignals` option:
+
+```html
+<!-- Only send signals matching the regex -->
+<button data-on:click="@post('/api/images/generate', {filterSignals: {include: /^image_/}})">
+    Generate
+</button>
+```
+
+On the server, read signals with:
+
+```go
+type ImageSignals struct {
+    ImagePrompt string `json:"image_prompt"`
+}
+var signals ImageSignals
+if err := datastar.ReadSignals(r, &signals); err != nil { ... }
+```
+
+### 4. Avoid Optimistic UI
+
+Do not show success before the server confirms it. Use `data-indicator` to show loading state, and let the backend's SSE response update the DOM with the real result:
+
+```html
+<button data-indicator-generating
+        data-on:click="@post('/api/images/generate')"
+        data-attr-disabled="$generating">
+    Generate
+</button>
+<div data-show="$generating">Generating image...</div>
+```
+
+The backend SSE response then patches in the actual result via `PatchElementTempl`, which naturally hides the indicator.
+
+### 5. CQRS: Separate Reads from Writes
+
+- **Reads** (`@get`, `data-init`): Long-lived SSE connections that stream updates. One connection per page/component.
+- **Writes** (`@post`, `@put`, `@delete`): Short-lived requests that send user input and receive a confirmation or DOM patch.
+
+```html
+<!-- READ: Long-lived SSE for real-time updates -->
+<div data-init="@get('/world/abc/events')"></div>
+
+<!-- WRITE: Short-lived POST on user action -->
+<button data-on:click="@post('/api/chat')">Send</button>
+```
+
+### 6. Let the Browser Handle Navigation
+
+Use standard `<a>` tags for navigation. Use backend redirects when actions need to change pages. Don't build custom SPA-style routing — the browser handles history automatically.
+
+### 7. Use Morphing for Efficient Updates
+
+Datastar's morphing only updates changed DOM nodes, preserving input focus and scroll position. You can safely send large HTML fragments ("fat morph") — the framework handles diffing. Use `data-ignore-morph` on elements that should not be touched (e.g., video players, iframes).
+
+### 8. Working Pattern Reference
+
+The chat system demonstrates correct Datastar patterns:
+
+- **Input binding**: `data-bind:chat_text` on the text input
+- **Action**: `@post('/api/chat')` sends all signals (including `chat_text`) automatically
+- **Server read**: `datastar.ReadSignals(r, &signals)` extracts `chat_text`
+- **Server response**: `sse.PatchElementTempl(views.ChatMessage(msg))` renders the new message as HTML
+- **Signal reset**: `sse.MarshalAndPatchSignals(...)` only to clear `chat_text` back to `""`
+
+Follow this pattern: bind inputs → post action → read signals on server → patch HTML back → optionally clear input signal.

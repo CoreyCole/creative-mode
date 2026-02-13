@@ -37,7 +37,6 @@ The alternative — calling the Anthropic Messages API directly from Go — woul
 ### Key Discoveries
 - OpenClaw's multi-agent routing (`~/.openclaw/openclaw.json` `agents.list[]` + `bindings[]`) maps perfectly to one-agent-per-world
 - Each agent gets isolated workspace (`AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`, skills/, sessions/)
-- `openclaw-claude-code-skill` npm package bridges Claude Code capabilities into OpenClaw via MCP
 - OpenClaw's Discord adapter (`discord.js`) supports per-channel → per-agent routing via bindings
 - OpenClaw CLI has `agents add --non-interactive --json` for programmatic agent management
 - Config hot-reload (200ms cache) picks up agent changes without gateway restart
@@ -185,15 +184,24 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     npm install -g pnpm@latest
 
 # OpenClaw (AI agent framework)
+# NOTE: Skip pnpm ui:build — the gateway doesn't serve the OpenClaw UI and
+# the UI build pulls in heavy frontend deps. This saves ~200MB in the image.
 RUN git clone --depth 1 https://github.com/openclaw/openclaw.git /opt/openclaw && \
     cd /opt/openclaw && \
     pnpm install --frozen-lockfile && \
-    pnpm ui:build && \
     pnpm build
 
 ENV OPENCLAW_HOME=/data/openclaw
+
+# IMPORTANT: Verify the actual CLI binary path after build.
+# It may be at /opt/openclaw/packages/cli/bin/openclaw or similar,
+# not necessarily in node_modules/.bin. Check with:
+#   find /opt/openclaw -name "openclaw" -type f -executable
+# The openclawBin field in mayor.Manager must match this path.
 ENV PATH="/opt/openclaw/node_modules/.bin:$PATH"
 ```
+
+**Docker image size note**: Adding Node.js 22 + pnpm + OpenClaw will add ~300-500MB to the image. Consider a multi-stage build in future to discard dev dependencies. Skipping `pnpm ui:build` avoids the heaviest optional dependency.
 
 #### 2. Entrypoint — Start OpenClaw gateway alongside Air
 **File**: `harness/scripts/dev-entrypoint.sh`
@@ -312,7 +320,7 @@ ALTER TABLE worlds ADD COLUMN discord_channel_id TEXT;
 CREATE TABLE mayor_messages (
     id TEXT PRIMARY KEY,
     world_id TEXT NOT NULL REFERENCES worlds(id),
-    discord_message_id TEXT,
+    discord_message_id TEXT UNIQUE,
     discord_thread_id TEXT,
     author_type TEXT NOT NULL,  -- 'user', 'mayor', 'system'
     author_name TEXT NOT NULL,
@@ -359,7 +367,7 @@ UPDATE worlds SET discord_channel_id = ? WHERE id = ?;
 **File**: `harness/internal/db/queries/mayor_messages.sql` (new)
 ```sql
 -- name: InsertMayorMessage :exec
-INSERT INTO mayor_messages (id, world_id, discord_message_id, discord_thread_id, author_type, author_name, content, created_at)
+INSERT OR IGNORE INTO mayor_messages (id, world_id, discord_message_id, discord_thread_id, author_type, author_name, content, created_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetMayorMessages :many
@@ -801,6 +809,11 @@ func (m *Manager) createDiscordChannel(worldName string) (string, error) {
     }
     defer resp.Body.Close()
 
+    if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+        body, _ := io.ReadAll(resp.Body)
+        return "", fmt.Errorf("Discord API returned %d: %s", resp.StatusCode, string(body))
+    }
+
     var result struct {
         ID string `json:"id"`
     }
@@ -813,6 +826,13 @@ func (m *Manager) createDiscordChannel(worldName string) (string, error) {
 
 // postToDiscord sends a message to a Discord channel
 func (m *Manager) postToDiscord(channelID, content string) error {
+    _, err := m.postToDiscordReturningID(channelID, content)
+    return err
+}
+
+// postToDiscordReturningID sends a message and returns the Discord message ID
+// (needed by PostToDiscordAndMirror to store the ID for deduplication)
+func (m *Manager) postToDiscordReturningID(channelID, content string) (string, error) {
     payload := map[string]string{"content": content}
     body, _ := json.Marshal(payload)
 
@@ -825,10 +845,50 @@ func (m *Manager) postToDiscord(channelID, content string) error {
 
     resp, err := http.DefaultClient.Do(req)
     if err != nil {
-        return fmt.Errorf("posting to Discord: %w", err)
+        return "", fmt.Errorf("posting to Discord: %w", err)
     }
-    resp.Body.Close()
-    return nil
+    defer resp.Body.Close()
+
+    if resp.StatusCode != http.StatusOK {
+        respBody, _ := io.ReadAll(resp.Body)
+        return "", fmt.Errorf("Discord API returned %d: %s", resp.StatusCode, string(respBody))
+    }
+
+    var result struct {
+        ID string `json:"id"`
+    }
+    if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+        return "", fmt.Errorf("decoding Discord message response: %w", err)
+    }
+
+    return result.ID, nil
+}
+
+// sanitizeChannelName converts a world name to a valid Discord channel name
+// (lowercase, hyphens instead of spaces, max 100 chars, alphanumeric + hyphens only)
+func sanitizeChannelName(name string) string {
+    name = strings.ToLower(name)
+    name = strings.ReplaceAll(name, " ", "-")
+    // Remove non-alphanumeric/hyphen characters
+    var b strings.Builder
+    for _, r := range name {
+        if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+            b.WriteRune(r)
+        }
+    }
+    result := b.String()
+    if len(result) > 100 {
+        result = result[:100]
+    }
+    if result == "" {
+        result = "world"
+    }
+    return result
+}
+
+// generateID creates a new unique ID for mayor_messages rows
+func generateID() string {
+    return uuid.NewString()
 }
 ```
 
@@ -875,19 +935,47 @@ func (m *Manager) createAgentViaCLI(agentID, workspaceDir string) error {
     return nil
 }
 
-// bindAgentToDiscord adds a Discord channel binding for the agent via CLI config set.
-// Uses dot-path notation to append to the bindings array.
+// bindAgentToDiscord adds a Discord channel binding for the agent.
+//
+// CRITICAL: Must verify whether `openclaw config set bindings` REPLACES the entire
+// array or APPENDS to it. If it replaces, creating a second world would nuke
+// the first world's binding.
+//
+// Strategy: Read current bindings via `openclaw config get bindings --json`,
+// append the new binding, then write back the full array. This is safe regardless
+// of whether `config set` replaces or appends.
 func (m *Manager) bindAgentToDiscord(agentID, discordChannelID string) error {
-    // Build the binding JSON
-    binding := fmt.Sprintf(
-        `[{"agentId":"%s","match":{"channel":"discord","peer":{"kind":"channel","id":"%s"}}}]`,
+    // 1. Read current bindings
+    getCmd := exec.Command(m.openclawBin, "config", "get", "bindings", "--json")
+    getCmd.Env = append(os.Environ(), "OPENCLAW_HOME="+m.openclawHome)
+    currentBindings, err := getCmd.CombinedOutput()
+    if err != nil {
+        // If no bindings exist yet, start with empty array
+        currentBindings = []byte("[]")
+    }
+
+    // 2. Parse, append new binding, serialize
+    var bindings []json.RawMessage
+    if err := json.Unmarshal(currentBindings, &bindings); err != nil {
+        bindings = []json.RawMessage{} // fallback to empty
+    }
+
+    newBinding := fmt.Sprintf(
+        `{"agentId":"%s","match":{"channel":"discord","peer":{"kind":"channel","id":"%s"}}}`,
         agentID, discordChannelID,
     )
+    bindings = append(bindings, json.RawMessage(newBinding))
 
-    cmd := exec.Command(m.openclawBin, "config", "set", "bindings", "--json", binding)
-    cmd.Env = append(os.Environ(), "OPENCLAW_HOME="+m.openclawHome)
+    merged, err := json.Marshal(bindings)
+    if err != nil {
+        return fmt.Errorf("marshaling bindings: %w", err)
+    }
 
-    output, err := cmd.CombinedOutput()
+    // 3. Write back the full array
+    setCmd := exec.Command(m.openclawBin, "config", "set", "bindings", "--json", string(merged))
+    setCmd.Env = append(os.Environ(), "OPENCLAW_HOME="+m.openclawHome)
+
+    output, err := setCmd.CombinedOutput()
     if err != nil {
         return fmt.Errorf("openclaw config set bindings: %s: %w", string(output), err)
     }
@@ -978,14 +1066,20 @@ Connect the existing build pipeline to Discord. When builds complete or fail, th
 
 #### 1. Mayor build API endpoint
 **File**: `harness/internal/server/server.go`
-**Changes**: Add route for mayor build trigger
+**Changes**: Add route for mayor build trigger with shared-secret auth
 
 ```go
 // In route registration, after existing routes:
 mayor := e.Group("/api/mayor")
+// Auth: shared secret via X-Mayor-Secret header.
+// The secret is generated per-world during provisioning and stored in the
+// mayor's skill SKILL.md. This prevents arbitrary HTTP clients from triggering builds.
+mayor.Use(s.mayorAuthMiddleware)
 mayor.POST("/build", s.handleMayorBuild)
 mayor.GET("/status", s.handleMayorStatus)
 ```
+
+The `mayorAuthMiddleware` validates the `X-Mayor-Secret` header against a per-world secret stored in the DB (added to the `worlds` table as `mayor_secret TEXT`). The secret is generated during mayor provisioning and embedded in the mayor's `world-build` skill `SKILL.md`.
 
 #### 2. Mayor build handler
 **File**: `harness/internal/server/mayor_api.go` (new)
@@ -1137,7 +1231,8 @@ type Listener struct {
     session    *discordgo.Session
     db         *sqlc.Queries
     eventBus   EventPublisher
-    channelMap map[string]string // discord_channel_id → world_id (loaded from DB)
+    mu         sync.RWMutex      // protects channelMap (written by RegisterChannel, read by handleMessage)
+    channelMap map[string]string  // discord_channel_id → world_id (loaded from DB)
     logger     *slog.Logger
 }
 
@@ -1183,24 +1278,33 @@ func (l *Listener) Stop() error {
 
 // RegisterChannel adds a new channel→world mapping (called when a world is created)
 func (l *Listener) RegisterChannel(discordChannelID, worldID string) {
+    l.mu.Lock()
+    defer l.mu.Unlock()
     l.channelMap[discordChannelID] = worldID
 }
 
 // handleMessage is called for every message in channels the bot can see
 func (l *Listener) handleMessage(s *discordgo.Session, m *discordgo.MessageCreate) {
     // Look up which world this channel belongs to
+    l.mu.RLock()
     worldID, ok := l.channelMap[m.ChannelID]
+    l.mu.RUnlock()
     if !ok {
         return // not a world channel, ignore
     }
 
     // Deduplicate — skip if we already have this Discord message
-    // (e.g., messages the harness itself posted via REST API)
+    // (e.g., messages the harness itself posted via REST API and mirrored to SQLite)
+    // Uses sql.ErrNoRows explicitly to distinguish "not found" from DB errors
     _, err := l.db.GetMayorMessageByDiscordID(context.Background(), sql.NullString{
         String: m.ID, Valid: true,
     })
     if err == nil {
         return // already mirrored
+    }
+    if !errors.Is(err, sql.ErrNoRows) {
+        l.logger.Error("failed to check dedup for Discord message", "error", err, "msgID", m.ID)
+        return // DB error — don't risk a duplicate, skip this message
     }
 
     // Classify author type
@@ -1217,7 +1321,12 @@ func (l *Listener) handleMessage(s *discordgo.Session, m *discordgo.MessageCreat
         }
     }
 
-    // Insert into SQLite
+    // Use Discord's message timestamp, not time.Now(), to preserve ordering
+    // even if the listener has lag
+    createdAt := m.Timestamp
+
+    // Insert into SQLite (INSERT OR IGNORE handles the remaining race with
+    // PostToDiscordAndMirror — UNIQUE(discord_message_id) prevents duplicates)
     if err := l.db.InsertMayorMessage(context.Background(), sqlc.InsertMayorMessageParams{
         ID:               generateID(),
         WorldID:          worldID,
@@ -1225,7 +1334,7 @@ func (l *Listener) handleMessage(s *discordgo.Session, m *discordgo.MessageCreat
         AuthorType:       authorType,
         AuthorName:       authorName,
         Content:          m.Content,
-        CreatedAt:        time.Now(),
+        CreatedAt:        createdAt,
     }); err != nil {
         l.logger.Error("failed to insert Discord message", "error", err, "worldID", worldID)
         return
@@ -1286,14 +1395,7 @@ if discordToken := os.Getenv("DISCORD_BOT_TOKEN"); discordToken != "" {
 }
 ```
 
-#### 3. Add DB query for channel map
-**File**: `harness/internal/db/queries/worlds.sql`
-```sql
--- name: GetWorldsWithDiscordChannels :many
-SELECT id, discord_channel_id FROM worlds WHERE discord_channel_id IS NOT NULL;
-```
-
-#### 4. Chat component — render mayor_messages
+#### 5. Chat component — render mayor_messages
 **File**: `harness/views/world/chat.templ` (new)
 
 A templ component that renders `mayor_messages` for the current world. Styled to match the harness UI, with distinct visual treatment for user messages, mayor messages, and system/build events.
@@ -1311,9 +1413,16 @@ templ MayorChat(messages []sqlc.MayorMessage, mayorName string) {
 }
 ```
 
-The chat component is updated via Datastar SSE when new messages arrive.
+The chat component is updated via Datastar SSE when new messages arrive. New messages use `data-merge-mode="append"` to add to the `#mayor-chat` container without re-rendering the entire list (see section 8 below for SSE details).
 
-#### 3. Update prompt handler to route through Discord
+#### 6. Add DB query for channel map
+**File**: `harness/internal/db/queries/worlds.sql`
+```sql
+-- name: GetWorldsWithDiscordChannels :many
+SELECT id, discord_channel_id FROM worlds WHERE discord_channel_id IS NOT NULL;
+```
+
+#### 7. Update prompt handler to route through Discord
 **File**: `harness/internal/server/server.go`
 **Changes**: `handlePrompt` posts to Discord instead of directly calling `Orchestrator.HandlePrompt`
 

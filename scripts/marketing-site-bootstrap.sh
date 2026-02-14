@@ -214,7 +214,7 @@ fi
 # ============================================================================
 # Unlike the VPS script (which blocks ALL incoming), this server needs
 # specific ports open to the public internet:
-#   - Port 80: API Gateway → nginx (creative-mode.ai)
+#   - Port 80: API Gateway → Docker site (creative-mode.ai)
 #   - Port 22: Kept open temporarily until Tailscale SSH is verified
 #   - Extra --port args: co-hosted services (e.g. 3000, 4242)
 #   - tailscale0: all tailnet traffic

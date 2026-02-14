@@ -356,7 +356,16 @@ Add `004_discord_auth_and_mayor.sql` to the `migrationFiles` slice and add boots
 
 #### 3. SQL Queries — Discord auth + mayor + instrumentation
 **File**: `harness/internal/db/queries/users.sql` — Add Discord auth queries:
-- `UpsertDiscordUser`, `GetUserByDiscordID`, `LinkGitHub`, `UnlinkGitHub`
+- `UpsertDiscordUser`, `GetUserByDiscordID`, `GetUserByID`, `LinkGitHub`, `UnlinkGitHub`
+
+```sql
+-- name: GetUserByID :one
+SELECT * FROM users WHERE id = ?;
+```
+
+> **Note**: `GetUserByID` is needed by the world invite handler (Phase 3) to
+> look up the invited user's Discord ID. If this query already exists in the
+> codebase, skip adding it.
 
 **File**: `harness/internal/db/queries/worlds.sql` — Update `CreateWorld` to accept mayor fields:
 ```sql
@@ -435,7 +444,36 @@ SELECT * FROM mayor_sessions WHERE world_id = ? ORDER BY last_active_at DESC LIM
 #### 4. sqlc config updates
 **File**: `harness/sqlc.yaml`
 
-Add column renames for all new fields: `discord_id`, `discord_username`, `mayor_name`, `mayor_personality`, `mayor_tone`, `mayor_aesthetic`, `mayor_lore`, `mayor_examples`, `mayor_secret`, `discord_channel_id`, `discord_message_id`, `discord_thread_id`, `author_type`, `author_name`, `activity_type`, `checkpoint_id`, `original_request`, `error_message`, `duration_seconds`, `completed_at`, `started_at`, `session_key`, `last_active_at`, `first_seen_at`, `message_count`.
+Add column renames for all new fields:
+
+```yaml
+rename:
+  discord_id: "DiscordID"
+  discord_username: "DiscordUsername"
+  mayor_name: "MayorName"
+  mayor_personality: "MayorPersonality"
+  mayor_tone: "MayorTone"
+  mayor_aesthetic: "MayorAesthetic"
+  mayor_lore: "MayorLore"
+  mayor_examples: "MayorExamples"
+  mayor_secret: "MayorSecret"
+  discord_channel_id: "DiscordChannelID"
+  discord_message_id: "DiscordMessageID"
+  discord_thread_id: "DiscordThreadID"
+  author_type: "AuthorType"
+  author_name: "AuthorName"
+  activity_type: "ActivityType"
+  checkpoint_id: "CheckpointID"
+  original_request: "OriginalRequest"
+  error_message: "ErrorMessage"
+  duration_seconds: "DurationSeconds"
+  completed_at: "CompletedAt"
+  started_at: "StartedAt"
+  session_key: "SessionKey"
+  last_active_at: "LastActiveAt"
+  first_seen_at: "FirstSeenAt"
+  message_count: "MessageCount"
+```
 
 #### 5. Discord OAuth — Replace GitHub as primary auth
 **File**: `harness/internal/auth/auth.go`
@@ -794,7 +832,52 @@ Same as original plan — `IDENTITY.md` (name + role), `USER.md` (world context)
 #### 7. Hook into CreateWorld
 **File**: `harness/internal/world/manager.go`
 
-After DB transaction succeeds, call `mayorManager.ProvisionAgent(...)` with full personality. Store `mayor_secret` and `discord_channel_id` in DB. Register channel with Discord listener.
+After DB transaction succeeds, construct `MayorPersonality` from the expanded form fields and call `ProvisionAgent`. Store `mayor_secret` and `discord_channel_id` in DB. Register channel with Discord listener.
+
+```go
+if m.mayorManager != nil {
+    personality := mayor.MayorPersonality{
+        Name:        mayorName,
+        Personality: mayorPersonality,
+        Tone:        mayorTone,
+        Aesthetic:   mayorAesthetic,
+        Lore:        mayorLore,
+        Examples:    mayorExamples,
+    }
+    discordChannelID, mayorSecret, err := m.mayorManager.ProvisionAgent(
+        worldID, name, personality, templateType, creatorDiscordID,
+    )
+    if err != nil {
+        m.logger.Error("failed to provision mayor", "worldID", worldID, "error", err)
+        // Non-fatal — world still works without mayor
+    }
+    if mayorSecret != "" {
+        _ = m.queries.UpdateWorldMayorSecret(ctx, sqlc.UpdateWorldMayorSecretParams{
+            MayorSecret: sql.NullString{String: mayorSecret, Valid: true},
+            ID:          worldID,
+        })
+    }
+    if discordChannelID != "" {
+        _ = m.queries.UpdateWorldDiscordChannel(ctx, sqlc.UpdateWorldDiscordChannelParams{
+            DiscordChannelID: sql.NullString{String: discordChannelID, Valid: true},
+            ID:               worldID,
+        })
+        if m.discordListener != nil {
+            m.discordListener.RegisterChannel(discordChannelID, worldID)
+        }
+    }
+}
+```
+
+Update `CreateWorld` signature to accept all personality fields:
+
+```go
+func (m *Manager) CreateWorld(
+    ctx context.Context,
+    name, description, userID, creatorDiscordID, templateType string,
+    mayorName, mayorPersonality, mayorTone, mayorAesthetic, mayorLore, mayorExamples string,
+) (*sqlc.World, error) {
+```
 
 Add `mayorManager *mayor.Manager` and `discordListener *discord.Listener` to the `Manager` struct.
 
@@ -803,6 +886,13 @@ Add `mayorManager *mayor.Manager` and `discordListener *discord.Listener` to the
 
 - `POST /world/:worldID/invite` — adds user to Discord channel + DB
 - `POST /world/:worldID/revoke` — removes from Discord channel + DB
+
+**Route registration** in `harness/internal/server/server.go`:
+```go
+// World invite management (session auth — world creator only)
+approved.POST("/world/:worldID/invite", s.handleWorldInvite)
+approved.POST("/world/:worldID/revoke", s.handleWorldRevoke)
+```
 
 ### Success Criteria
 
@@ -1383,12 +1473,19 @@ func activityIcon(actType string) string {
     case "build_triggered":  return "🔨"
     case "build_completed":  return "✅"
     case "build_failed":     return "❌"
-    case "memory_updated":   return "🧠"
     case "session_created":  return "📋"
     case "file_edited":      return "📝"
     default:                 return "•"
     }
 }
+```
+
+> **Note on `memory_updated`**: OpenClaw autonomously updates MEMORY.md during
+> agent conversations, but the harness has no way to detect this today. A future
+> enhancement could use `fsnotify` to watch workspace files for changes and log
+> `memory_updated` events, but this is out of scope for the initial implementation.
+> The activity type is intentionally omitted from the icon function until a
+> detection mechanism exists.
 ```
 
 #### 7. Dashboard server handlers

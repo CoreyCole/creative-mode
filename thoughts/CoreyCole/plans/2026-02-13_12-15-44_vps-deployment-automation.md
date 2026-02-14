@@ -733,15 +733,15 @@ exit "$FAIL"
 
 ## Implementation Order
 
-1. **Phase 3**: `.env.example` — trivial, document what's needed
-2. **Phase 5**: Application hardening (Go code + JS) — security fixes, testable locally
-3. **Phase 2**: Add `restart: on-failure` + healthcheck to base compose
-4. **Phase 4**: Justfile helpers
-5. **Phase 6**: Reverse proxies (trunk serve + game WS) — makes everything same-origin, enables VPS access
-6. **Phase 1**: `scripts/vps-bootstrap.sh` — VPS setup script (with auto-detect interface, systemd unit, idempotency)
-7. **Phase 7**: `scripts/vps-verify.sh` — post-bootstrap verification
+1. **Phase 1**: `scripts/vps-bootstrap.sh` — VM/VPS setup script (auto-detect interface, systemd unit, idempotency). Set up the UTM VM first so all subsequent changes can be tested on it.
+2. **Phase 3**: `.env.example` — needed during VM setup to create `.env`
+3. **Phase 7**: `scripts/vps-verify.sh` — validate bootstrap worked before proceeding
+4. **Phase 2**: Add `restart: on-failure` + healthcheck to base compose
+5. **Phase 5**: Application hardening (Go code + JS) — security headers, body limits, timeouts, cookie fixes, postMessage, rate limiting
+6. **Phase 4**: Justfile helpers (`redeploy`, `status`)
+7. **Phase 6**: Reverse proxies (trunk serve + game WS) — makes everything same-origin, enables VPS access. **Phase 5f (postMessage) and Phase 6a (trunk proxy) must ship together.**
 
-Phases 1-5 are independent. Phase 6 makes everything same-origin and enables both 2D and 3D games over Tailscale. Phase 7 depends on Phase 1. The order lets us validate everything on the macOS host before setting up the VM/VPS.
+VM-first approach: set up the UTM VM and verify the bootstrap before implementing code changes. This ensures every change can be tested on the actual deployment target. Phases 2-6 are independent of each other but all depend on the VM being available for testing.
 
 ## Deployment Workflow (End State)
 

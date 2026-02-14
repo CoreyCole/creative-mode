@@ -1,0 +1,78 @@
+/* Markdown viewer styles */
+.markdown-content {
+  @apply text-foreground leading-relaxed;
+}
+
+.markdown-content > * + * {
+  @apply mt-4;
+}
+
+.markdown-content .myh {
+  @apply font-bold text-foreground;
+}
+
+.markdown-content .myh-1 {
+  @apply text-2xl mt-6 mb-3;
+}
+
+.markdown-content .myh-2 {
+  @apply text-xl mt-5 mb-2;
+}
+
+.markdown-content .myh-3 {
+  @apply text-lg mt-4 mb-2;
+}
+
+.markdown-content .myh-4,
+.markdown-content .myh-5,
+.markdown-content .myh-6 {
+  @apply text-base mt-3 mb-1;
+}
+
+.markdown-content blockquote {
+  @apply border-l-4 border-border pl-4 italic text-muted-foreground my-4;
+}
+
+.markdown-content code:not(pre code) {
+  @apply rounded bg-muted px-1.5 py-0.5 text-sm font-mono text-foreground;
+}
+
+.markdown-content hr {
+  @apply border-border my-6;
+}
+
+.markdown-content .table-wrapper {
+  @apply overflow-x-auto my-4 rounded-lg border border-border;
+}
+
+.markdown-content table {
+  @apply w-full border-collapse text-sm;
+}
+
+.markdown-content thead {
+  @apply border-b border-border bg-muted/50;
+}
+
+.markdown-content th {
+  @apply px-4 py-3 text-left font-semibold;
+}
+
+.markdown-content td {
+  @apply px-4 py-3;
+}
+
+.markdown-content tbody tr {
+  @apply border-b border-border/50;
+}
+
+.markdown-content tbody tr:last-child {
+  @apply border-b-0;
+}
+
+.markdown-content strong {
+  @apply font-bold;
+}
+
+.markdown-content em {
+  @apply italic;
+}

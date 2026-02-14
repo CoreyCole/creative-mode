@@ -1,0 +1,111 @@
+package pages
+
+// MayorMessageComplete renders a completed assistant message with pre-rendered HTML.
+templ MayorMessageComplete(msgID string, htmlContent string) {
+	<div id={ "msg-" + msgID } class="rounded-lg border border-border/40 bg-card p-4">
+		<div class="flex items-start gap-3">
+			<div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary text-sm font-bold">
+				M
+			</div>
+			<div id={ "msg-content-" + msgID } class="markdown-content min-w-0 flex-1">
+				@templ.Raw(htmlContent)
+			</div>
+		</div>
+	</div>
+}
+
+// MayorMessageStreaming renders an empty assistant message placeholder during streaming.
+templ MayorMessageStreaming(msgID string) {
+	<div id={ "msg-" + msgID } class="rounded-lg border border-border/40 bg-card p-4">
+		<div class="flex items-start gap-3">
+			<div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary text-sm font-bold">
+				M
+			</div>
+			<div id={ "msg-content-" + msgID } class="markdown-content min-w-0 flex-1">
+				<span class="text-muted-foreground animate-pulse">Thinking...</span>
+			</div>
+		</div>
+	</div>
+}
+
+// MayorMessageDelta renders streaming text content (plain text, pre-markdown).
+templ MayorMessageDelta(msgID string, text string) {
+	<span class="whitespace-pre-wrap">{ text }</span>
+}
+
+// MayorMessageDeltaHTML renders streaming content with partially rendered markdown.
+templ MayorMessageDeltaHTML(msgID string, htmlContent string) {
+	@templ.Raw(htmlContent)
+}
+
+// UserMessage renders a user message.
+templ UserMessage(msgID string, content string) {
+	<div id={ "msg-" + msgID } class="rounded-lg bg-muted/50 p-4">
+		<div class="flex items-start gap-3">
+			<div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground text-sm font-bold">
+				U
+			</div>
+			<div class="min-w-0 flex-1 text-sm">
+				{ content }
+			</div>
+		</div>
+	</div>
+}
+
+// WorldHatched is shown after the Discord channel is created.
+templ WorldHatched(worldName, mayorName, discordChannelURL, discordUsername, discordAvatar string) {
+	<div id="mayor-signup" class="my-6 rounded-lg border border-border/40 bg-card p-6 text-center">
+		<h2 class="text-xl font-bold">{ worldName } Has Been Born</h2>
+		<p class="mt-3 text-muted-foreground">
+			<strong>{ mayorName }</strong> is ready and waiting for you.
+		</p>
+		<div class="mt-4 flex items-center justify-center gap-3">
+			if discordAvatar != "" {
+				<img src={ discordAvatar } alt={ discordUsername } class="w-10 h-10 rounded-full"/>
+			}
+			<span class="text-sm font-medium">{ discordUsername }</span>
+		</div>
+		if discordChannelURL != "" {
+			<a
+				href={ templ.SafeURL(discordChannelURL) }
+				target="_blank"
+				rel="noreferrer"
+				class="mt-6 inline-flex items-center justify-center rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 h-11 px-8"
+			>
+				Open Your World in Discord
+			</a>
+			<p class="mt-3 text-sm text-muted-foreground">
+				Just type in the channel — { mayorName } is always listening.
+			</p>
+		} else {
+			<p class="mt-4 text-sm text-muted-foreground">
+				Your world is ready! Join the Discord server to get started.
+			</p>
+		}
+	</div>
+}
+
+// WorldSummaryCard is shown when Discord bot token is not configured (no channel creation).
+templ WorldSummaryCard(worldName, mayorName, summary string) {
+	<div id="mayor-signup" class="my-6 rounded-lg border border-border/40 bg-card p-6 text-center">
+		<h2 class="text-xl font-bold">{ worldName } Has Been Born</h2>
+		<p class="mt-3 text-muted-foreground">
+			<strong>{ mayorName }</strong> — { summary }
+		</p>
+		<a
+			href="https://discord.gg/cPtN5vP3ty"
+			target="_blank"
+			rel="noreferrer"
+			class="mt-6 inline-flex items-center justify-center rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 h-11 px-8"
+		>
+			Join Discord to Get Started
+		</a>
+	</div>
+}
+
+// RateLimitError shows a rate limit message to the user.
+templ RateLimitError() {
+	<div id="rate-limit-error" class="mt-2 text-sm text-destructive text-center">
+		Please wait a moment before sending another message.
+	</div>
+}

@@ -7,15 +7,23 @@ failed=0
 # Run formatters in parallel, capture output only on failure.
 go_out=$(mktemp)
 templ_out=$(mktemp)
+site_go_out=$(mktemp)
+site_templ_out=$(mktemp)
 rs_3d_out=$(mktemp)
 rs_2d_out=$(mktemp)
-trap 'rm -f "$go_out" "$templ_out" "$rs_3d_out" "$rs_2d_out"' EXIT
+trap 'rm -f "$go_out" "$templ_out" "$site_go_out" "$site_templ_out" "$rs_3d_out" "$rs_2d_out"' EXIT
 
 (cd "$ROOT/harness" && golangci-lint fmt ./... 2>&1) >"$go_out" 2>&1 &
 pid_go=$!
 
 (cd "$ROOT/harness" && templ fmt . 2>&1) >"$templ_out" 2>&1 &
 pid_templ=$!
+
+(cd "$ROOT/site" && golangci-lint fmt ./... 2>&1) >"$site_go_out" 2>&1 &
+pid_site_go=$!
+
+(cd "$ROOT/site" && templ fmt . 2>&1) >"$site_templ_out" 2>&1 &
+pid_site_templ=$!
 
 (cd "$ROOT/templates/3d" && cargo fmt 2>&1) >"$rs_3d_out" 2>&1 &
 pid_rs_3d=$!
@@ -37,6 +45,22 @@ if wait $pid_templ; then
 else
   echo "FAIL  harness (templ fmt)"
   cat "$templ_out"
+  failed=1
+fi
+
+if wait $pid_site_go; then
+  echo "  ok  site (go fmt)"
+else
+  echo "FAIL  site (go fmt)"
+  cat "$site_go_out"
+  failed=1
+fi
+
+if wait $pid_site_templ; then
+  echo "  ok  site (templ fmt)"
+else
+  echo "FAIL  site (templ fmt)"
+  cat "$site_templ_out"
   failed=1
 fi
 

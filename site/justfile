@@ -1,3 +1,6 @@
+check:
+  @golangci-lint run ./...
+
 build:
   @templ generate
   @go build -o site-linux main.go

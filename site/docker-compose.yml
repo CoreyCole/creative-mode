@@ -7,11 +7,20 @@ services:
       - "3000:3000"
     volumes:
       - .:/app:cached
+      - ../pkg:/pkg:cached
       - /app/node_modules
     environment:
       - CGO_ENABLED=0
       - GOOS=linux
       - GO111MODULE=on
+      - DISCORD_CLIENT_ID=${DISCORD_CLIENT_ID}
+      - DISCORD_CLIENT_SECRET=${DISCORD_CLIENT_SECRET}
+      - DISCORD_REDIRECT_URI=${DISCORD_REDIRECT_URI}
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+      - DISCORD_GUILD_ID=${DISCORD_GUILD_ID}
+      - DISCORD_WORLDS_CATEGORY_ID=${DISCORD_WORLDS_CATEGORY_ID}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - INVITE_CODES=${INVITE_CODES}
     working_dir: /app
     command: sh -c "just watch"
     networks:

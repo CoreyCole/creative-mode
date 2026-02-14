@@ -1,0 +1,26 @@
+package pages
+
+import l "github.com/coreycole/creative-mode/site/layouts"
+
+templ ComingSoonPage(rootArgs l.RootArgs) {
+	@l.Root(rootArgs) {
+		<section class="py-20 md:py-32">
+			<div class="mx-auto max-w-2xl px-4 sm:px-6 lg:px-8 text-center">
+				<h1 class="text-4xl font-bold tracking-tight">Coming Soon</h1>
+				<p class="mt-6 text-lg text-muted-foreground">
+					The Mayor is getting ready. Join the Discord to be notified when it's live.
+				</p>
+				<div class="mt-10">
+					<a
+						href="https://discord.gg/cPtN5vP3ty"
+						target="_blank"
+						rel="noreferrer"
+						class="inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground hover:bg-primary/90 h-11 px-8"
+					>
+						Join Discord
+					</a>
+				</div>
+			</div>
+		</section>
+	}
+}

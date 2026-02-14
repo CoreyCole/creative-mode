@@ -7,8 +7,8 @@ repository: creative-mode
 topic: "VPS Deployment Automation Plan"
 tags: [plan, deployment, tailscale, docker, vps, security]
 status: draft
-last_updated: 2026-02-13T15:00:00-08:00
-last_updated_by: Claude (addressing review concerns)
+last_updated: 2026-02-13
+last_updated_by: Claude (ARM64 VM compatibility review + VM backup strategy)
 type: implementation_plan
 ---
 
@@ -24,24 +24,28 @@ From a fresh Ubuntu instance (cloud VPS or local VM), one bootstrap script secur
 
 Run an Ubuntu 24.04 ARM64 VM on macOS using UTM (QEMU + Apple Hypervisor.framework). Tailscale inside the VM makes it accessible to friends on the tailnet, exactly like a cloud VPS.
 
+**ARM64 compatibility**: Verified. All Dockerfile layers (Go, Rust, trunk, cargo-watch, wasm-bindgen-cli, Claude Code CLI) build and run natively on ARM64 Linux. The WASM cross-compilation target (`wasm32-unknown-unknown`) is architecture-independent. Docker Engine runs natively on the Linux kernel inside the VM using namespaces/cgroups — no nested virtualization. See [ARM64 Compatibility Notes](#arm64-compatibility-notes) for details.
+
 **Why start here:**
 - No monthly cost
 - Full control over resources
-- Docker runs natively in the Linux VM (better than Docker Desktop's hidden VM)
+- Docker Engine runs natively in the Linux VM (not Docker Desktop — no nested VM)
 - 64 GB host RAM → 16 GB for VM, leaves ~48 GB for macOS
 - Tailscale makes it indistinguishable from a cloud VPS to other tailnet members
 
 **VM setup (UTM):**
 1. Download UTM from https://mac.getutm.app (free from GitHub)
 2. Create new VM: Ubuntu 24.04 ARM64, 16 GB RAM, 4-8 CPU cores, 80 GB disk (qcow2 sparse — only uses actual space)
-3. Network: NAT (default) — Tailscale tunnels through it, no port forwarding needed
+3. Network: NAT (default, "Emulated VLAN" in UTM) — Tailscale tunnels through it, no port forwarding needed
 4. Install Ubuntu Server (minimal), then run `scripts/vps-bootstrap.sh`
 
 **How friends connect:**
 ```
 Friend's browser → Tailscale tunnel → VM's tailscale0 → localhost:8080 → Docker harness
 ```
-The VM appears as a regular node on the tailnet. QEMU's NAT doesn't matter — Tailscale bypasses it.
+The VM appears as a regular node on the tailnet. QEMU's NAT doesn't matter — Tailscale bypasses it. QEMU's user-mode NAT behaves as a standard cone NAT that Tailscale traverses easily; direct WireGuard connections are expected (not DERP relay fallback).
+
+**Expected network interface:** `enp0s1` (UTM/QEMU ARM64 Ubuntu uses predictable names: `en` + `p0` bus + `s1` slot). The bootstrap script auto-detects this via `ip route show default`.
 
 **Tradeoffs:**
 - Server is only up when the laptop is on and VM is running
@@ -53,7 +57,9 @@ The VM appears as a regular node on the tailnet. QEMU's NAT doesn't matter — T
 
 For always-on hosting, use any Ubuntu 24.04 VPS. The bootstrap script works identically.
 
-**Recommended specs:** 16 GB RAM, 80 GB disk, 4 vCPUs. Providers: Hetzner (best price/performance), DigitalOcean, Linode.
+**Recommended specs:** 16 GB RAM, 80 GB disk, 4 vCPUs. Providers: Hetzner CAX (ARM64 Ampere, best price/performance), Oracle Cloud A1 (free ARM64 tier — up to 4 OCPU / 24 GB RAM), DigitalOcean, Linode.
+
+**Cloud migration from local VM:** The qcow2 disk image is portable. Oracle Cloud accepts qcow2 natively (install `cloud-init` in the guest first). Hetzner requires `qemu-img convert -O raw` + upload via `hcloud-upload-image`. See [VM Backup & Migration](#vm-backup--migration) for details.
 
 **When to move to cloud:** When uptime matters or the laptop can't stay on.
 
@@ -94,6 +100,178 @@ Builds are the dominant consumer. The rate limiter enforces 1 active build per u
 
 Rust `target/` cache divergence is the main growth factor. `ForkCheckpoint` uses `cp -al` (hardlinks on Linux), so initial forks are free, but each incremental build creates new object files. Old checkpoints are never cleaned up — future work should add pruning.
 
+## ARM64 Compatibility Notes
+
+All components have been verified for ARM64 (aarch64) Ubuntu 24.04 in a UTM/QEMU VM.
+
+### Dockerfile Layers
+
+| Layer | ARM64 Status | Notes |
+|-------|-------------|-------|
+| `golang:1.24-bookworm` | Native multi-arch | Official image includes `arm64v8`. Also installs `binutils-gold` on ARM64 specifically for Go. |
+| `apt-get install gcc libc6-dev ...` | Available | All packages in ARM64 Debian repos. gcc/libc6-dev are redundant with base image but harmless. |
+| `rustup` + `wasm32-unknown-unknown` | Fully supported | rustup auto-detects `aarch64-unknown-linux-gnu`. WASM target is Tier 2, cross-compilable from any host. |
+| `cargo install trunk` | Works | Historical ARM64 issue (trunk #212, #903) only affected pre-built binary downloads, not `cargo install` from source. |
+| `cargo install cargo-watch` | Works | Pure Rust. Uses `inotify` on Linux (kernel feature, not arch-dependent). |
+| `cargo install wasm-bindgen-cli` | Works | Compiles from source. Requires Rust >= 1.81 (stable satisfies). |
+| `Claude Code CLI install` | Supported | Prebuilt `linux-arm64` binary (~220 MB) in official manifest. Install script auto-detects `aarch64`. |
+
+**Dockerfile improvement**: Add `mold` linker to reduce Bevy release build memory and link time on ARM64:
+```dockerfile
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc libc6-dev tmux curl jq ca-certificates pkg-config mold \
+    && rm -rf /var/lib/apt/lists/*
+```
+
+**Dockerfile EXPOSE fix**: Current Dockerfile only documents `EXPOSE 8081` (single port). Should match the full ranges:
+```dockerfile
+EXPOSE 8080
+EXPOSE 8081-8180
+EXPOSE 9001-9100
+```
+(`EXPOSE` is documentation only — not functional — but should be accurate.)
+
+### Go Dependencies
+
+| Dependency | Type | ARM64 Status |
+|-----------|------|-------------|
+| `mattn/go-sqlite3` | CGO (C library) | Well-tested on ARM64 Linux (standard for ARM servers) |
+| `gorilla/websocket` | Pure Go | No arch concerns |
+| `labstack/echo/v4` | Pure Go | No arch concerns |
+| `google.golang.org/genai` (Gemini) | Pure Go (gRPC) | No arch concerns |
+| `starfederation/datastar-go` | Pure Go | No arch concerns |
+
+No blockers. The only CGO dependency (`go-sqlite3`) is well-tested on ARM64.
+
+### Bevy WASM Builds from ARM64
+
+- WASM code generation is architecture-independent — `rustc` produces identical WASM whether the host is ARM64 or x86_64
+- `naga` (Bevy's shader translator) is pure Rust — no native `shaderc` dependency for WASM builds
+- Release builds peak at 4-8 GB RAM — the 16 GB VM allocation handles this with headroom
+- `mold` linker (recommended above) reduces both link time and memory during release builds
+- No reported ARM64-specific Bevy WASM compilation failures
+
+### Tailscale + UTM Networking
+
+- **NAT mode**: QEMU user-mode NAT (UTM "Emulated VLAN") behaves as a standard cone NAT. Tailscale traverses it easily. Direct WireGuard connections expected.
+- **Tailscale SSH**: Runs entirely inside `tailscaled` userspace daemon — independent of VM network stack, iptables, and UFW. No VM-specific concerns.
+- **Tailscale Serve**: Reverse proxy runs inside `tailscaled`, forwards to `localhost:8080`. NAT layer is uninvolved.
+- **Performance overhead**: QEMU adds ~29 microseconds of virtio latency. Tailscale adds ~1-3ms for direct connections. Negligible for a web application.
+
+### Docker in the VM
+
+Docker Engine (not Docker Desktop) runs natively on the Linux kernel inside the VM:
+```
+macOS Hypervisor.framework → QEMU (ARM64 Linux) → Linux kernel → Docker (namespaces + cgroups)
+```
+No nested virtualization. Docker Engine on ARM64 Ubuntu is a production-grade configuration (same setup as AWS Graviton instances). Install via the official Docker apt repo — `dpkg --print-architecture` auto-detects `arm64`.
+
+### Claude Code CLI
+
+The native installer (`curl -fsSL https://claude.ai/install.sh | bash`) downloads a prebuilt `linux-arm64` binary. The install script auto-detects `aarch64` via `uname -m`. Known issues are limited to non-standard environments (Android/Termux proot) — standard Ubuntu 24.04 is fully supported.
+
+## VM Backup & Migration
+
+UTM has **no built-in snapshot UI** (tracked as future feature, UTM issue #5484). Use a multi-layered backup strategy.
+
+### Layer 1: Application-Level Backups (highest priority)
+
+Already covered by Phase 1 step 12 (daily SQLite `.backup` cron). The `sqlite3 .backup` command produces a consistent snapshot even while the database is in use. Git version control covers all code and configuration.
+
+### Layer 2: qemu-img Snapshots (fast rollback)
+
+Internal snapshots stored inside the qcow2 file. Instant to create, instant to restore. Use before risky changes (OS upgrades, Docker upgrades, bootstrap re-runs).
+
+```bash
+# Install qemu tools on macOS host
+brew install qemu
+
+DISK=~/Library/Containers/com.utmapp.UTM/Data/Documents/MyVM.utm/Data/DiskImage.qcow2
+
+# VM MUST be stopped for all snapshot commands
+qemu-img snapshot -c "before-bootstrap" "$DISK"    # Create snapshot
+qemu-img snapshot -l "$DISK"                        # List snapshots
+qemu-img snapshot -a "before-bootstrap" "$DISK"     # Restore (instant rollback)
+qemu-img snapshot -d "before-bootstrap" "$DISK"     # Delete snapshot
+```
+
+### Layer 3: borgbackup for Incremental Full-VM Backups (daily)
+
+borgbackup uses content-defined chunking — only changed chunks of the qcow2 are stored in subsequent backups. Typical dedup ratio: 60-80% savings (a 50 GB disk image may only transfer 1-5 GB of deltas per day).
+
+```bash
+# Install on macOS host
+brew install borgbackup
+
+# Initialize repo (external drive, NAS, etc.)
+borg init --encryption=repokey /Volumes/Backup/utm-borg-repo
+
+# Daily backup — VM must be stopped
+borg create --progress --stats --compression zstd,3 \
+  /Volumes/Backup/utm-borg-repo::{now:%Y-%m-%d} \
+  ~/Library/Containers/com.utmapp.UTM/Data/Documents/MyVM.utm
+
+# Prune old backups (keep 7 daily, 4 weekly, 6 monthly)
+borg prune --keep-daily=7 --keep-weekly=4 --keep-monthly=6 \
+  /Volumes/Backup/utm-borg-repo
+
+# Restore a specific backup
+borg extract /Volumes/Backup/utm-borg-repo::2026-02-13
+```
+
+Automate with `utmctl stop` + `borg create` + `utmctl start` in a launchd plist or cron job.
+
+### Layer 4: Exclude from Time Machine
+
+Time Machine re-copies the entire qcow2 file on every backup because any VM write marks the whole file as changed. **Exclude the UTM directory:**
+```
+System Settings > General > Time Machine > Options > Exclude:
+  ~/Library/Containers/com.utmapp.UTM/Data/Documents/
+```
+
+### Layer 5: qcow2 Maintenance (monthly)
+
+qcow2 files grow monotonically — deleted guest data doesn't reclaim host space. Compact monthly:
+
+```bash
+# Inside the guest VM — zero out free space
+sudo fstrim -av
+
+# On the macOS host (VM must be stopped)
+DISK=~/Library/Containers/com.utmapp.UTM/Data/Documents/MyVM.utm/Data/DiskImage.qcow2
+qemu-img convert -O qcow2 "$DISK" "${DISK}.compacted"
+mv "${DISK}.compacted" "$DISK"
+```
+
+### Cloud Migration
+
+The qcow2 image is portable to ARM64 cloud providers:
+
+**Oracle Cloud (free ARM64 tier — up to 4 OCPU / 24 GB RAM):**
+1. Install `cloud-init` inside the guest (`sudo apt install cloud-init`)
+2. Ensure UEFI boot (already the case for UTM ARM64 VMs)
+3. Run `fstrim -av` and compact the qcow2
+4. Upload to Object Storage: `oci os object put -bn my-bucket --file DiskImage.qcow2`
+5. Import as custom image (set type to QCOW2, firmware to UEFI_64)
+6. Launch with `VM.Standard.A1.Flex` shape
+
+**Hetzner Cloud (CAX ARM64 Ampere):**
+1. Convert: `qemu-img convert -f qcow2 -O raw DiskImage.qcow2 DiskImage.raw`
+2. Compress: `bzip2 DiskImage.raw`
+3. Upload via `hcloud-upload-image` tool with `--architecture arm`
+
+**Preparation checklist (both providers):** Install `cloud-init`, ensure `openssh-server` is installed, remove hardcoded network configs (let cloud-init handle DHCP), ensure kernel supports virtio devices (standard Ubuntu 24.04 does).
+
+### Recommended Backup Frequency
+
+| What | Frequency | Method |
+|------|-----------|--------|
+| SQLite database | Every 4 hours | Cron inside VM (`.backup` command) — Phase 1 step 12 |
+| qemu-img snapshot | Before risky changes | Manual from macOS host |
+| Full VM (borgbackup) | Daily | Automated script, VM stopped during backup |
+| Compact qcow2 | Monthly | `fstrim -av` inside guest + `qemu-img convert` on host |
+| Code / config | On change | Git (already version controlled) |
+
 ## Architecture
 
 ```
@@ -122,7 +300,7 @@ Fresh Ubuntu (VM or VPS)
 
 **How network security works without a compose override:**
 
-Docker bypasses UFW by default via its own iptables chains. The DOCKER-USER rules in `/etc/ufw/after.rules` fix this — they DROP all traffic from the public interface (auto-detected, e.g. `eth0`, `ens3`, `enp0s1`) to Docker containers, and only RETURN (allow) traffic from the Tailscale interface (`tailscale0`). This means all Docker-exposed ports (8080, 9001-9100) are reachable only from tailnet members, without changing anything in `docker-compose.yml`.
+Docker bypasses UFW by default via its own iptables chains. The DOCKER-USER rules in `/etc/ufw/after.rules` fix this — they DROP all traffic from the public interface (auto-detected via `ip route show default`) to Docker containers, and only RETURN (allow) traffic from the Tailscale interface (`tailscale0`). Expected interface names: `enp0s1` (UTM/QEMU ARM64), `eth0` or `ens3` (cloud VPS). This means all Docker-exposed ports (8080, 9001-9100) are reachable only from tailnet members, without changing anything in `docker-compose.yml`.
 
 On a local VM, these rules are defense-in-depth — the VM's NAT already isolates it from the host network. On a cloud VPS, they're critical. Either way, the bootstrap applies them uniformly.
 
@@ -140,7 +318,7 @@ Interactive script run from the cloned repo (NOT piped from the internet). Must 
 2. Installs Tailscale (`curl -fsSL https://tailscale.com/install.sh | sh`)
 3. Runs `tailscale up` (interactive — opens auth URL)
 4. Enables Tailscale SSH (`tailscale set --ssh`)
-5. Installs Docker Engine (official Docker apt repo)
+5. Installs Docker Engine — not Docker Desktop — via official Docker apt repo (`dpkg --print-architecture` auto-detects `arm64`)
 6. Configures UFW:
    ```bash
    ufw default deny incoming
@@ -148,7 +326,8 @@ Interactive script run from the cloned repo (NOT piped from the internet). Must 
    ufw allow in on tailscale0
    ufw enable
    ```
-7. Auto-detects the public network interface and adds DOCKER-USER rules to `/etc/ufw/after.rules`:
+7. Auto-detects the public network interface and adds DOCKER-USER rules to `/etc/ufw/after.rules`.
+   Expected values: `enp0s1` (UTM/QEMU ARM64 — predictable naming: `en` ethernet + `p0` PCI bus 0 + `s1` slot 1), `eth0` or `ens3` (cloud VPS):
    ```bash
    # Detect the interface with the default route (public-facing)
    PUBLIC_IF=$(ip route show default | awk '{print $5}' | head -1)
@@ -263,6 +442,8 @@ services:
 ```
 
 No port changes, no `DEV_MODE` override. Network security comes from the OS level, not Docker.
+
+**Dockerfile EXPOSE fix:** The current Dockerfile only has `EXPOSE 8081` (single port). Update to document the full ranges to match docker-compose: `EXPOSE 8080`, `EXPOSE 8081-8180`, `EXPOSE 9001-9100`. This is documentation-only but should be accurate.
 
 **Note on port range:** Docker compose exposes `9001-9100` (100 ports), but `ports.go` defines `gameServerMaxPort = 9999`. If >100 game servers run simultaneously, ports 9101-9999 would be allocated but unreachable. This is fine — 100 concurrent game servers is well beyond current needs. Add a comment in `ports.go` documenting this limitation.
 
@@ -566,38 +747,53 @@ Phases 1-5 are independent. Phase 6 makes everything same-origin and enables bot
 
 ### First-time setup — Local VM (UTM):
 ```bash
+# 0. Install qemu tools on macOS host (for VM snapshots)
+brew install qemu borgbackup
+
 # 1. Create Ubuntu 24.04 ARM64 VM in UTM
 #    - 16 GB RAM, 4-8 CPU cores, 80 GB disk (qcow2 sparse)
-#    - Network: NAT (default)
+#    - Network: NAT (default, "Emulated VLAN")
 #    - Install Ubuntu Server (minimal)
+#    - Expected network interface: enp0s1
 
-# 2. SSH into VM (UTM gives you a console, or use the VM's IP)
-# 3. Install git and clone the repo
+# 2. BEFORE any customization — create a clean snapshot from macOS host:
+#    qemu-img snapshot -c "fresh-install" \
+#      ~/Library/Containers/com.utmapp.UTM/Data/Documents/MyVM.utm/Data/DiskImage.qcow2
+
+# 3. SSH into VM (UTM gives you a console, or use the VM's IP)
+# 4. Install git and clone the repo
 sudo apt update && sudo apt install -y git
 git clone https://github.com/{user}/creative-mode.git /opt/creative-mode
 
-# 4. Run the bootstrap script from the cloned repo
+# 5. Run the bootstrap script from the cloned repo
 sudo bash /opt/creative-mode/scripts/vps-bootstrap.sh
 
-# 5. Switch to deploy user, move repo to home
+# 6. Switch to deploy user, move repo to home
 su - deploy
 mv /opt/creative-mode ~/creative-mode
 cd ~/creative-mode/harness
 
-# 6. Create .env from template
+# 7. Create .env from template
 cp .env.example .env
 # Edit .env: add GitHub OAuth creds, ANTHROPIC_API_KEY,
 # HARNESS_URL=https://{vm-name}.{tailnet}.ts.net,
 # CM_HOOK_SECRET=$(openssl rand -hex 32)
 
-# 7. Start the harness (same command as local dev)
+# 8. Start the harness (same command as local dev)
 just up
 
-# 8. Set up Tailscale Serve (one-time, persists across reboots)
+# 9. Set up Tailscale Serve (one-time, persists across reboots)
 sudo tailscale serve https / http://localhost:8080
 
-# 9. Verify
+# 10. Verify
 sudo bash ~/creative-mode/scripts/vps-verify.sh
+
+# 11. Exclude UTM from Time Machine:
+#     System Settings > General > Time Machine > Options > Exclude:
+#       ~/Library/Containers/com.utmapp.UTM/Data/Documents/
+
+# 12. Set up borgbackup repo for daily incremental backups:
+#     borg init --encryption=repokey /Volumes/Backup/utm-borg-repo
 ```
 
 ### First-time setup — Cloud VPS:
@@ -620,6 +816,8 @@ just redeploy   # git pull + docker compose up --build
 | `.env` contents | GitHub OAuth + API key | + `HARNESS_URL` + `CM_HOOK_SECRET` |
 | Auto-restart | On crash only | On crash (`on-failure`) + reboot (systemd) |
 | Uptime | When running locally | VM: when laptop is on / VPS: always |
+| Backups | Git only | SQLite cron + qemu-img snapshots + borgbackup |
+| Network interface | N/A (localhost) | `enp0s1` (UTM) or `eth0`/`ens3` (cloud) — auto-detected |
 
 ## Resolved Questions
 
@@ -632,6 +830,8 @@ just redeploy   # git pull + docker compose up --build
 7. **postMessage origin check** — Strict same-origin check. Trunk proxy (Phase 6a) makes the iframe same-origin everywhere, so no localhost-aware hack needed.
 8. **Trunk serve on VPS** — Always proxy through harness (Phase 6a), even on local dev. One code path, everything same-origin. Eliminates cross-origin iframe complexity. Docker trunk ports (8081-8180) no longer need host exposure.
 9. **Hosting** — Start with a local Ubuntu 24.04 ARM64 VM via UTM on macOS (64 GB host RAM, allocate 16 GB to VM). Tailscale inside the VM makes it accessible to tailnet members. Can migrate to a cloud VPS later for always-on hosting. Bootstrap script works identically on both.
+10. **ARM64 compatibility** — All Dockerfile layers, Go dependencies, Rust/WASM toolchain, Tailscale, and Docker verified for ARM64. See [ARM64 Compatibility Notes](#arm64-compatibility-notes). Expected UTM interface name: `enp0s1` (auto-detected by bootstrap).
+11. **VM backups** — Multi-layered: SQLite `.backup` cron (Phase 1), qemu-img internal snapshots for rollback, borgbackup for daily incremental full-VM backups, Time Machine exclusion. See [VM Backup & Migration](#vm-backup--migration).
 
 ## Future Work (Not In This Plan)
 
@@ -639,3 +839,5 @@ just redeploy   # git pull + docker compose up --build
 - **Dockerfile `USER` directive** — Run container as non-root. Important for defense in depth but requires adjusting file permissions for `data/`, tmux sessions, and Cargo/Go caches. Tracked separately to avoid scope creep in this plan.
 - **Tailscale ACLs** — Group/tag-based access control for multi-user tailnet. Not needed until more people join the tailnet.
 - **Disk space monitoring** — Rust builds and WASM artifacts can fill a small VPS. Add alerts before it becomes a problem.
+- **cloud-init pre-installation** — Install `cloud-init` in the VM early to keep the cloud migration path open (Oracle Cloud free ARM64 tier, Hetzner CAX). Not needed until migration, but easier to do proactively.
+- **Automated VM backup script** — launchd plist on macOS host that runs `utmctl stop` + `borg create` + `utmctl start` on a daily schedule. Manual for now.

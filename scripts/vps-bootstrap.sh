@@ -478,7 +478,7 @@ PasswordAuthentication no
 EOF
 
         # Restart SSH to apply changes
-        systemctl restart sshd
+        systemctl restart ssh
 
         ok "SSH locked down — Tailscale IP $TS_IP, port 2222, no passwords"
     fi

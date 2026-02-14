@@ -31,6 +31,6 @@ RUN chmod +x /usr/local/bin/dev-entrypoint.sh
 
 WORKDIR /app/harness
 EXPOSE 8080
-EXPOSE 8081
+EXPOSE 8081-8180
 EXPOSE 9001-9100
 ENTRYPOINT ["dev-entrypoint.sh"]

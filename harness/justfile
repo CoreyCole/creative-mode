@@ -101,3 +101,16 @@ shell:
 # Show container logs
 logs:
     docker compose logs -f harness
+
+# --- VPS Helpers ---
+
+# Redeploy (pull latest + rebuild)
+redeploy:
+    git pull
+    just up
+
+# Status check (container + Tailscale)
+status:
+    @docker compose ps
+    @echo ""
+    @tailscale status --peers=false 2>/dev/null || echo "Tailscale: not installed (local dev)"

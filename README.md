@@ -127,3 +127,13 @@ The first user to sign in becomes the server admin and can approve other users.
 ## License
 
 Creative Mode is licensed under the [Elastic License 2.0 (ELv2)](./LICENSE.md). You're free to self-host, modify, and build with it. Games and worlds you create are yours — sell them, share them, do whatever you want. The one restriction: you can't offer Creative Mode itself as a competing for-profit service.
+
+______________________________________________________________________
+
+## Disclaimer
+
+Creative Mode is experimental software built on top of other experimental software. The mayor is learning on the job and there is always a chance it borks your machine.
+
+**Do not run this on your personal computer.** Use a dedicated virtual machine (UTM, VirtualBox, etc.) or a cloud VPS. If something goes wrong, you can roll back a VM snapshot or spin up a fresh server — your daily driver should NOT be in the blast radius.
+
+**Make backups.** Take VM snapshots before major changes. Keep your `.env` file and database backups somewhere safe and not included in your mayor's default context. The bootstrap script sets up daily SQLite backups, but that only covers the database — your VM itself is your responsibility.

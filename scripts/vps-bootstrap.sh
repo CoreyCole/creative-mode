@@ -101,12 +101,16 @@ info "Install path: $CREATIVE_MODE_DIR"
 # ============================================================================
 section "Step 0: Install prerequisites"
 
-if $DRY_RUN; then
-    info "Would apt-get update and install git, curl, sqlite3"
+if command -v git &>/dev/null && command -v curl &>/dev/null && command -v sqlite3 &>/dev/null; then
+    skip "Prerequisites already installed (git, curl, sqlite3)"
 else
-    apt-get update
-    apt-get install -y git curl sqlite3
-    ok "Installed prerequisites (git, curl, sqlite3)"
+    if $DRY_RUN; then
+        info "Would apt-get update and install git, curl, sqlite3"
+    else
+        apt-get update
+        apt-get install -y git curl sqlite3
+        ok "Installed prerequisites (git, curl, sqlite3)"
+    fi
 fi
 
 # ============================================================================
@@ -333,19 +337,18 @@ else
 -A DOCKER-USER -i $PUBLIC_IF -j DROP
 COMMIT
 EOF
-
-        # Reload UFW to apply the new rules
-        ufw reload
-
         ok "Added DOCKER-USER rules (drop $PUBLIC_IF, allow tailscale0)"
+    fi
+fi
 
-        # Verify the rules are active (Docker must be running for this chain to exist)
-        if iptables -L DOCKER-USER -v -n 2>/dev/null | grep -q DROP; then
-            ok "Verified: DOCKER-USER DROP rule is active"
-        else
-            info "DOCKER-USER chain not yet active (normal if Docker hasn't started a container yet)"
-            info "Rules will take effect after the first 'docker compose up'"
-        fi
+# Ensure rules are loaded (ufw reload is idempotent)
+if ! $DRY_RUN && grep -q "DOCKER-USER" /etc/ufw/after.rules 2>/dev/null; then
+    ufw reload
+    if iptables -L DOCKER-USER -v -n 2>/dev/null | grep -q DROP; then
+        ok "Verified: DOCKER-USER DROP rule is active"
+    else
+        info "DOCKER-USER chain not yet active (normal if Docker hasn't started a container yet)"
+        info "Rules will take effect after the first 'docker compose up'"
     fi
 fi
 
@@ -446,7 +449,7 @@ section "Step 10: Lock down SSH"
 SSHD_CONFIG="/etc/ssh/sshd_config"
 
 if grep -q "^Port 2222" "$SSHD_CONFIG" 2>/dev/null; then
-    skip "SSH is already locked down (Port 2222 configured)"
+    skip "SSH config already locked down (Port 2222 in sshd_config)"
 else
     if $DRY_RUN; then
         TS_IP=$(tailscale ip -4 2>/dev/null || echo "<tailscale-ip>")
@@ -476,11 +479,17 @@ Port 2222
 PermitRootLogin no
 PasswordAuthentication no
 EOF
+        ok "SSH config written"
+    fi
+fi
 
-        # Restart SSH to apply changes
+# Ensure SSH is actually running with the locked-down config
+if ! $DRY_RUN && grep -q "^Port 2222" "$SSHD_CONFIG" 2>/dev/null; then
+    if ss -tlnp | grep -q ':2222'; then
+        ok "SSH listening on port 2222"
+    else
         systemctl restart ssh
-
-        ok "SSH locked down — Tailscale IP $TS_IP, port 2222, no passwords"
+        ok "Restarted SSH — now listening on port 2222"
     fi
 fi
 
@@ -580,7 +589,7 @@ section "Step 13: systemd service"
 SERVICE_FILE="/etc/systemd/system/creative-mode.service"
 
 if [ -f "$SERVICE_FILE" ]; then
-    skip "Systemd service already exists"
+    skip "Systemd service file already exists"
 else
     if $DRY_RUN; then
         info "Would create $SERVICE_FILE"
@@ -603,12 +612,15 @@ ExecStop=/usr/bin/docker compose down
 [Install]
 WantedBy=multi-user.target
 EOF
-
-        systemctl daemon-reload
-        systemctl enable creative-mode.service
-
-        ok "Created and enabled creative-mode.service"
+        ok "Created $SERVICE_FILE"
     fi
+fi
+
+# Ensure service is registered and enabled (both commands are idempotent)
+if ! $DRY_RUN && [ -f "$SERVICE_FILE" ]; then
+    systemctl daemon-reload
+    systemctl enable creative-mode.service 2>/dev/null
+    ok "creative-mode.service enabled"
 fi
 
 # ============================================================================

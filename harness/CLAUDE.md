@@ -292,6 +292,45 @@ data-on:click="$expanded = true; $unreadCount = 0"
 <div class="indicator" data-class="{'loading': $fetching}">Sending...</div>
 ```
 
+## Iframe + Datastar: Keyboard Events and Focus
+
+The game runs inside a cross-origin iframe (Trunk on a different port in dev mode). This has important implications for keyboard event handling.
+
+### Iframe steals focus on load
+
+When the Bevy WASM iframe loads, it captures focus from the parent window. This means:
+- `data-on:keydown__window` on parent elements **will not fire** — keyboard events go to the iframe's `window`, not the parent's
+- `window.addEventListener('keydown', ...)` on the parent also won't fire
+- Clicking any element in the parent document (e.g., the CM button) returns focus to the parent, after which `data-on:keydown__window` works normally
+
+### postMessage bridge pattern
+
+To handle keyboard events that originate inside the iframe, each template's `index.html` forwards specific keys via `postMessage`:
+
+```
+iframe keydown (e.g., backtick)
+  → window.parent.postMessage({ type: 'toggle-overlay' }, '*')
+  → game-loader.js message listener
+  → document.getElementById('game-overlay-toggle-trigger').click()
+  → Datastar data-on:click handler toggles $overlay_expanded
+```
+
+This pattern bypasses the focus boundary. The hidden trigger buttons in `world.templ` bridge between plain JS `postMessage` and Datastar's signal system.
+
+### Datastar initialization is NOT the issue
+
+`data-init` (SSE connection), `data-signals`, and `data-on:*` handlers on the same element are all processed synchronously during `apply()`. The `@get()` action in `data-init` is async and returns immediately. Signals are reactive as soon as they're created. There is no lazy initialization or activation step — if `data-on:keydown__window` doesn't fire, it's a focus issue, not a Datastar timing issue.
+
+### Adding new keyboard shortcuts
+
+If you need a keyboard shortcut that works regardless of iframe focus:
+1. Add a `document.addEventListener('keydown', ...)` in the template's `index.html` (inside the iframe)
+2. Forward the key via `postMessage` to the parent
+3. Handle it in `game-loader.js` by clicking a hidden trigger button
+4. The trigger button's `data-on:click` bridges into Datastar's signal system
+
+Do NOT rely solely on `data-on:keydown__window` — it only works when the parent window has focus.
+
 ## SSE Pattern: Long-Lived Connection with EventBus
 
 This is the primary pattern for real-time updates in the harness:

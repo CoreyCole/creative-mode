@@ -32,6 +32,14 @@ func (c *ChatExpr) SelectLineageTab() string {
 		Build()
 }
 
+// SelectAssetsTab returns the expression to switch to assets tab and load the file tree.
+func (c *ChatExpr) SelectAssetsTab() string {
+	return dsutil.NewExpression().
+		Statement(c.s.SetString("active_tab", "assets")).
+		Statement("@get('/api/assets/tree')").
+		Build()
+}
+
 // TabActiveClass returns the data-class expression for tab active styling.
 func (c *ChatExpr) TabActiveClass(tab string) string {
 	return c.s.DataClass(map[string]string{

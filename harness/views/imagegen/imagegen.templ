@@ -8,7 +8,7 @@ import (
 
 // ImageGenPanel is the main content area for the Image tab.
 templ ImageGenPanel() {
-	<div id="image-gen-view" class="flex-1 overflow-y-auto px-3 py-2 flex flex-col gap-3" data-show="$active_tab === 'image'" style="display: none;">
+	<div id="image-gen-view" class="flex-1 overflow-y-auto px-3 py-2 flex flex-col gap-3" data-show="$active_tab === 'assets'" style="display: none;">
 		<!-- Aspect Ratio Selector -->
 		<div class="flex flex-col gap-1.5">
 			<span class="text-[11px] text-muted-foreground uppercase tracking-wider">Aspect Ratio</span>
@@ -24,51 +24,108 @@ templ ImageGenPanel() {
 				}
 			</div>
 		</div>
-		<!-- Preview Area -->
-		<div class="flex flex-col gap-2 items-center">
-			<div data-show="$image_gen_status === 'generating'" style="display: none;" class="flex flex-col items-center gap-2 py-8">
-				<div class="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
-				<span class="text-[12px] text-muted-foreground">Generating image...</span>
-			</div>
-			<div data-show="$image_preview_url !== ''" style="display: none;" class="relative">
-				<img
-					data-attr-src="$image_preview_url"
-					class="max-w-full rounded border border-border"
-					alt="Generated image preview"
-				/>
-			</div>
-			<!-- Download: unsaved preview -->
-			<a data-show="$image_gen_status === 'done' && $image_preview_url !== ''" style="display: none;"
-				data-attr-href="$image_preview_url"
+		<!-- Transparent Background Toggle -->
+		<label class="flex items-center gap-2 cursor-pointer">
+			<input
+				type="checkbox"
+				class="w-3.5 h-3.5 accent-primary cursor-pointer"
+				data-bind:image_transparent_bg
+			/>
+			<span class="text-[11px] text-muted-foreground">Transparent background (for sprites)</span>
+		</label>
+		<!-- Input + Generate -->
+		<div class="flex gap-1.5">
+			@ImageGenInputBar()
+		</div>
+		<!-- Dynamic Content Area (replaced by server fragments) -->
+		<div id="image-gen-content"></div>
+		<!-- Asset File Tree (loaded via SSE, refreshed after save) -->
+		<div id="asset-tree" class="border-t border-border pt-3">
+			<span class="text-[11px] text-muted-foreground">Loading assets...</span>
+		</div>
+	</div>
+}
+
+// ImageGenIdle is the initial placeholder state.
+templ ImageGenIdle() {
+	<div id="image-gen-content" class="flex flex-col gap-2 items-center py-8 text-center">
+		<span class="text-[12px] text-muted-foreground">Describe an image to generate</span>
+	</div>
+}
+
+// ImageGenGenerating shows a spinner during generation.
+templ ImageGenGenerating() {
+	<div id="image-gen-content" class="flex flex-col items-center gap-2 py-8">
+		<div class="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
+		<span class="text-[12px] text-muted-foreground">Generating image...</span>
+	</div>
+}
+
+// ImageGenDone shows the preview with download and save actions.
+templ ImageGenDone(genID, previewURL string) {
+	<div
+		id="image-gen-content"
+		class="flex flex-col gap-2 items-center"
+		data-signals__ifmissing={ `{"image_gen_id":"` + genID + `"}` }
+	>
+		<div class="relative">
+			<img
+				src={ previewURL }
+				class="max-w-full rounded border border-border"
+				alt="Generated image preview"
+			/>
+		</div>
+		<div class="flex items-center gap-3">
+			<a
+				href={ templ.SafeURL(previewURL) }
 				download="generated-image.png"
-				class="text-[11px] text-primary hover:underline cursor-pointer">
+				class="text-[11px] text-primary hover:underline cursor-pointer"
+			>
 				Download
 			</a>
-			<!-- Download: saved asset -->
-			<a data-show="$image_gen_status === 'saved' && $image_saved_path !== ''" style="display: none;"
-				data-attr-href="'/assets/' + $image_saved_path"
-				data-attr-download="$image_saved_path.split('/').pop()"
-				class="text-[11px] text-primary hover:underline cursor-pointer">
-				Download
-			</a>
-			<div data-show="$image_gen_status === 'idle'" style="display: none;" class="py-8 text-center">
-				<span class="text-[12px] text-muted-foreground">Describe an image to generate</span>
-			</div>
+			@button.Button(button.ButtonArgs{
+				Size:    "sm",
+				Variant: "outline",
+				Attributes: templ.Attributes{
+					"data-on:click":           datastar.PostSSE("/api/images/save"),
+					"data-indicator-fetching": true,
+					"data-attr-disabled":      "$fetching",
+				},
+			}) {
+				Save
+			}
 		</div>
-		<!-- Status -->
-		<div data-show="$image_gen_status !== 'idle'" style="display: none;" class="text-[12px]">
-			<span data-class={ IE.StatusColorClass() } data-text={
-				"$image_gen_status === 'generating' ? 'Generating...' : " +
-				"$image_gen_status === 'done' ? 'Done — click Save to keep' : " +
-				"$image_gen_status === 'saved' ? 'Saved!' : " +
-				"$image_gen_status === 'error' ? $image_error_msg : " +
-				"$image_gen_status" }></span>
+	</div>
+}
+
+// ImageGenSaved shows the saved image with its asset path.
+templ ImageGenSaved(savedPath string) {
+	<div id="image-gen-content" class="flex flex-col gap-2 items-center">
+		<div class="relative">
+			<img
+				src={ "/assets/" + savedPath }
+				class="max-w-full rounded border border-border"
+				alt="Saved image"
+			/>
 		</div>
-		<!-- Saved Path -->
-		<div data-show="$image_gen_status === 'saved' && $image_saved_path !== ''" style="display: none;"
-			class="bg-green-950/50 border border-green-800 rounded px-2 py-1.5 text-[12px] text-green-300 font-mono select-all">
-			<span data-text="$image_saved_path"></span>
+		<a
+			href={ templ.SafeURL("/assets/" + savedPath) }
+			download
+			class="text-[11px] text-primary hover:underline cursor-pointer"
+		>
+			Download
+		</a>
+		<div class="text-[12px] text-green-400">Saved!</div>
+		<div class="bg-green-950/50 border border-green-800 rounded px-2 py-1.5 text-[12px] text-green-300 font-mono select-all w-full text-center">
+			{ savedPath }
 		</div>
+	</div>
+}
+
+// ImageGenError shows an error message.
+templ ImageGenError(message string) {
+	<div id="image-gen-content" class="flex flex-col gap-2 items-center py-4">
+		<span class="text-[12px] text-red-400">{ message }</span>
 	</div>
 }
 
@@ -84,22 +141,9 @@ templ ImageGenInputBar() {
 		Attributes: templ.Attributes{
 			"data-on:click":           datastar.PostSSE("/api/images/generate"),
 			"data-indicator-fetching": true,
-			"data-attr-disabled":      "$fetching || $image_gen_status === 'generating'",
+			"data-attr-disabled":      "$fetching",
 		},
 	}) {
 		Generate
 	}
-	<div data-show="$image_gen_status === 'done'" style="display: none;">
-		@button.Button(button.ButtonArgs{
-			Size:    "sm",
-			Variant: "outline",
-			Attributes: templ.Attributes{
-				"data-on:click":           datastar.PostSSE("/api/images/save"),
-				"data-indicator-fetching": true,
-				"data-attr-disabled":      "$fetching",
-			},
-		}) {
-			Save
-		}
-	</div>
 }

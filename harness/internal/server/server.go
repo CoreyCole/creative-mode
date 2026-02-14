@@ -164,6 +164,16 @@ func (s *Server) RegisterRoutes(e *echo.Echo) {
 	approved.GET("/api/images/preview/:genID", s.handleImagePreview)
 	approved.POST("/api/images/save", s.handleImageSave)
 
+	// Asset tree (approved users).
+	approved.GET("/api/assets/tree", s.handleAssetTree)
+
+	// Room placement (approved users).
+	approved.GET("/api/rooms", s.handleRoomList)
+	approved.GET("/api/rooms/:roomID/hotspots", s.handleRoomHotspots)
+	approved.POST("/api/rooms/:roomID/place/background", s.handlePlaceBackground)
+	approved.POST("/api/rooms/:roomID/place/hotspot/:hotspotID", s.handlePlaceOnHotspot)
+	approved.POST("/api/rooms/:roomID/place/new", s.handlePlaceNewHotspot)
+
 	// Admin only.
 	adminGroup := authed.Group("/admin", auth.AdminMiddleware())
 	adminGroup.GET("/users", s.handleAdminUsers)

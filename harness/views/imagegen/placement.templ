@@ -1,0 +1,188 @@
+package imagegen
+
+import (
+	"fmt"
+	"github.com/coreycole/datastarui/components/button"
+	"github.com/coreycole/datastarui/components/input"
+	"github.com/starfederation/datastar-go/datastar"
+)
+
+// PlacementRoomList shows the list of rooms to place an asset into.
+templ PlacementRoomList(rooms []RoomInfo) {
+	<div id="image-gen-content" class="flex flex-col gap-2">
+		<div class="flex items-center justify-between">
+			<span class="text-[11px] text-muted-foreground uppercase tracking-wider">Place in Room</span>
+			<button
+				class="text-[10px] text-muted-foreground hover:text-foreground bg-transparent border-0 cursor-pointer"
+				data-on:click="$place_asset_path = ''"
+			>
+				Cancel
+			</button>
+		</div>
+		<div class="text-[11px] text-muted-foreground truncate" data-text="'Placing: ' + $place_asset_path.split('/').pop()"></div>
+		if len(rooms) == 0 {
+			<div class="text-[11px] text-muted-foreground/60 py-2">No rooms found</div>
+		} else {
+			<div class="flex flex-col gap-1">
+				for _, room := range rooms {
+					@button.Button(button.ButtonArgs{
+						Size:    "sm",
+						Variant: "outline",
+						Class:   "w-full justify-start text-[11px]",
+						Attributes: templ.Attributes{
+							"data-on:click": datastar.GetSSE(fmt.Sprintf("/api/rooms/%s/hotspots", room.ID)),
+						},
+					}) {
+						{ room.Name }
+					}
+				}
+			</div>
+		}
+	</div>
+}
+
+// PlacementTargets shows placement options for a specific room.
+templ PlacementTargets(room RoomInfo, hotspots []HotspotInfo, hasBackground bool) {
+	<div id="image-gen-content" class="flex flex-col gap-2">
+		<div class="flex items-center justify-between">
+			<span class="text-[11px] text-muted-foreground uppercase tracking-wider">{ room.Name }</span>
+			<button
+				class="text-[10px] text-muted-foreground hover:text-foreground bg-transparent border-0 cursor-pointer"
+				data-on:click={ datastar.GetSSE("/api/rooms") }
+			>
+				Back
+			</button>
+		</div>
+		<div class="text-[11px] text-muted-foreground truncate" data-text="'Placing: ' + $place_asset_path.split('/').pop()"></div>
+		<!-- Background option -->
+		<div class="flex flex-col gap-1.5">
+			<span class="text-[10px] text-muted-foreground uppercase tracking-wider">Background</span>
+			@button.Button(button.ButtonArgs{
+				Size:    "sm",
+				Variant: "outline",
+				Class:   "w-full justify-start text-[11px]",
+				Attributes: templ.Attributes{
+					"data-on:click": datastar.PostSSE(fmt.Sprintf("/api/rooms/%s/place/background", room.ID)),
+				},
+			}) {
+				if hasBackground {
+					Replace Background Image
+				} else {
+					Set Background Image
+				}
+			}
+		</div>
+		<!-- Existing hotspots -->
+		if len(hotspots) > 0 {
+			<div class="flex flex-col gap-1.5">
+				<span class="text-[10px] text-muted-foreground uppercase tracking-wider">Existing Hotspots</span>
+				for _, h := range hotspots {
+					<div class="flex items-center gap-2 px-1.5 py-1 rounded border border-border">
+						<div class="flex flex-col min-w-0 flex-1">
+							<span class="text-[11px] text-foreground">{ h.Label }</span>
+							<span class="text-[10px] text-muted-foreground/60">
+								{ fmt.Sprintf("%.0fx%.0f", h.Width, h.Height) }
+								if h.HasImage {
+									— has image
+								}
+							</span>
+						</div>
+						@button.Button(button.ButtonArgs{
+							Size:    "sm",
+							Variant: "ghost",
+							Class:   "text-[10px] h-6 px-2",
+							Attributes: templ.Attributes{
+								"data-on:click": datastar.PostSSE(fmt.Sprintf("/api/rooms/%s/place/hotspot/%s", room.ID, h.ID)),
+							},
+						}) {
+							Place
+						}
+					</div>
+				}
+			</div>
+		}
+		<!-- New hotspot form -->
+		<div class="flex flex-col gap-1.5 border-t border-border pt-2">
+			<span class="text-[10px] text-muted-foreground uppercase tracking-wider">New Hotspot</span>
+			<!-- Scale -->
+			<div class="flex items-center gap-2">
+				<span class="text-[10px] text-muted-foreground w-10">Scale</span>
+				<input
+					type="range"
+					min="0.05"
+					max="1.0"
+					step="0.05"
+					class="flex-1 h-1 accent-primary cursor-pointer"
+					data-bind:place_scale
+				/>
+				<span class="text-[10px] text-muted-foreground w-8 text-right" data-text="Math.round($place_scale * 100) + '%'"></span>
+			</div>
+			<!-- Position -->
+			<div class="flex gap-2">
+				<div class="flex items-center gap-1 flex-1">
+					<span class="text-[10px] text-muted-foreground">X</span>
+					@input.Input(input.InputArgs{
+						Class:      "h-6 text-[11px] w-full",
+						Attributes: templ.Attributes{"data-bind:place_x": true, "type": "number", "min": "0", "max": "1280", "step": "10"},
+					})
+				</div>
+				<div class="flex items-center gap-1 flex-1">
+					<span class="text-[10px] text-muted-foreground">Y</span>
+					@input.Input(input.InputArgs{
+						Class:      "h-6 text-[11px] w-full",
+						Attributes: templ.Attributes{"data-bind:place_y": true, "type": "number", "min": "0", "max": "720", "step": "10"},
+					})
+				</div>
+			</div>
+			<!-- Label -->
+			<div class="flex items-center gap-2">
+				<span class="text-[10px] text-muted-foreground w-10">Label</span>
+				@input.Input(input.InputArgs{
+					Placeholder: "Hotspot label",
+					Class:       "flex-1 h-6 text-[11px]",
+					Attributes:  templ.Attributes{"data-bind:place_label": true},
+				})
+			</div>
+			@button.Button(button.ButtonArgs{
+				Size: "sm",
+				Class: "w-full text-[11px]",
+				Attributes: templ.Attributes{
+					"data-on:click":           datastar.PostSSE(fmt.Sprintf("/api/rooms/%s/place/new", room.ID)),
+					"data-indicator-fetching": true,
+					"data-attr-disabled":      "$fetching",
+				},
+			}) {
+				Place as New Hotspot
+			}
+		</div>
+	</div>
+}
+
+// PlacementSuccess shows confirmation after placing an image.
+templ PlacementSuccess(roomName, target string) {
+	<div id="image-gen-content" class="flex flex-col gap-2 items-center py-4">
+		<div class="text-[12px] text-green-400">Placed!</div>
+		<div class="text-[11px] text-muted-foreground text-center">
+			Image placed as { target } in { roomName }.
+		</div>
+		<div class="text-[10px] text-muted-foreground/60 text-center">
+			Click "Reload" in the game overlay to see changes.
+		</div>
+	</div>
+}
+
+// PlacementError shows an error in the placement flow.
+templ PlacementError(message string) {
+	<div id="image-gen-content" class="flex flex-col gap-2 items-center py-4">
+		<span class="text-[12px] text-red-400">{ message }</span>
+		@button.Button(button.ButtonArgs{
+			Size:    "sm",
+			Variant: "outline",
+			Attributes: templ.Attributes{
+				"data-on:click": datastar.GetSSE("/api/rooms"),
+			},
+		}) {
+			Back to rooms
+		}
+	</div>
+}

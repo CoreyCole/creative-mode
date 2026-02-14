@@ -8,7 +8,6 @@ type ImageGenExpr struct {
 }
 
 var imageGenSignals = dsutil.Signals(struct {
-	ImageGenStatus   string `json:"image_gen_status"`   //nolint:tagliatelle // Datastar signal name
 	ImageAspectRatio string `json:"image_aspect_ratio"` //nolint:tagliatelle // Datastar signal name
 }{})
 
@@ -18,15 +17,6 @@ var IE = NewImageGenExpr(imageGenSignals)
 // NewImageGenExpr creates a new ImageGenExpr.
 func NewImageGenExpr(s *dsutil.SignalManager) *ImageGenExpr {
 	return &ImageGenExpr{s: s}
-}
-
-// StatusColorClass returns data-class for status text coloring.
-func (e *ImageGenExpr) StatusColorClass() string {
-	return e.s.DataClass(map[string]string{
-		"text-yellow-400": e.s.Equals("image_gen_status", "generating"),
-		"text-green-400":  "$image_gen_status === 'done' || $image_gen_status === 'saved'",
-		"text-red-400":    e.s.Equals("image_gen_status", "error"),
-	})
 }
 
 // AspectRatioActiveClass returns data-class for an aspect ratio button.

@@ -89,9 +89,13 @@ func NewClient(ctx context.Context, apiKey string, logger *slog.Logger) (*Client
 }
 
 // Generate calls Gemini to generate an image from a text prompt.
+// When transparentBG is true, a chromakey green background is requested and
+// then removed to produce a PNG with alpha transparency. When false, the raw
+// image bytes are returned as-is with their detected MIME type.
 func (c *Client) Generate(
 	ctx context.Context,
 	prompt, aspectRatio string,
+	transparentBG bool,
 ) (*GeneratedImage, error) {
 	c.evictExpired()
 
@@ -105,8 +109,10 @@ func (c *Client) Generate(
 		}
 	}
 
-	// Append chromakey green background instruction for transparency post-processing.
-	fullPrompt := prompt + chromakeySuffix
+	fullPrompt := prompt
+	if transparentBG {
+		fullPrompt += chromakeySuffix
+	}
 
 	result, err := c.client.Models.GenerateContent(
 		ctx, modelName, genai.Text(fullPrompt), config,
@@ -127,19 +133,24 @@ func (c *Client) Generate(
 			}
 
 			rawData := part.InlineData.Data
+			imgData := rawData
+			mimeType := detectMIMEType(rawData)
 
-			// Remove green background and produce real PNG with alpha.
-			pngData, chromaErr := removeGreenBackground(rawData)
-			if chromaErr != nil {
-				c.logger.Warn("chromakey removal failed, using raw image",
-					"error", chromaErr)
-				pngData = rawData
+			if transparentBG {
+				pngData, chromaErr := removeGreenBackground(rawData)
+				if chromaErr != nil {
+					c.logger.Warn("chromakey removal failed, using raw image",
+						"error", chromaErr)
+				} else {
+					imgData = pngData
+					mimeType = "image/png"
+				}
 			}
 
 			img := &GeneratedImage{
 				ID:        uuid.New().String()[:8],
-				Data:      pngData,
-				MIMEType:  "image/png",
+				Data:      imgData,
+				MIMEType:  mimeType,
 				Prompt:    prompt,
 				CreatedAt: time.Now(),
 			}
@@ -150,8 +161,9 @@ func (c *Client) Generate(
 
 			c.logger.Info("generated image",
 				"id", img.ID,
-				"rawSize", len(rawData),
-				"pngSize", len(pngData),
+				"size", len(imgData),
+				"mimeType", mimeType,
+				"transparentBG", transparentBG,
 				"prompt", prompt,
 			)
 
@@ -160,6 +172,20 @@ func (c *Client) Generate(
 	}
 
 	return nil, errors.New("no image in response")
+}
+
+// detectMIMEType returns the MIME type based on magic bytes.
+func detectMIMEType(data []byte) string {
+	if len(data) >= 2 && data[0] == 0xFF && data[1] == 0xD8 {
+		return "image/jpeg"
+	}
+
+	if len(data) >= 4 && data[0] == 0x52 && data[1] == 0x49 && data[2] == 0x46 &&
+		data[3] == 0x46 {
+		return "image/webp"
+	}
+
+	return "image/png"
 }
 
 // GetCached returns a cached generated image by ID, or nil if not found/expired.

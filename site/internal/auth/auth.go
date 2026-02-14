@@ -28,6 +28,8 @@ type Config struct {
 	ClientID     string
 	ClientSecret string
 	RedirectURI  string
+	BotToken     string
+	GuildID      string
 }
 
 // DiscordUser represents the Discord API /users/@me response.
@@ -49,13 +51,14 @@ func (u *DiscordUser) AvatarURL() string {
 
 // Session holds session data for a logged-in user.
 type Session struct {
-	ID                 string
-	DiscordID          string
-	DiscordUsername    string
-	DiscordAvatar      string
-	InviteCodeVerified bool
-	CreatedAt          time.Time
-	SystemPrompt       string // Built once per page load with taken names
+	ID                   string
+	DiscordID            string
+	DiscordUsername       string
+	DiscordAvatar        string
+	GuildMemberVerified  bool
+	InviteCodeVerified   bool
+	CreatedAt            time.Time
+	SystemPrompt         string // Built once per page load with taken names
 }
 
 // SessionManager manages in-memory sessions.
@@ -96,6 +99,15 @@ func (sm *SessionManager) SetInviteVerified(sessionID string) {
 	defer sm.mu.Unlock()
 	if s, ok := sm.sessions[sessionID]; ok {
 		s.InviteCodeVerified = true
+	}
+}
+
+// SetGuildVerified marks a session's guild membership as verified.
+func (sm *SessionManager) SetGuildVerified(sessionID string) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	if s, ok := sm.sessions[sessionID]; ok {
+		s.GuildMemberVerified = true
 	}
 }
 
@@ -179,12 +191,15 @@ func (sm *SessionManager) HandleCallback(c echo.Context) error {
 		return fmt.Errorf("generating session ID: %w", err)
 	}
 
+	guildVerified := sm.CheckGuildMembership(c, discordUser.ID)
+
 	session := &Session{
-		ID:              sessionID,
-		DiscordID:       discordUser.ID,
-		DiscordUsername: discordUser.Username,
-		DiscordAvatar:   discordUser.AvatarURL(),
-		CreatedAt:       time.Now(),
+		ID:                  sessionID,
+		DiscordID:           discordUser.ID,
+		DiscordUsername:     discordUser.Username,
+		DiscordAvatar:       discordUser.AvatarURL(),
+		GuildMemberVerified: guildVerified,
+		CreatedAt:           time.Now(),
 	}
 
 	sm.mu.Lock()
@@ -303,6 +318,32 @@ func (sm *SessionManager) fetchDiscordUser(c echo.Context, accessToken string) (
 	}
 
 	return &user, nil
+}
+
+// CheckGuildMembership checks if a Discord user is a member of the configured guild
+// using the bot token. Returns true on 200, false otherwise.
+func (sm *SessionManager) CheckGuildMembership(c echo.Context, userID string) bool {
+	if sm.config.BotToken == "" || sm.config.GuildID == "" {
+		return true // skip check if not configured
+	}
+
+	url := fmt.Sprintf("https://discord.com/api/guilds/%s/members/%s", sm.config.GuildID, userID)
+	req, err := http.NewRequestWithContext(c.Request().Context(), http.MethodGet, url, http.NoBody)
+	if err != nil {
+		c.Logger().Errorf("failed to create guild member request: %v", err)
+		return false
+	}
+	req.Header.Set("Authorization", "Bot "+sm.config.BotToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		c.Logger().Errorf("guild member check request failed: %v", err)
+		return false
+	}
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.ReadAll(resp.Body)
+
+	return resp.StatusCode == http.StatusOK
 }
 
 // cleanupLoop periodically removes expired sessions.

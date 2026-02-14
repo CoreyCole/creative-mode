@@ -27,6 +27,25 @@ func SessionMiddleware(sm *SessionManager) echo.MiddlewareFunc {
 	}
 }
 
+// GuildMemberMiddleware checks that the session has verified Discord guild membership.
+// Redirects to /join-discord if not verified.
+func GuildMemberMiddleware() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			session, ok := c.Get("session").(*Session)
+			if !ok {
+				return c.Redirect(http.StatusTemporaryRedirect, "/auth/discord/login")
+			}
+
+			if !session.GuildMemberVerified {
+				return c.Redirect(http.StatusTemporaryRedirect, "/join-discord")
+			}
+
+			return next(c)
+		}
+	}
+}
+
 // InviteCodeMiddleware checks that the session has a verified invite code.
 // Redirects to /invite if not verified.
 func InviteCodeMiddleware() echo.MiddlewareFunc {

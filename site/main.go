@@ -40,6 +40,8 @@ func main() {
 		ClientID:     os.Getenv("DISCORD_CLIENT_ID"),
 		ClientSecret: os.Getenv("DISCORD_CLIENT_SECRET"),
 		RedirectURI:  os.Getenv("DISCORD_REDIRECT_URI"),
+		BotToken:     os.Getenv("DISCORD_BOT_TOKEN"),
+		GuildID:      os.Getenv("DISCORD_GUILD_ID"),
 	}
 	sessionMgr := auth.NewSessionManager(authConfig)
 	inviteCodes := auth.NewInviteCodeManager(os.Getenv("INVITE_CODES"))
@@ -126,8 +128,27 @@ func main() {
 		return c.Redirect(http.StatusSeeOther, "/mayor")
 	})
 
-	// --- Mayor page (requires session + invite code) ---
-	mayorGroup := sessionGroup.Group("", auth.InviteCodeMiddleware())
+	// --- Join Discord (requires session) ---
+	sessionGroup.GET("/join-discord", func(c echo.Context) error {
+		rootArgs := l.RootArgs{
+			Title:       "Join Discord - Creative Mode",
+			CurrentPath: c.Request().URL.Path,
+		}
+		return p.JoinDiscordPage(rootArgs).Render(c.Request().Context(), c.Response().Writer)
+	})
+
+	sessionGroup.POST("/join-discord", func(c echo.Context) error {
+		session := c.Get("session").(*auth.Session)
+		if sessionMgr.CheckGuildMembership(c, session.DiscordID) {
+			sessionMgr.SetGuildVerified(session.ID)
+			return c.Redirect(http.StatusSeeOther, "/mayor")
+		}
+		return c.Redirect(http.StatusSeeOther, "/join-discord")
+	})
+
+	// --- Mayor page (requires session + guild membership + invite code) ---
+	guildGroup := sessionGroup.Group("", auth.GuildMemberMiddleware())
+	mayorGroup := guildGroup.Group("", auth.InviteCodeMiddleware())
 
 	mayorGroup.GET("/mayor", func(c echo.Context) error {
 		// If no API key, show coming soon page.

@@ -7,7 +7,7 @@ An OpenClaw-powered game world builder. Create multiplayer games through convers
 | | Creative Mode puts game development in everyone's hands — describe what you want, and a personalized AI mayor builds your multiplayer game world in real time. |
 |---|---|
 | **Impact** | Build multiplayer games from your phone via Discord — no IDE, no compile errors. Game development for everyone, not just developers. |
-| **Opus 4.6** | Every world modification spawns a Claude Code session where Opus edits Rust/Bevy source, rebuilds WASM, and deploys. Mayors use Opus to understand requests, plan changes, and generate assets. I was the first mayor — directing the codebase at a high level — but the system now improves itself. Built to be an even more unreal experience with the Opus released 6 months from now. |
+| **Opus 4.6** | Every world modification spawns a Claude Code session where Opus edits Rust/Bevy source, rebuilds WASM, and deploys. Mayors use Opus to understand requests, plan changes, and generate assets. I was the first mayor — directing the codebase at a high level — but the system now improves itself with Opus. |
 | **Depth** | 10k+ lines of Go and Rust, directed by 27k+ lines of specs and plans. Like the jump from assembly to C, we develop at a higher level of abstraction — not vibe coding, but engineering through **structured intent**. Server-authoritative multiplayer, WASM compilation, OpenClaw AI mayors, Gemini Nano Banana. |
 | **Demo** | A new user creates a 2D world, chats with their AI mayor, and watches it come to life — zero to playable in one session. |
 
@@ -137,3 +137,5 @@ Creative Mode is experimental software built on top of other experimental softwa
 **Do not run this on your personal computer.** Use a dedicated virtual machine (UTM, VirtualBox, etc.) or a cloud VPS. If something goes wrong, you can roll back a VM snapshot or spin up a fresh server — your daily driver should NOT be in the blast radius.
 
 **Make backups.** Take VM snapshots before major changes. Keep your `.env` file and database backups somewhere safe and not included in your mayor's default context. The bootstrap script sets up daily SQLite backups, but that only covers the database — your VM itself is your responsibility.
+
+Large language models are probabilistic and can make mistakes. Your mileage may vary. Creative Mode will continue to improve, but it will be an even more unreal experience with the Opus released 6 months from now.

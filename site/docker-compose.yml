@@ -1,8 +1,6 @@
 services:
   app:
-    build:
-      context: .
-      target: development
+    build: .
     ports:
       - "3000:3000"
     volumes:
@@ -10,6 +8,7 @@ services:
       - ../pkg:/pkg:cached
       - /app/node_modules
     environment:
+      - PORT=3000
       - CGO_ENABLED=0
       - GOOS=linux
       - GO111MODULE=on
@@ -23,8 +22,3 @@ services:
       - INVITE_CODES=${INVITE_CODES}
     working_dir: /app
     command: sh -c "just watch"
-    networks:
-      - site-network
-networks:
-  site-network:
-    driver: bridge

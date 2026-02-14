@@ -22,7 +22,12 @@ set -euo pipefail
 #   10. Locks down SSH (Tailscale-only, port 2222, no passwords)
 #   11. Adds ubuntu user to docker group
 #   12. Installs systemd service (auto-start on boot)
-#   13. Prints summary and next steps
+#   13. Installs Go
+#   14. Installs Node.js + pnpm (for Tailwind CSS builds)
+#   15. Installs templ + just
+#   16. Builds site binary
+#   17. Creates env file
+#   18. Prints summary and next steps
 #
 # Usage:
 #   sudo bash scripts/marketing-site-bootstrap.sh                          # just port 80
@@ -214,7 +219,7 @@ fi
 # ============================================================================
 # Unlike the VPS script (which blocks ALL incoming), this server needs
 # specific ports open to the public internet:
-#   - Port 80: API Gateway → Docker site (creative-mode.ai)
+#   - Port 80: Marketing site + webhook (creative-mode.ai)
 #   - Port 22: Kept open temporarily until Tailscale SSH is verified
 #   - Extra --port args: co-hosted services (e.g. 3000, 4242)
 #   - tailscale0: all tailnet traffic
@@ -458,7 +463,7 @@ fi
 # Step 12: Install systemd service
 # ============================================================================
 # Creates a systemd service that auto-starts the marketing site on boot.
-# The service uses docker compose with the production compose file.
+# The service runs the site binary directly (no Docker in production).
 # ============================================================================
 section "Step 12: Install systemd service"
 
@@ -466,7 +471,14 @@ SERVICE_SRC="/home/ubuntu/creative-mode/site/creative-mode-site.service"
 SERVICE_DST="/etc/systemd/system/creative-mode-site.service"
 
 if [ -f "$SERVICE_DST" ]; then
-    skip "creative-mode-site.service already installed"
+    # Always update in case the service file changed
+    if $DRY_RUN; then
+        info "Would update creative-mode-site.service"
+    else
+        cp "$SERVICE_SRC" "$SERVICE_DST"
+        systemctl daemon-reload
+        ok "Updated creative-mode-site.service"
+    fi
 else
     if $DRY_RUN; then
         info "Would copy creative-mode-site.service to /etc/systemd/system/"
@@ -486,7 +498,173 @@ else
 fi
 
 # ============================================================================
-# Step 13: Summary
+# Step 13: Install Go
+# ============================================================================
+# The site binary is built natively (no Docker in production).
+# Download Go from go.dev and install to /usr/local/go.
+# ============================================================================
+section "Step 13: Install Go"
+
+GO_VERSION="1.24.3"
+
+if command -v go &>/dev/null && go version | grep -q "go${GO_VERSION}"; then
+    skip "Go ${GO_VERSION} is already installed"
+else
+    if $DRY_RUN; then
+        info "Would download and install Go ${GO_VERSION} from go.dev"
+    else
+        ARCH=$(dpkg --print-architecture)
+        GO_ARCH="$ARCH"
+        if [ "$ARCH" = "amd64" ]; then GO_ARCH="amd64"; fi
+        if [ "$ARCH" = "arm64" ]; then GO_ARCH="arm64"; fi
+
+        curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz" -o /tmp/go.tar.gz
+        rm -rf /usr/local/go
+        tar -C /usr/local -xzf /tmp/go.tar.gz
+        rm /tmp/go.tar.gz
+
+        # Ensure Go is on PATH for all users
+        if [ ! -f /etc/profile.d/go.sh ]; then
+            cat > /etc/profile.d/go.sh << 'GOEOF'
+export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin
+GOEOF
+        fi
+        export PATH=$PATH:/usr/local/go/bin
+
+        ok "Installed Go ${GO_VERSION} ($GO_ARCH)"
+    fi
+fi
+
+# Ensure Go is on PATH for remaining steps
+export PATH=$PATH:/usr/local/go/bin:/root/go/bin:/home/ubuntu/go/bin
+
+# ============================================================================
+# Step 14: Install Node.js + pnpm
+# ============================================================================
+# Node.js and pnpm are needed for Tailwind CSS builds during self-rebuild.
+# ============================================================================
+section "Step 14: Install Node.js + pnpm"
+
+if command -v node &>/dev/null && command -v pnpm &>/dev/null; then
+    skip "Node.js and pnpm are already installed"
+else
+    if $DRY_RUN; then
+        info "Would install Node.js LTS via NodeSource and pnpm via corepack"
+    else
+        # Install Node.js LTS
+        if ! command -v node &>/dev/null; then
+            curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+            apt-get install -y nodejs
+            ok "Installed Node.js $(node --version)"
+        fi
+
+        # Enable corepack and install pnpm
+        if ! command -v pnpm &>/dev/null; then
+            corepack enable
+            corepack prepare pnpm@latest --activate
+            ok "Installed pnpm $(pnpm --version)"
+        fi
+    fi
+fi
+
+# ============================================================================
+# Step 15: Install templ + just
+# ============================================================================
+# templ generates Go code from .templ files.
+# just is a command runner used for build-tailwind.
+# ============================================================================
+section "Step 15: Install templ + just"
+
+if command -v templ &>/dev/null; then
+    skip "templ is already installed"
+else
+    if $DRY_RUN; then
+        info "Would install templ via 'go install'"
+    else
+        GOBIN=/usr/local/bin go install github.com/a-h/templ/cmd/templ@latest
+        ok "Installed templ"
+    fi
+fi
+
+if command -v just &>/dev/null; then
+    skip "just is already installed"
+else
+    if $DRY_RUN; then
+        info "Would install just"
+    else
+        curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+        ok "Installed just"
+    fi
+fi
+
+# ============================================================================
+# Step 16: Build site binary
+# ============================================================================
+# Build the site binary and place it at /tmp/creative-mode-site,
+# matching the path in the systemd service file.
+# ============================================================================
+section "Step 16: Build site binary"
+
+SITE_DIR="/home/ubuntu/creative-mode/site"
+
+if [ -f /tmp/creative-mode-site ]; then
+    skip "Site binary already exists at /tmp/creative-mode-site"
+else
+    if $DRY_RUN; then
+        info "Would build site binary:"
+        info "  cd $SITE_DIR"
+        info "  pnpm install"
+        info "  templ generate"
+        info "  just build-tailwind"
+        info "  go build -o /tmp/creative-mode-site ."
+    else
+        cd "$SITE_DIR"
+        pnpm install
+        templ generate
+        just build-tailwind
+        go build -o /tmp/creative-mode-site .
+        ok "Built site binary at /tmp/creative-mode-site"
+    fi
+fi
+
+# ============================================================================
+# Step 17: Create env file
+# ============================================================================
+# The env file holds all secrets and configuration.
+# ============================================================================
+section "Step 17: Create env file"
+
+ENV_DIR="/home/ubuntu/.config/creative-mode"
+ENV_FILE="$ENV_DIR/site.env"
+
+if [ -f "$ENV_FILE" ]; then
+    skip "Env file already exists at $ENV_FILE"
+else
+    if $DRY_RUN; then
+        info "Would create $ENV_FILE with placeholder values"
+    else
+        mkdir -p "$ENV_DIR"
+        cat > "$ENV_FILE" << 'ENVEOF'
+# Creative Mode Site — Environment Variables
+# Generate WEBHOOK_SECRET with: openssl rand -hex 32
+WEBHOOK_SECRET=CHANGE_ME
+DISCORD_CLIENT_ID=
+DISCORD_CLIENT_SECRET=
+DISCORD_REDIRECT_URI=
+DISCORD_BOT_TOKEN=
+DISCORD_GUILD_ID=
+DISCORD_WORLDS_CATEGORY_ID=
+ANTHROPIC_API_KEY=
+INVITE_CODES=
+ENVEOF
+        chown ubuntu:ubuntu "$ENV_DIR" "$ENV_FILE"
+        chmod 600 "$ENV_FILE"
+        ok "Created $ENV_FILE (chmod 600)"
+    fi
+fi
+
+# ============================================================================
+# Step 18: Summary
 # ============================================================================
 section "Bootstrap Complete"
 
@@ -498,7 +676,7 @@ done
 
 echo ""
 echo -e "${GREEN}${BOLD}What was done:${NC}"
-echo "  - prerequisites: git, curl, unzip"
+echo "  - prerequisites: git, curl, unzip, jq"
 echo "  - Tailscale: installed and connected"
 echo "  - Tailscale SSH: enabled"
 echo "  - Docker Engine: installed"
@@ -509,6 +687,11 @@ echo "  - Fail2Ban: installed and running"
 echo "  - SSH: Tailscale-only ($(tailscale ip -4 2>/dev/null || echo 'N/A')), port 2222, no passwords"
 echo "  - ubuntu user: added to docker group"
 echo "  - systemd service: creative-mode-site.service enabled"
+echo "  - Go ${GO_VERSION}: installed"
+echo "  - Node.js + pnpm: installed"
+echo "  - templ + just: installed"
+echo "  - site binary: built at /tmp/creative-mode-site"
+echo "  - env file: ~/.config/creative-mode/site.env"
 echo ""
 echo -e "${YELLOW}${BOLD}Detected public interface:${NC} $PUBLIC_IF"
 echo -e "${YELLOW}${BOLD}Public ports:${NC} $PORTS_DISPLAY"
@@ -529,9 +712,18 @@ echo ""
 echo "  3. After SSH restart, remove the temporary port 22 rule:"
 echo "       sudo ufw delete allow 22/tcp"
 echo ""
-echo "  4. Start the marketing site:"
+echo "  4. Edit the env file with your secrets:"
+echo "       nano ~/.config/creative-mode/site.env"
+echo "       # Set WEBHOOK_SECRET to: openssl rand -hex 32"
+echo ""
+echo "  5. Start the marketing site:"
 echo "       sudo systemctl start creative-mode-site"
-echo "       (auto-starts on reboot; check status with: systemctl status creative-mode-site)"
+echo ""
+echo "  6. Add GitHub webhook (repo Settings > Webhooks):"
+echo "       URL: http://<public-ip>/webhook/github"
+echo "       Content type: application/json"
+echo "       Secret: (same value from site.env)"
+echo "       Events: Just the push event"
 echo ""
 echo -e "  ${YELLOW}IMPORTANT:${NC} Do NOT close this terminal until you've verified"
 echo "  Tailscale SSH access in a separate session."

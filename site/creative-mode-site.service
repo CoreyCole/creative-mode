@@ -1,15 +1,18 @@
 [Unit]
 Description=Creative Mode Marketing Site
-After=docker.service
-Requires=docker.service
+After=network-online.target
+Wants=network-online.target
 
 [Service]
-Type=oneshot
-RemainAfterExit=yes
-User=ubuntu
+Type=simple
+User=root
 WorkingDirectory=/home/ubuntu/creative-mode/site
-ExecStart=/usr/bin/docker compose -f docker-compose.prod.yml up -d
-ExecStop=/usr/bin/docker compose -f docker-compose.prod.yml down
+ExecStart=/tmp/creative-mode-site
+EnvironmentFile=/home/ubuntu/.config/creative-mode/site.env
+Restart=always
+RestartSec=1
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target

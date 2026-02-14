@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/coreycole/creative-mode/pkg/worldchannel"
 	"github.com/google/uuid"
@@ -15,14 +18,17 @@ import (
 	"github.com/coreycole/creative-mode/site/internal/auth"
 	"github.com/coreycole/creative-mode/site/internal/markdown"
 	"github.com/coreycole/creative-mode/site/internal/mayor"
+	"github.com/coreycole/creative-mode/site/internal/webhook"
 	l "github.com/coreycole/creative-mode/site/layouts"
 	p "github.com/coreycole/creative-mode/site/pages"
 )
 
-const port = "3000"
-
 func main() {
 	logger := slog.Default()
+
+	// Graceful shutdown context.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	e := echo.New()
 	e.Use(middleware.Logger())
@@ -69,6 +75,11 @@ func main() {
 		convMgr = mayor.NewConversationManager()
 		mayorHandler = mayor.NewHandler(client, convMgr, mdRenderer, wcClient)
 	}
+
+	// --- Webhook handler (self-rebuild on GitHub push) ---
+	wh := webhook.New(logger, os.Getenv("WEBHOOK_SECRET"))
+	e.GET("/health", wh.HandleHealth)
+	e.POST("/webhook/github", wh.HandleGitHub)
 
 	// --- Public routes ---
 	e.GET("/", func(c echo.Context) error {
@@ -166,6 +177,20 @@ func main() {
 		}
 		return mayorHandler.HandleChat(c)
 	})
+
+	// Graceful shutdown on SIGINT/SIGTERM.
+	go func() {
+		<-ctx.Done()
+		logger.Info("Shutting down server...")
+		if shutdownErr := e.Shutdown(context.Background()); shutdownErr != nil {
+			logger.Error("Server shutdown error", "error", shutdownErr)
+		}
+	}()
+
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "80"
+	}
 
 	if err := e.Start(":" + port); err != http.ErrServerClosed {
 		log.Fatal(err)

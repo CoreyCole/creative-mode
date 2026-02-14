@@ -63,3 +63,7 @@ docker-shell service="app":
 docker-tail service lines="50":
   @echo "Last {{lines}} lines for {{service}} service..."
   @docker logs --tail {{lines}} creative-mode-site-local-{{service}}-1
+
+# Production logs (systemd journal)
+deploy-logs lines="100":
+  journalctl -u creative-mode-site -n {{lines}} --no-pager

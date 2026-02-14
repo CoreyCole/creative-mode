@@ -2,6 +2,8 @@
 
 This project uses **frequent intentional compaction** — a workflow that structures the entire development process around context management, keeping context window utilization in the 40-60% range and building high-leverage human review into the pipeline.
 
+Based on Dex Horthy's [Advanced Context Engineering for Coding Agents](https://github.com/humanlayer/advanced-context-engineering-for-coding-agents/blob/main/ace-fca.md).
+
 ## Core Principle
 
 LLMs are stateless functions. The context window is the **only lever** you have to affect output quality. Optimize for:

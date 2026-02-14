@@ -19,8 +19,7 @@ impl Plugin for RoomPlugin {
         app.insert_resource(PendingNavigation(None));
         app.insert_resource(CurrentRoom("lobby".to_string()));
         app.insert_resource(RoomLoadState::Idle);
-        app.add_systems(Startup, setup_camera);
-        app.add_systems(Startup, load_initial_room.after(setup_camera));
+        app.add_systems(Startup, load_initial_room);
         app.add_systems(Update, (start_room_load, finish_room_load).chain());
         #[cfg(target_family = "wasm")]
         app.add_systems(Update, check_reload_request.before(start_room_load));
@@ -150,10 +149,6 @@ pub enum RoomLoadState {
 
 // --- Systems ---
 
-fn setup_camera(mut commands: Commands) {
-    commands.spawn(Camera2d);
-}
-
 fn load_initial_room(mut pending: ResMut<PendingNavigation>) {
     pending.0 = Some("lobby".to_string());
 }
@@ -230,11 +225,12 @@ fn check_reload_request(current_room: Res<CurrentRoom>, mut pending: ResMut<Pend
 pub fn spawn_room(commands: &mut Commands, room: &RoomAsset, asset_server: &AssetServer) {
     let bg_color = parse_hex_color(&room.background_color);
 
-    // Background color
+    // Background color — oversized so it fills the viewport at any zoom/aspect ratio,
+    // preventing the HTML body (#111) from showing as gray letterbox bars.
     commands.spawn((
         Sprite {
             color: bg_color,
-            custom_size: Some(Vec2::new(1280.0, 720.0)),
+            custom_size: Some(Vec2::new(4000.0, 4000.0)),
             ..default()
         },
         Transform::from_xyz(0.0, 0.0, 0.0),

@@ -45,6 +45,13 @@ Friend's browser → Tailscale tunnel → VM's tailscale0 → localhost:8080 →
 ```
 The VM appears as a regular node on the tailnet. QEMU's NAT doesn't matter — Tailscale bypasses it. QEMU's user-mode NAT behaves as a standard cone NAT that Tailscale traverses easily; direct WireGuard connections are expected (not DERP relay fallback).
 
+**Mobile device testing:** Tailscale has native iOS and Android apps. Install the app, sign into the tailnet, and the phone can reach `https://{vm-name}.{tailnet}.ts.net` in any mobile browser. For casual testers who shouldn't join the tailnet, use `tailscale funnel` instead of `tailscale serve` — Funnel exposes the service to the public internet (still valid HTTPS on `*.ts.net`) so anyone with the URL can access it, no Tailscale install needed. Traffic routes through DERP relays (slightly higher latency, fine for testing). Toggle between them as needed:
+```bash
+sudo tailscale serve https / http://localhost:8080    # tailnet only
+sudo tailscale funnel https / http://localhost:8080   # public internet
+```
+Tailscale free plan supports 3 users / 100 devices.
+
 **Expected network interface:** `enp0s1` (UTM/QEMU ARM64 Ubuntu uses predictable names: `en` + `p0` bus + `s1` slot). The bootstrap script auto-detects this via `ip route show default`.
 
 **Tradeoffs:**
@@ -832,6 +839,7 @@ just redeploy   # git pull + docker compose up --build
 9. **Hosting** — Start with a local Ubuntu 24.04 ARM64 VM via UTM on macOS (64 GB host RAM, allocate 16 GB to VM). Tailscale inside the VM makes it accessible to tailnet members. Can migrate to a cloud VPS later for always-on hosting. Bootstrap script works identically on both.
 10. **ARM64 compatibility** — All Dockerfile layers, Go dependencies, Rust/WASM toolchain, Tailscale, and Docker verified for ARM64. See [ARM64 Compatibility Notes](#arm64-compatibility-notes). Expected UTM interface name: `enp0s1` (auto-detected by bootstrap).
 11. **VM backups** — Multi-layered: SQLite `.backup` cron (Phase 1), qemu-img internal snapshots for rollback, borgbackup for daily incremental full-VM backups, Time Machine exclusion. See [VM Backup & Migration](#vm-backup--migration).
+12. **Mobile device testing** — Tailscale iOS/Android apps let phones join the tailnet and reach the VM's HTTPS URL directly. For testers without Tailscale, `tailscale funnel` exposes the service publicly (valid HTTPS, no install needed, slightly higher latency via DERP relays). Toggle between `serve` (tailnet-only) and `funnel` (public) as needed.
 
 ## Future Work (Not In This Plan)
 

@@ -7,7 +7,7 @@ import (
 
 // ChatPanel renders the tabbed chat UI for the world overlay.
 templ ChatPanel() {
-	<div class="w-80 flex flex-col border-l border-border bg-[#111]">
+	<div class="w-full md:w-80 flex flex-col border-t md:border-t-0 md:border-l border-border bg-[#111]">
 		<div class="flex border-b border-border">
 			<button class="flex-1 py-2 bg-transparent border-b-2 border-transparent text-muted-foreground cursor-pointer text-[13px] hover:text-foreground/80"
 				data-on:click={ CE.SelectTab("global") }

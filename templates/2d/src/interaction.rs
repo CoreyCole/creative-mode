@@ -4,6 +4,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
 use crate::bridge::PendingBridgeAction;
+use crate::camera::PendingTap;
 use crate::room::{ActionDef, DialogText, HasImage, Hotspot, PendingNavigation, RoomEntity};
 
 pub struct InteractionPlugin;
@@ -61,18 +62,24 @@ fn hotspot_hover(
 }
 
 /// Handle clicks on hotspots, dispatching their action.
+/// Accepts both mouse clicks and touch taps (via PendingTap resource).
 #[allow(clippy::too_many_arguments)]
 fn hotspot_click(
     mut commands: Commands,
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &GlobalTransform)>,
     mouse: Res<ButtonInput<MouseButton>>,
+    mut pending_tap: ResMut<PendingTap>,
     hotspots: Query<&Hotspot>,
     dialog_entities: Query<Entity, With<DialogText>>,
     mut pending_nav: ResMut<PendingNavigation>,
     mut pending_bridge: ResMut<PendingBridgeAction>,
 ) {
-    if !mouse.just_pressed(MouseButton::Left) {
+    // Determine click source: mouse click or touch tap.
+    let tap_pos = pending_tap.0.take();
+    let has_mouse_click = mouse.just_pressed(MouseButton::Left);
+
+    if !has_mouse_click && tap_pos.is_none() {
         return;
     }
 
@@ -82,9 +89,11 @@ fn hotspot_click(
     let Ok((camera, camera_transform)) = camera_q.single() else {
         return;
     };
-    let Some(cursor_pos) = window
-        .cursor_position()
-        .and_then(|pos| camera.viewport_to_world_2d(camera_transform, pos).ok())
+
+    // Use tap position if available, otherwise use cursor position.
+    let screen_pos = tap_pos.or_else(|| window.cursor_position());
+    let Some(cursor_pos) =
+        screen_pos.and_then(|pos| camera.viewport_to_world_2d(camera_transform, pos).ok())
     else {
         return;
     };

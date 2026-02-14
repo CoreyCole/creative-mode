@@ -13,28 +13,32 @@ templ Page(w sqlc.World, cp sqlc.Checkpoint, user *sqlc.User, signals OverlaySig
 			if trunkPort > 0 {
 				<iframe id="game-frame"
 					src={ fmt.Sprintf("http://localhost:%d/", trunkPort) }
+					style="touch-action: none;"
 					class="fixed top-0 left-0 w-screen h-screen border-none z-0">
 				</iframe>
 			} else if cp.WasmPath.Valid {
 				<iframe id="game-frame"
 					src={ fmt.Sprintf("/wasm/%s/%s/index.html", w.ID, cp.ID) }
+					style="touch-action: none;"
 					class="fixed top-0 left-0 w-screen h-screen border-none z-0">
 				</iframe>
 			} else {
-				<iframe id="game-frame" class="fixed top-0 left-0 w-screen h-screen border-none z-0"></iframe>
+				<iframe id="game-frame" style="touch-action: none;" class="fixed top-0 left-0 w-screen h-screen border-none z-0"></iframe>
 			}
 		} else if trunkPort > 0 && serverPort > 0 {
 			<iframe id="game-frame"
 				src={ fmt.Sprintf("http://localhost:%d/?server_port=%d", trunkPort, serverPort) }
+				style="touch-action: none;"
 				class="fixed top-0 left-0 w-screen h-screen border-none z-0">
 			</iframe>
 		} else if serverPort > 0 {
 			<iframe id="game-frame"
 				src={ fmt.Sprintf("/wasm/%s/%s/index.html?server_port=%d", w.ID, cp.ID, serverPort) }
+				style="touch-action: none;"
 				class="fixed top-0 left-0 w-screen h-screen border-none z-0">
 			</iframe>
 		} else {
-			<iframe id="game-frame" class="fixed top-0 left-0 w-screen h-screen border-none z-0"></iframe>
+			<iframe id="game-frame" style="touch-action: none;" class="fixed top-0 left-0 w-screen h-screen border-none z-0"></iframe>
 		}
 		<div id="harness-overlay"
 			class="fixed top-0 left-0 w-screen h-screen z-10 pointer-events-none [&>*]:pointer-events-auto"

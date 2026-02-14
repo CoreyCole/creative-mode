@@ -1,4 +1,5 @@
 mod bridge;
+mod camera;
 #[cfg(target_family = "wasm")]
 mod debug;
 mod interaction;
@@ -31,6 +32,7 @@ pub fn run() {
     );
 
     app.add_plugins(room::RoomPlugin);
+    app.add_plugins(camera::CameraPlugin);
     app.add_plugins(interaction::InteractionPlugin);
     app.add_plugins(bridge::BridgePlugin);
 

@@ -14,9 +14,9 @@ templ Overlay(w sqlc.World, cp sqlc.Checkpoint, checkpoints []sqlc.Checkpoint) {
 	<div class="flex flex-col h-screen pointer-events-none [&>*]:pointer-events-auto" data-show="$overlay_expanded" style="display: none;">
 		@OverlayTopBar(w)
 		@CheckpointTree(checkpoints, cp.ID, w.ID)
-		<div class="flex-1 flex justify-end pointer-events-none overflow-hidden">
-			<div class="flex-1"></div>
-			<div class="pointer-events-auto w-80 bg-[rgba(17,17,17,0.92)] backdrop-blur-lg">
+		<div class="flex-1 flex flex-col-reverse md:flex-row justify-end pointer-events-none overflow-hidden">
+			<div class="hidden md:block md:flex-1"></div>
+			<div class="pointer-events-auto w-full md:w-80 max-h-[60vh] md:max-h-none bg-[rgba(17,17,17,0.92)] backdrop-blur-lg">
 				@chat.ChatPanel()
 			</div>
 		</div>
@@ -34,12 +34,12 @@ templ Overlay(w sqlc.World, cp sqlc.Checkpoint, checkpoints []sqlc.Checkpoint) {
 }
 
 templ OverlayTopBar(w sqlc.World) {
-	<div class="bg-[rgba(17,17,17,0.92)] backdrop-blur-lg px-4 py-2 flex items-center justify-between border-b border-border">
+	<div class="bg-[rgba(17,17,17,0.92)] backdrop-blur-lg px-2 md:px-4 py-2 flex items-center justify-between border-b border-border">
 		<div class="flex items-center gap-3">
 			<span class="font-bold text-sm">Creative Mode</span>
-			<span class="text-muted-foreground text-[13px]">{ w.Name }</span>
+			<span class="text-muted-foreground text-[13px] truncate">{ w.Name }</span>
 		</div>
-		<div class="flex items-center gap-1.5">
+		<div class="flex items-center gap-1.5 flex-wrap md:flex-nowrap">
 			@button.Button(button.ButtonArgs{Size: "sm", Variant: "outline", Attributes: templ.Attributes{"data-on:click": OE.ToggleTree()}}) {
 				Tree
 			}
@@ -58,7 +58,7 @@ templ OverlayTopBar(w sqlc.World) {
 }
 
 templ OverlayBottomBar(w sqlc.World) {
-	<div class="bg-[rgba(17,17,17,0.92)] backdrop-blur-lg px-4 py-2 flex flex-col gap-1.5 border-t border-border">
+	<div class="bg-[rgba(17,17,17,0.92)] backdrop-blur-lg px-2 md:px-4 py-2 flex flex-col gap-1.5 border-t border-border">
 		<div class="flex gap-2 w-full">
 			@input.Input(input.InputArgs{
 				Placeholder: "Describe what to build...",

@@ -175,9 +175,18 @@ func (h *Handler) rebuild() {
 	}
 	h.logger.Info("webhook: templ generated")
 
-	// 3. Build tailwind CSS
-	if err := h.run(h.siteDir, "just", "build-tailwind"); err != nil {
+	// 3. Build tailwind CSS (call tailwindcss directly to avoid snap/systemd scope issues with `just`)
+	if err := h.run(h.siteDir, "tailwindcss",
+		"-i", "static/css/index.css", "-o", "static/css/out.css",
+		"--content", "./pages/**/*", "--content", "./layouts/**/*",
+	); err != nil {
 		h.logger.Error("webhook: tailwind build failed", "error", err)
+		return
+	}
+	if err := h.run(h.siteDir, "bash", "-c",
+		`HASH=$(sha256sum static/css/out.css | cut -d' ' -f1 | head -c8) && rm -f static/css/out.*.css && cp static/css/out.css static/css/out.$HASH.css`,
+	); err != nil {
+		h.logger.Error("webhook: tailwind hash failed", "error", err)
 		return
 	}
 	h.logger.Info("webhook: tailwind built")

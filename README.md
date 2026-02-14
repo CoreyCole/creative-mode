@@ -1,6 +1,6 @@
 # Creative Mode
 
-A claude-powered game world builder. Create multiplayer games through natural language prompts with friends on a shared, secured server.
+An OpenClaw-powered game world builder. Create multiplayer games through natural language prompts with friends on a shared, secured server.
 
 | | Creative Mode puts game development in everyone's hands — describe what you want, and a personalized AI mayor builds your multiplayer game world in real time. |
 |---|---|
@@ -76,7 +76,7 @@ Each checkpoint is a complete Rust project. Build caches are preserved via hardl
 
 ### World Mayors
 
-Every world gets an AI mayor — a persistent OpenClaw agent with:
+Every world gets an AI mayor agent — a persistent OpenClaw agent with:
 
 - **Rich personality** gathered through a 4-step creation wizard
 - **Evolving memory** that learns your preferences and remembers past builds

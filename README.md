@@ -2,6 +2,8 @@
 
 An OpenClaw-powered game world builder. Create multiplayer games through natural language prompts with friends on a shared, secured server.
 
+![Uploading Generated Image February 13, 2026 - 10_48PM.jpeg…]()
+
 | | Creative Mode puts game development in everyone's hands — describe what you want, and a personalized AI mayor builds your multiplayer game world in real time. |
 |---|---|
 | **Impact** | Friends would pay for this today. Build multiplayer games from your phone via Discord — no IDE, no compile errors. Building for the models six months from now. |

@@ -51,14 +51,14 @@ func (u *DiscordUser) AvatarURL() string {
 
 // Session holds session data for a logged-in user.
 type Session struct {
-	ID                   string
-	DiscordID            string
-	DiscordUsername       string
-	DiscordAvatar        string
-	GuildMemberVerified  bool
-	InviteCodeVerified   bool
-	CreatedAt            time.Time
-	SystemPrompt         string // Built once per page load with taken names
+	ID                  string
+	DiscordID           string
+	DiscordUsername     string
+	DiscordAvatar       string
+	GuildMemberVerified bool
+	InviteCodeVerified  bool
+	CreatedAt           time.Time
+	SystemPrompt        string // Built once per page load with taken names
 }
 
 // SessionManager manages in-memory sessions.

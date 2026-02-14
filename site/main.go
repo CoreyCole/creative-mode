@@ -187,7 +187,7 @@ func main() {
 		}
 
 		rootArgs := l.RootArgs{
-			Title:       "Meet the Mayor - Creative Mode",
+			Title:       "Creative Mode - Meet the Mayor",
 			CurrentPath: c.Request().URL.Path,
 		}
 		return p.MayorPage(rootArgs, greetingHTML, greetingMsgID).Render(c.Request().Context(), c.Response().Writer)

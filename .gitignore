@@ -17,3 +17,7 @@ harness/static/css/out*
 .playwright/
 playwright-report/
 test-results/
+
+# Nix
+.direnv/
+result

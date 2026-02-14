@@ -1,6 +1,6 @@
 # Creative Mode
 
-An OpenClaw-powered game world builder. Create multiplayer games through natural language prompts with friends on a shared, secured server.
+An OpenClaw-powered game world builder. Create multiplayer games through conversation with friends on a shared, secured server.
 
 ![Generated Image February 13, 2026 - 10_48PM](https://github.com/user-attachments/assets/668b3ea3-a467-4dad-b556-c0d1c32990aa)
 

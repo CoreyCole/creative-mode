@@ -74,6 +74,7 @@ func main() {
 		client := mayor.NewClient(apiKey)
 		convMgr = mayor.NewConversationManager()
 		mayorHandler = mayor.NewHandler(client, convMgr, mdRenderer, wcClient)
+		mayorHandler.HarnessURL = os.Getenv("HARNESS_URL")
 	}
 
 	// --- Webhook handler (self-rebuild on GitHub push) ---

@@ -53,7 +53,7 @@ templ UserMessage(msgID string, content string) {
 }
 
 // WorldHatched is shown after the Discord channel is created.
-templ WorldHatched(worldName, mayorName, discordChannelURL, discordUsername, discordAvatar string) {
+templ WorldHatched(worldName, mayorName, discordChannelURL, discordUsername, discordAvatar, harnessURL string) {
 	<div id="mayor-signup" class="my-6 rounded-lg border border-border/40 bg-card p-6 text-center">
 		<h2 class="text-xl font-bold">{ worldName } Has Been Born</h2>
 		<p class="mt-3 text-muted-foreground">
@@ -65,19 +65,37 @@ templ WorldHatched(worldName, mayorName, discordChannelURL, discordUsername, dis
 			}
 			<span class="text-sm font-medium">{ discordUsername }</span>
 		</div>
+		<div class="mt-6 flex flex-col items-center gap-3">
+			if harnessURL != "" {
+				<a
+					href={ templ.SafeURL(harnessURL) }
+					target="_blank"
+					rel="noreferrer"
+					class="inline-flex items-center justify-center rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 h-11 px-8"
+				>
+					Enter Your World
+				</a>
+			}
+			if discordChannelURL != "" {
+				<a
+					href={ templ.SafeURL(discordChannelURL) }
+					target="_blank"
+					rel="noreferrer"
+					if harnessURL != "" {
+						class="inline-flex items-center justify-center rounded-md text-sm font-medium border border-border bg-background text-foreground hover:bg-muted h-11 px-8"
+					} else {
+						class="inline-flex items-center justify-center rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 h-11 px-8"
+					}
+				>
+					Open Your World in Discord
+				</a>
+			}
+		</div>
 		if discordChannelURL != "" {
-			<a
-				href={ templ.SafeURL(discordChannelURL) }
-				target="_blank"
-				rel="noreferrer"
-				class="mt-6 inline-flex items-center justify-center rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 h-11 px-8"
-			>
-				Open Your World in Discord
-			</a>
 			<p class="mt-3 text-sm text-muted-foreground">
 				Just type in the channel — { mayorName } is always listening.
 			</p>
-		} else {
+		} else if harnessURL == "" {
 			<p class="mt-4 text-sm text-muted-foreground">
 				Your world is ready! Join the Discord server to get started.
 			</p>

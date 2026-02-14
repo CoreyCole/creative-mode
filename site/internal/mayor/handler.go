@@ -29,6 +29,7 @@ type Handler struct {
 	convMgr    *ConversationManager
 	mdRenderer *markdown.Renderer
 	wcClient   *worldchannel.Client // nil if no bot token configured
+	HarnessURL string               // optional — shown on world hatch card
 }
 
 // NewHandler creates a new mayor chat handler.
@@ -306,12 +307,13 @@ func (h *Handler) hatchWorld(c echo.Context, sse *datastar.ServerSentEventGenera
 	// Persist onboarding conversation for future OpenClaw agent bootstrap.
 	h.pinOnboardingConversation(c, result.ChannelID, session, finalMayorName, worldName, worldSummary)
 
-	// Show hatched card with Discord link.
+	// Show hatched card with Discord link and optional harness link.
 	channelURL := fmt.Sprintf("https://discord.com/channels/%s/%s",
 		h.wcClient.Config().GuildID, result.ChannelID)
 	if err := sse.PatchElementTempl(p.WorldHatched(
 		worldName, finalMayorName, channelURL,
 		session.DiscordUsername, session.DiscordAvatar,
+		h.HarnessURL,
 	)); err != nil {
 		c.Logger().Errorf("Failed to patch hatched card: %v", err)
 	}

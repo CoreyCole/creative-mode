@@ -7,6 +7,7 @@ node_modules/
 template-target/
 *_templ.go
 context/
+.DS_Store
 
 # Tailwind CSS build output
 harness/static/css/out*

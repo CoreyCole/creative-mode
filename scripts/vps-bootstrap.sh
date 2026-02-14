@@ -27,9 +27,9 @@ set -euo pipefail
 #   14. Prints summary and next steps
 #
 # Usage:
-#   curl -fsSL <raw-url>/scripts/vps-bootstrap.sh | sudo bash -s -- <repo-url>
-#   sudo bash scripts/vps-bootstrap.sh <repo-url>            # from cloned repo
-#   sudo bash scripts/vps-bootstrap.sh <repo-url> --check    # dry run
+#   curl -fsSL <raw-url>/scripts/vps-bootstrap.sh | sudo bash
+#   sudo bash scripts/vps-bootstrap.sh              # from cloned repo
+#   sudo bash scripts/vps-bootstrap.sh --check      # dry run
 #
 # Idempotent: safe to re-run. Each step checks if already done before modifying.
 # =============================================================================
@@ -53,8 +53,8 @@ info()    { echo -e "  ${BOLD}INFO${NC}  $1"; }
 # ---------------------------------------------------------------------------
 # Parse flags
 # ---------------------------------------------------------------------------
+REPO_URL="https://github.com/CoreyCole/creative-mode.git"
 DRY_RUN=false
-REPO_URL=""
 for arg in "$@"; do
     case "$arg" in
         --check|--dry-run)
@@ -65,17 +65,11 @@ for arg in "$@"; do
             ;;
         *)
             echo "Unknown argument: $arg"
-            echo "Usage: curl -fsSL <url> | sudo bash -s -- <repo-url> [--check]"
+            echo "Usage: curl -fsSL <url> | sudo bash [--check]"
             exit 1
             ;;
     esac
 done
-
-if [ -z "$REPO_URL" ]; then
-    echo "Error: repository URL required"
-    echo "Usage: curl -fsSL <url> | sudo bash -s -- https://github.com/USER/creative-mode.git"
-    exit 1
-fi
 
 if $DRY_RUN; then
     echo -e "${YELLOW}${BOLD}DRY RUN — showing what would change without modifying anything${NC}"

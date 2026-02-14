@@ -87,14 +87,14 @@ If the game server crashes, Docker automatically restarts it. When the whole mac
 
 > **What just happened?** You created a virtual computer running Ubuntu inside your rig. It has its own operating system, its own network connection, and its own disk — completely separate from macOS. Tailscale will make this virtual machine accessible to your friends as if it were a real server on the internet.
 
+> **Note:** The UTM console window does not support copy/paste — you'll need to type the next command manually. Once the bootstrap script sets up Tailscale SSH, you can SSH in from your Mac terminal and get normal clipboard support for the remaining steps.
+
 ### Step 2: Run the bootstrap script
 
 This single command sets up everything — prerequisites, security, and the game server code. You can pipe it directly on a fresh instance:
 
 ```bash
-sudo apt-get update && sudo apt-get install -y curl && \
-  curl -fsSL https://raw.githubusercontent.com/CoreyCole/creative-mode/main/scripts/vps-bootstrap.sh \
-  | sudo bash -s -- https://github.com/CoreyCole/creative-mode.git
+sudo apt update && sudo apt install -y curl && curl -fsSL https://raw.githubusercontent.com/CoreyCole/creative-mode/main/scripts/vps-bootstrap.sh | sudo bash
 ```
 
 The script will:
@@ -107,14 +107,13 @@ The script will:
 You can preview what the script will do without actually changing anything:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/CoreyCole/creative-mode/main/scripts/vps-bootstrap.sh \
-  | sudo bash -s -- https://github.com/CoreyCole/creative-mode.git --check
+curl -fsSL https://raw.githubusercontent.com/CoreyCole/creative-mode/main/scripts/vps-bootstrap.sh | sudo bash -s -- --check
 ```
 
 If you've already cloned the repo, you can run the script directly:
 
 ```bash
-sudo bash scripts/vps-bootstrap.sh https://github.com/CoreyCole/creative-mode.git
+sudo bash scripts/vps-bootstrap.sh
 ```
 
 When the script finishes, it prints a summary and next steps.

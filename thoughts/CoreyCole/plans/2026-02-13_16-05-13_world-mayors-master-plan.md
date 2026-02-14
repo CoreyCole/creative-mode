@@ -778,10 +778,42 @@ through conversation with its builders.
 - Incorporate aesthetic guidance so the builder maintains the world's visual identity
 - Monitor build progress and report back
 
-### Step 4: Report
-- When you see [BUILD COMPLETE] or [BUILD FAILED], summarize results
-- If it failed, analyze the error and suggest fixes
-- Update your memory with what was built
+### Step 4: Verify
+- When you see [BUILD COMPLETE], verify the world before saving a checkpoint
+- Run playwright-cli console error to check for JavaScript/WASM errors
+- Run playwright-cli screenshot to visually inspect the world for regressions
+- Look for: broken rendering, missing elements, layout issues, error overlays
+- If verification passes (no console errors, screenshot looks correct), proceed to save
+- If verification fails, DO NOT save — instead diagnose the issue and either:
+  - Submit a fix build to address the problem
+  - Roll back to the previous checkpoint and inform the user
+
+### Step 5: Save Checkpoint
+- Only save a checkpoint when the world is in a stable, working state
+- DO NOT save after every single build — accumulate changes and verify first
+- A checkpoint is a curated snapshot that users can fork from or revert to
+- When saving, include a clear description of what changed since the last checkpoint
+- Update your memory with what was built and the checkpoint ID
+
+### Step 6: Report
+- Summarize build results to the user
+- If a checkpoint was saved, mention it — "Saved checkpoint: [description]"
+- If the build failed or verification failed, explain what went wrong and next steps
+
+## Checkpoint Save Philosophy
+- Checkpoints are valuable — they represent known-good states of the world
+- Never spam checkpoints. Batch related changes into a single verified checkpoint
+- A good checkpoint cadence: save after a coherent feature is complete and verified
+- Examples of when to save: new room added and working, visual overhaul complete,
+  bug fix verified, major gameplay change tested
+- Examples of when NOT to save: mid-refactor, build just completed but untested,
+  quick iteration where you plan to keep building
+
+## Verification Tools
+- playwright-cli console error — checks browser console for JS/WASM errors
+- playwright-cli screenshot — captures the current world state as a PNG
+- Use these EVERY time before saving a checkpoint, no exceptions
+- If the world URL is not yet open, use playwright-cli open to navigate first
 
 ## Workflow: When a user asks a question
 - Answer from your knowledge of the world
@@ -794,12 +826,62 @@ through conversation with its builders.
 
 ## Workflow: When you receive a build event
 - Messages with [BUILD COMPLETE] or [BUILD FAILED] prefix come from the harness
+- Verify with playwright-cli before saving (see Step 4)
 - Summarize results for the user
 - If failed, analyze and suggest fixes
 
+## Knowledge: General vs World-Specific
+
+You will learn things while building. Some learnings apply ONLY to your world. Others
+apply to ALL creative mode worlds. Knowing the difference matters — general learnings
+should be contributed back so every mayor benefits.
+
+### World-Specific Knowledge (save to your MEMORY.md)
+- Your world's aesthetic, lore, design decisions
+- Player preferences and feedback
+- What features exist in your world and how they work
+- Layout, room structure, entity positions
+- Anything that only makes sense in YOUR world's context
+
+Examples:
+- "The tavern has a fireplace entity at (400, 200) with warm orange lighting"
+- "Player prefers isometric camera angle for this world"
+- "We decided to use pixel art style with 16x16 sprites"
+
+### General Creative Mode Knowledge (contribute as a PR)
+- Build gotchas that affect all worlds (Bevy patterns, Trunk issues, WASM quirks)
+- Common pitfalls and their fixes
+- New Bevy 0.18 patterns you discovered that should be documented
+- Corrections to existing CLAUDE.md documentation that was wrong or incomplete
+- Better ways to structure components, resources, or systems
+- WASM-specific workarounds that every world needs to know
+
+Examples:
+- "Bevy 0.18 requires Reflect + register_type for debug queries — existing docs were missing this"
+- "wasm-bindgen 0.2.108 panics if you use X pattern — use Y instead"
+- "Trunk silently fails if Cargo.toml has feature Z — add this to Common Build Issues"
+- "Lightyear rollback breaks if component doesn't implement PartialEq"
+
+### How to Contribute General Learnings
+When you discover something ALL worlds should know:
+1. Identify the target file:
+   - templates/3d/CLAUDE.md — 3D game development (Bevy + Lightyear)
+   - templates/2d/CLAUDE.md — 2D game development (Bevy WASM rooms)
+   - harness/CLAUDE.md — harness server patterns
+   - CLAUDE.md (root) — general project knowledge
+2. Use the contribute-learning skill to submit a PR
+3. Keep contributions focused — one learning per PR
+4. Write clearly: what the issue is, why it matters, how to handle it
+5. Share the PR link in Discord so the team can review
+
+DO NOT contribute world-specific details as PRs. If you're unsure, it's world-specific.
+DO contribute anything that would have saved you time if you'd known it earlier.
+
 ## Important
 - NEVER skip clarification for ambiguous requests
+- NEVER save a checkpoint without verifying with playwright-cli first
 - ALWAYS compose a detailed prompt for world-build — don't just forward the user's message
+- ALWAYS contribute general learnings as PRs — don't hoard knowledge in your MEMORY.md
 - You speak as {{.Name}}, not as "an AI assistant"
 - Your world is a {{.TemplateType}} world — be aware of what's possible
 `
@@ -810,7 +892,7 @@ through conversation with its builders.
 **File**: `harness/internal/mayor/user.go` (new)
 **File**: `harness/internal/mayor/skills.go` (new)
 
-Same as original plan — `IDENTITY.md` (name + role), `USER.md` (world context), `world-build` skill (curl to `/api/mayor/build`), `world-status` skill (curl to `/api/mayor/status`).
+Same as original plan — `IDENTITY.md` (name + role), `USER.md` (world context), `world-build` skill (curl to `/api/mayor/build`), `world-status` skill (curl to `/api/mayor/status`), `contribute-learning` skill (curl to `/api/mayor/contribute-learning`).
 
 #### 5. Discord channel creation + invite management
 **File**: `harness/internal/mayor/discord.go` (new)
@@ -1028,7 +1110,179 @@ _ = o.db.InsertMayorActivity(ctx, sqlc.InsertMayorActivityParams{
 })
 ```
 
-#### 5. Route registration
+#### 5. Contribute-learning handler
+**File**: `harness/internal/server/mayor_api.go`
+
+Mayors can submit general learnings as PRs to the creative-mode repo. The harness
+creates the branch, applies the edit, and opens a PR via the GitHub API.
+
+```go
+func (s *Server) handleContributeLearning(c echo.Context) error {
+    world := c.Get("mayor_world").(*sqlc.World)
+
+    var req struct {
+        TargetFile  string `json:"target_file"`  // e.g. "templates/2d/CLAUDE.md"
+        Section     string `json:"section"`       // e.g. "Common Build Issues"
+        Learning    string `json:"learning"`      // the content to add
+        Description string `json:"description"`   // PR title/description
+    }
+    if err := c.Bind(&req); err != nil {
+        return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
+    }
+
+    // Validate target file is in the allowlist.
+    allowedTargets := map[string]bool{
+        "templates/3d/CLAUDE.md": true,
+        "templates/2d/CLAUDE.md": true,
+        "harness/CLAUDE.md":      true,
+        "CLAUDE.md":              true,
+    }
+    if !allowedTargets[req.TargetFile] {
+        return echo.NewHTTPError(http.StatusBadRequest,
+            "target_file must be one of: templates/3d/CLAUDE.md, templates/2d/CLAUDE.md, harness/CLAUDE.md, CLAUDE.md")
+    }
+
+    // Create branch, apply edit, push, create PR.
+    prURL, err := s.MayorManager.CreateLearningPR(
+        world.MayorName.String,
+        world.Name,
+        req.TargetFile,
+        req.Section,
+        req.Learning,
+        req.Description,
+    )
+    if err != nil {
+        return echo.NewHTTPError(http.StatusInternalServerError, "failed to create PR: "+err.Error())
+    }
+
+    // Log to mayor_activity.
+    _ = s.DB.InsertMayorActivity(ctx, sqlc.InsertMayorActivityParams{
+        ID:           uuid.NewString(),
+        WorldID:      world.ID,
+        ActivityType: "learning_contributed",
+        Detail:       sql.NullString{String: fmt.Sprintf(`{"pr_url":"%s","target":"%s"}`, prURL, req.TargetFile), Valid: true},
+        CreatedAt:    time.Now(),
+    })
+
+    return c.JSON(http.StatusOK, map[string]string{"pr_url": prURL})
+}
+```
+
+#### 6. Learning PR creation logic
+**File**: `harness/internal/mayor/learning.go` (new)
+
+Creates a PR on `https://github.com/coreycole/creative-mode` using the GitHub API.
+The harness needs a `GITHUB_TOKEN` env var with repo push access.
+
+```go
+func (m *Manager) CreateLearningPR(
+    mayorName, worldName, targetFile, section, learning, description string,
+) (prURL string, err error) {
+    // 1. Read the target file from the repo working tree.
+    content, err := os.ReadFile(filepath.Join(m.repoRoot, targetFile))
+    if err != nil {
+        return "", fmt.Errorf("reading %s: %w", targetFile, err)
+    }
+
+    // 2. Apply the learning.
+    //    If section is specified, find the section header and append after it.
+    //    If not, append to the end of the file.
+    newContent := applyLearning(string(content), section, learning)
+
+    // 3. Create branch via GitHub API.
+    branchName := fmt.Sprintf("mayor/%s/%s", sanitizeBranchName(mayorName),
+        time.Now().Format("2006-01-02-150405"))
+
+    // 4. Create commit on branch with the modified file.
+    // 5. Create PR.
+    //    Title: "[Mayor: {mayorName}] {description}"
+    //    Body: "## Learning from {mayorName} (Mayor of {worldName})\n\n{learning}\n\n---\nTarget: `{targetFile}`\nSection: {section}"
+    //    Base: main
+    //    Head: branchName
+
+    return prURL, nil
+}
+```
+
+The `applyLearning` function intelligently inserts the learning:
+- If `section` matches an existing `##` or `###` header, append the learning below that section
+- If no match, append a new subsection at the end of the file
+- Always add a blank line before the learning for clean formatting
+
+**Rate limiting**: One PR per mayor per hour to prevent spam. Tracked in `mayor_activity`.
+
+#### 7. Contribute-learning skill definition
+**File**: `harness/internal/mayor/skills.go`
+
+Added alongside `world-build` and `world-status`:
+
+```go
+const contributeLearningSkill = `---
+name: contribute-learning
+description: >
+  Submit a general Creative Mode learning as a pull request to the platform repo.
+  Use when you discover a build pattern, gotcha, or fix that ALL worlds should know.
+  Do NOT use for world-specific knowledge — save that to MEMORY.md instead.
+---
+
+# Contribute Learning
+
+Submit a general learning that benefits all Creative Mode mayors and worlds.
+
+## When to Use
+
+Use this skill when you discover something that:
+- Applies to ALL {{.TemplateType}} worlds, not just yours
+- Would have saved you time if you'd known it earlier
+- Corrects or improves existing documentation
+- Documents a Bevy/Trunk/WASM pattern or gotcha
+
+Do NOT use for world-specific details (aesthetics, layout, player preferences).
+
+## How to Use
+
+curl -s -X POST {{.HarnessURL}}/api/mayor/contribute-learning \
+  -H "X-Mayor-Secret: {{.MayorSecret}}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "target_file": "TARGET",
+    "section": "SECTION_HEADER",
+    "learning": "CONTENT",
+    "description": "SHORT_DESCRIPTION"
+  }'
+
+## Target Files
+
+| File | What belongs here |
+|------|------------------|
+| templates/3d/CLAUDE.md | 3D world development: Bevy + Lightyear, server-authoritative patterns, replication |
+| templates/2d/CLAUDE.md | 2D world development: Bevy WASM, room system, data-driven content |
+| harness/CLAUDE.md | Harness server patterns: Datastar, SSE, templ, DB queries |
+| CLAUDE.md | General project: Docker, build system, debugging tools |
+
+## Response
+
+Returns {"pr_url": "https://github.com/coreycole/creative-mode/pull/123"}
+
+Share the PR URL in Discord so the team can review and merge it.
+
+## Examples
+
+### Build gotcha
+target_file: "templates/2d/CLAUDE.md"
+section: "Common Build Issues"
+learning: "| Bevy panics on startup | Missing default_font feature | Add default_font to Bevy features in Cargo.toml |"
+description: "Document missing default_font panic"
+
+### New pattern
+target_file: "templates/3d/CLAUDE.md"
+section: "Key Patterns"
+learning: "- When adding physics colliders, always set the CollisionGroups on both client and server. Mismatched groups cause ghost collisions where the server resolves differently than the client prediction."
+description: "Document CollisionGroups requirement for physics"
+`
+```
+
+#### 8. Route registration
 **File**: `harness/internal/server/server.go`
 
 ```go
@@ -1037,6 +1291,7 @@ mayor := e.Group("/api/mayor")
 mayor.Use(s.mayorAuthMiddleware)
 mayor.POST("/build", s.handleMayorBuild)
 mayor.GET("/status", s.handleMayorStatus)
+mayor.POST("/contribute-learning", s.handleContributeLearning)
 ```
 
 ### Success Criteria
@@ -1044,6 +1299,7 @@ mayor.GET("/status", s.handleMayorStatus)
 #### Automated Verification:
 - [ ] `cd /Users/coreycole/cdev/creative-mode/harness && just generate && go build ./... && just lint`
 - [ ] `curl -X POST localhost:8080/api/mayor/build -H "X-Mayor-Secret: ..." -d '{"world_id":"...","prompt":"..."}' ` returns 200
+- [ ] `curl -X POST localhost:8080/api/mayor/contribute-learning -H "X-Mayor-Secret: ..." -d '{"target_file":"templates/2d/CLAUDE.md","section":"Common Build Issues","learning":"...","description":"..."}' ` returns 200 with `pr_url`
 
 #### Manual Verification:
 - [ ] Mayor build API triggers the full pipeline
@@ -1051,6 +1307,11 @@ mayor.GET("/status", s.handleMayorStatus)
 - [ ] Mayor responds in Discord summarizing results
 - [ ] `mayor_builds` table has a row with status, duration, checkpoint_id
 - [ ] `mayor_activity` table has `build_triggered` and `build_completed` entries
+- [ ] Contribute-learning creates a real PR on `https://github.com/coreycole/creative-mode`
+- [ ] PR title has `[Mayor: {name}]` prefix
+- [ ] PR targets the correct file and section
+- [ ] `mayor_activity` has `learning_contributed` entry with PR URL
+- [ ] Rate limit: second PR within 1 hour is rejected
 
 ---
 
@@ -1500,8 +1761,9 @@ var editableFiles = map[string]bool{
 }
 
 var readOnlyFiles = map[string]bool{
-    "skills/world-build/SKILL.md":  true,
-    "skills/world-status/SKILL.md": true,
+    "skills/world-build/SKILL.md":          true,
+    "skills/world-status/SKILL.md":         true,
+    "skills/contribute-learning/SKILL.md":  true,
 }
 ```
 
@@ -1665,6 +1927,7 @@ Each phase builds on the previous and is independently testable.
 | Discord guild | `.env` | `DISCORD_GUILD_ID` |
 | GitHub OAuth app | Developer Settings | Optional account linking |
 | `ANTHROPIC_API_KEY` | Already configured | Claude Code + OpenClaw |
+| `GITHUB_TOKEN` | `.env` | GitHub API for learning PRs (repo push access) |
 
 ## File Inventory
 
@@ -1689,7 +1952,8 @@ Each phase builds on the previous and is independently testable.
 | `harness/internal/mayor/discord.go` | 3 | Discord channel management |
 | `harness/internal/mayor/openclaw.go` | 3 | CLI integration (agent CRUD) |
 | `harness/internal/mayor/openclaw_query.go` | 6 | CLI wrappers (dashboard queries) |
-| `harness/internal/server/mayor_api.go` | 4 | Build + status API (mayor secret auth) |
+| `harness/internal/mayor/learning.go` | 4 | Learning PR creation via GitHub API |
+| `harness/internal/server/mayor_api.go` | 4 | Build + status + contribute-learning API (mayor secret auth) |
 | `harness/internal/server/world_invite.go` | 3 | Invite/revoke handlers |
 | `harness/internal/discord/listener.go` | 5 | discordgo Gateway listener |
 | `harness/views/world/chat.templ` | 5 | Mayor chat component |

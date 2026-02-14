@@ -41,6 +41,16 @@ _compose environment cmd opts='' *args='':
     -f $(if [ '{{environment}}' = 'local' ]; then echo 'docker-compose.yml'; else echo "docker-compose.{{environment}}.yml"; fi) \
     {{cmd}} {{opts}} {{args}}
 
+# Docker production commands
+@prod-up *args:
+  just _compose prod up '-d --build --remove-orphans' {{args}}
+
+@prod-down *args:
+  just _compose prod down {{args}}
+
+prod-tail service="app" lines="50":
+  @docker logs --tail {{lines}} creative-mode-site-prod-{{service}}-1
+
 # Docker shell access
 docker-shell service="app":
   @echo "Opening shell in {{service}} container..."

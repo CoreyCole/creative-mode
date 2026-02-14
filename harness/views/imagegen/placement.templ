@@ -144,7 +144,7 @@ templ PlacementTargets(room RoomInfo, hotspots []HotspotInfo, hasBackground bool
 				})
 			</div>
 			@button.Button(button.ButtonArgs{
-				Size: "sm",
+				Size:  "sm",
 				Class: "w-full text-[11px]",
 				Attributes: templ.Attributes{
 					"data-on:click":           datastar.PostSSE(fmt.Sprintf("/api/rooms/%s/place/new", room.ID)),

@@ -41,19 +41,20 @@ pub struct CameraFitScale(pub f32);
 #[derive(Resource)]
 pub struct PendingTap(pub Option<Vec2>);
 
-/// Tracking state for two-finger gestures (pan + pinch).
+/// Tracking state for two-finger pinch-to-zoom.
 #[derive(Resource, Default)]
 struct TouchState {
-    prev_midpoint: Option<Vec2>,
     prev_distance: Option<f32>,
 }
 
-/// Single-finger tap tracking.
+/// Single-finger tap and drag tracking.
 #[derive(Default)]
 struct TapTracker {
     start_pos: Option<Vec2>,
+    prev_pos: Option<Vec2>,
     start_time: Option<f64>,
     cancelled: bool,
+    dragging: bool,
 }
 
 /// Spawn the 2D camera.
@@ -125,25 +126,22 @@ fn resize_camera(
     }
 }
 
-/// Two-finger pan and pinch-to-zoom.
+/// Two-finger pinch-to-zoom.
 fn touch_camera_system(
     touches: Res<Touches>,
     mut touch_state: ResMut<TouchState>,
     mut projection_q: Query<&mut Projection, With<Camera2d>>,
-    mut camera_transform: Query<&mut Transform, With<Camera2d>>,
     fit_scale: Res<CameraFitScale>,
 ) {
     let active: Vec<_> = touches.iter().collect();
 
     if active.len() < 2 {
-        touch_state.prev_midpoint = None;
         touch_state.prev_distance = None;
         return;
     }
 
     let p0 = active[0].position();
     let p1 = active[1].position();
-    let midpoint = (p0 + p1) / 2.0;
     let distance = p0.distance(p1);
 
     let Ok(mut projection) = projection_q.single_mut() else {
@@ -152,18 +150,6 @@ fn touch_camera_system(
     let Some(current_scale) = get_ortho_scale(&projection) else {
         return;
     };
-    let Ok(mut transform) = camera_transform.single_mut() else {
-        return;
-    };
-
-    // Pan: translate camera by midpoint delta, scaled to world units.
-    if let Some(prev_mid) = touch_state.prev_midpoint {
-        let delta = midpoint - prev_mid;
-        // Screen delta → world delta: multiply by projection scale.
-        // Y is inverted (screen Y down, world Y up).
-        transform.translation.x -= delta.x * current_scale;
-        transform.translation.y += delta.y * current_scale;
-    }
 
     // Pinch: adjust scale by ratio of distances.
     if let Some(prev_dist) = touch_state.prev_distance {
@@ -174,15 +160,16 @@ fn touch_camera_system(
         }
     }
 
-    touch_state.prev_midpoint = Some(midpoint);
     touch_state.prev_distance = Some(distance);
 }
 
-/// Detect single-finger taps and set PendingTap resource.
+/// Detect single-finger taps and drag-to-pan.
 fn touch_tap_system(
     touches: Res<Touches>,
     mut tap_tracker: Local<TapTracker>,
     mut pending_tap: ResMut<PendingTap>,
+    mut camera_transform: Query<&mut Transform, With<Camera2d>>,
+    projection_q: Query<&Projection, With<Camera2d>>,
     time: Res<Time>,
 ) {
     let active_count = touches.iter().count();
@@ -190,19 +177,57 @@ fn touch_tap_system(
     // Cancel if second finger appears.
     if active_count > 1 {
         tap_tracker.cancelled = true;
+        tap_tracker.dragging = false;
         return;
     }
 
     // Detect new press.
     for touch in touches.iter_just_pressed() {
         tap_tracker.start_pos = Some(touch.position());
+        tap_tracker.prev_pos = Some(touch.position());
         tap_tracker.start_time = Some(time.elapsed_secs_f64());
         tap_tracker.cancelled = false;
+        tap_tracker.dragging = false;
+    }
+
+    // Track movement for single-finger drag-to-pan.
+    if active_count == 1 && !tap_tracker.cancelled {
+        if let Some(touch) = touches.iter().next() {
+            let current_pos = touch.position();
+
+            // Check if we should start dragging (>10px from start).
+            if !tap_tracker.dragging {
+                if let Some(start_pos) = tap_tracker.start_pos {
+                    if current_pos.distance(start_pos) > 10.0 {
+                        tap_tracker.dragging = true;
+                    }
+                }
+            }
+
+            // Apply pan delta while dragging.
+            if tap_tracker.dragging {
+                if let Some(prev_pos) = tap_tracker.prev_pos {
+                    let delta = current_pos - prev_pos;
+                    if let (Ok(mut transform), Ok(projection)) =
+                        (camera_transform.single_mut(), projection_q.single())
+                    {
+                        if let Some(scale) = get_ortho_scale(projection) {
+                            // Screen delta → world delta: multiply by projection scale.
+                            // Y is inverted (screen Y down, world Y up).
+                            transform.translation.x -= delta.x * scale;
+                            transform.translation.y += delta.y * scale;
+                        }
+                    }
+                }
+            }
+
+            tap_tracker.prev_pos = Some(current_pos);
+        }
     }
 
     // Detect release.
     for touch in touches.iter_just_released() {
-        if tap_tracker.cancelled {
+        if tap_tracker.cancelled || tap_tracker.dragging {
             *tap_tracker = TapTracker::default();
             continue;
         }

@@ -1,55 +1,64 @@
 package world
 
 import (
-	"fmt"
 	"creative-mode/harness/internal/db/sqlc"
 	"creative-mode/harness/views/dsutil"
 	"creative-mode/harness/views/layout"
+	"fmt"
 )
 
 templ Page(w sqlc.World, cp sqlc.Checkpoint, user *sqlc.User, signals OverlaySignals, serverPort int, trunkPort int, checkpoints []sqlc.Checkpoint) {
 	@layout.Base(w.Name) {
 		if w.TemplateType == "2d" {
 			if trunkPort > 0 {
-				<iframe id="game-frame"
+				<iframe
+					id="game-frame"
 					src={ fmt.Sprintf("http://localhost:%d/", trunkPort) }
 					style="touch-action: none;"
-					class="fixed top-0 left-0 w-screen h-screen border-none z-0">
-				</iframe>
+					class="fixed top-0 left-0 w-screen h-screen border-none z-0"
+				></iframe>
 			} else if cp.WasmPath.Valid {
-				<iframe id="game-frame"
+				<iframe
+					id="game-frame"
 					src={ fmt.Sprintf("/wasm/%s/%s/index.html", w.ID, cp.ID) }
 					style="touch-action: none;"
-					class="fixed top-0 left-0 w-screen h-screen border-none z-0">
-				</iframe>
+					class="fixed top-0 left-0 w-screen h-screen border-none z-0"
+				></iframe>
 			} else {
 				<iframe id="game-frame" style="touch-action: none;" class="fixed top-0 left-0 w-screen h-screen border-none z-0"></iframe>
 			}
 		} else if trunkPort > 0 && serverPort > 0 {
-			<iframe id="game-frame"
+			<iframe
+				id="game-frame"
 				src={ fmt.Sprintf("http://localhost:%d/?server_port=%d", trunkPort, serverPort) }
 				style="touch-action: none;"
-				class="fixed top-0 left-0 w-screen h-screen border-none z-0">
-			</iframe>
+				class="fixed top-0 left-0 w-screen h-screen border-none z-0"
+			></iframe>
 		} else if serverPort > 0 {
-			<iframe id="game-frame"
+			<iframe
+				id="game-frame"
 				src={ fmt.Sprintf("/wasm/%s/%s/index.html?server_port=%d", w.ID, cp.ID, serverPort) }
 				style="touch-action: none;"
-				class="fixed top-0 left-0 w-screen h-screen border-none z-0">
-			</iframe>
+				class="fixed top-0 left-0 w-screen h-screen border-none z-0"
+			></iframe>
 		} else {
 			<iframe id="game-frame" style="touch-action: none;" class="fixed top-0 left-0 w-screen h-screen border-none z-0"></iframe>
 		}
-		<div id="harness-overlay"
+		<div
+			id="harness-overlay"
 			class="fixed top-0 left-0 w-screen h-screen z-10 pointer-events-none [&>*]:pointer-events-auto"
 			data-signals={ templ.JSONString(signals) }
 			data-init={ dsutil.GetSSENoCancel(fmt.Sprintf("/world/%s/events", w.ID)) }
-			data-on:keydown__window="evt.code === 'Backquote' && !evt.target.matches('input, textarea') && (evt.preventDefault(), $overlay_expanded = !$overlay_expanded, !$overlay_expanded && window.focusGameFrame())">
+			data-on:keydown__window="evt.code === 'Backquote' && !evt.target.matches('input, textarea') && (evt.preventDefault(), $overlay_expanded = !$overlay_expanded, !$overlay_expanded && window.focusGameFrame())"
+		>
 			// Hidden triggers — clicked from game-loader.js postMessage bridge
 			<button id="game-cursor-lock-trigger" class="hidden" data-on:click="$overlay_expanded = false"></button>
 			<button id="game-cursor-unlock-trigger" class="hidden" data-on:click="$overlay_expanded = true; $unread_count = 0"></button>
-			<button id="game-overlay-toggle-trigger" class="hidden"
-				data-on:click="$overlay_expanded = !$overlay_expanded; !$overlay_expanded && window.focusGameFrame()"></button>
+			<button
+				id="game-overlay-toggle-trigger"
+				class="hidden"
+				data-on:click="$overlay_expanded = !$overlay_expanded; !$overlay_expanded && window.focusGameFrame()"
+			></button>
 			@Overlay(w, cp, checkpoints)
 		</div>
 		<script src="/static/game-loader.js"></script>

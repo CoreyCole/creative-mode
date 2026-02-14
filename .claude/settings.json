@@ -1,4 +1,28 @@
 {
+  "permissions": {
+    "deny": [
+      "Bash(cargo build:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(cargo check:*)",
+      "Bash(go build:*)",
+      "Bash(templ generate:*)",
+      "Bash(just generate:*)"
+    ],
+    "allow": [
+      "WebSearch",
+      "Bash(find:*)",
+      "Bash(just:*)",
+      "Bash(playwright-cli:*)",
+      "WebFetch(domain:data-star.dev)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:datastar-ui.com)",
+      "WebFetch(domain:bevy-cheatbook.github.io)",
+      "WebFetch(domain:templ.guide)",
+      "WebFetch(domain:bevy.org)",
+      "WebFetch(domain:trunkrs.dev)",
+      "WebFetch(domain:docs.openclaw.ai)"
+    ]
+  },
   "hooks": {
     "Stop": [
       {

@@ -9,18 +9,26 @@ import (
 templ ChatPanel() {
 	<div class="w-full md:w-80 flex flex-col border-t md:border-t-0 md:border-l border-border bg-[#111]">
 		<div class="flex border-b border-border">
-			<button class="flex-1 py-2 bg-transparent border-b-2 border-transparent text-muted-foreground cursor-pointer text-[13px] hover:text-foreground/80"
+			<button
+				class="flex-1 py-2 bg-transparent border-b-2 border-transparent text-muted-foreground cursor-pointer text-[13px] hover:text-foreground/80"
 				data-on:click={ CE.SelectTab("global") }
-				data-class={ CE.TabActiveClass("global") }>Global</button>
-			<button class="flex-1 py-2 bg-transparent border-b-2 border-transparent text-muted-foreground cursor-pointer text-[13px] hover:text-foreground/80"
+				data-class={ CE.TabActiveClass("global") }
+			>Global</button>
+			<button
+				class="flex-1 py-2 bg-transparent border-b-2 border-transparent text-muted-foreground cursor-pointer text-[13px] hover:text-foreground/80"
 				data-on:click={ CE.SelectTab("world") }
-				data-class={ CE.TabActiveClass("world") }>World</button>
-			<button class="flex-1 py-2 bg-transparent border-b-2 border-transparent text-muted-foreground cursor-pointer text-[13px] hover:text-foreground/80"
+				data-class={ CE.TabActiveClass("world") }
+			>World</button>
+			<button
+				class="flex-1 py-2 bg-transparent border-b-2 border-transparent text-muted-foreground cursor-pointer text-[13px] hover:text-foreground/80"
 				data-on:click={ CE.SelectLineageTab() }
-				data-class={ CE.TabActiveClass("lineage") }>Lineage</button>
-			<button class="flex-1 py-2 bg-transparent border-b-2 border-transparent text-muted-foreground cursor-pointer text-[13px] hover:text-foreground/80"
+				data-class={ CE.TabActiveClass("lineage") }
+			>Lineage</button>
+			<button
+				class="flex-1 py-2 bg-transparent border-b-2 border-transparent text-muted-foreground cursor-pointer text-[13px] hover:text-foreground/80"
 				data-on:click={ CE.SelectAssetsTab() }
-				data-class={ CE.TabActiveClass("assets") }>Assets</button>
+				data-class={ CE.TabActiveClass("assets") }
+			>Assets</button>
 		</div>
 		<div id="chat-log" class="flex-1 overflow-y-auto px-3 py-2 flex flex-col gap-1" data-show="$active_tab !== 'lineage' && $active_tab !== 'assets'"></div>
 		<div id="lineage-view" class="flex-1 overflow-y-auto px-3 py-2 flex flex-col gap-1" data-show="$active_tab === 'lineage'" style="display: none;"></div>

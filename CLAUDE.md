@@ -71,8 +71,12 @@ playwright-cli run-code "async page => { await page.evaluate(async () => { await
 
 ## Build & Check
 
+**NEVER run `cargo build/clippy/check`, `go build`, `templ generate`, or `just generate` directly on the host.** The Docker container bind-mounts the project root, so host-side cargo writes to the same `target/` directories that trunk uses inside Docker, corrupting incremental builds and crashing the WASM server. These commands are denied in `.claude/settings.json`.
+
+**Always use `just check` from the project root:**
+
 ```bash
-just check          # verify Go + Rust + WASM all compile
+just check          # verify Go + Rust + WASM all compile (uses isolated CARGO_TARGET_DIR)
 just fmt            # format all code
 just setup          # run setup (includes playwright-cli)
 ```

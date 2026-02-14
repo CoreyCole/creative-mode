@@ -16,9 +16,9 @@ templ ChatInputBar() {
 	@button.Button(button.ButtonArgs{
 		Size: "sm",
 		Attributes: templ.Attributes{
-			"data-on:click":          datastar.PostSSE("/api/chat"),
+			"data-on:click":           datastar.PostSSE("/api/chat"),
 			"data-indicator-fetching": true,
-			"data-attr-disabled":     "$fetching",
+			"data-attr-disabled":      "$fetching",
 		},
 	}) {
 		Send

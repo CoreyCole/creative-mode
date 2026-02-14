@@ -6,12 +6,16 @@ failed=0
 
 # Run formatters in parallel, capture output only on failure.
 go_out=$(mktemp)
+templ_out=$(mktemp)
 rs_3d_out=$(mktemp)
 rs_2d_out=$(mktemp)
-trap 'rm -f "$go_out" "$rs_3d_out" "$rs_2d_out"' EXIT
+trap 'rm -f "$go_out" "$templ_out" "$rs_3d_out" "$rs_2d_out"' EXIT
 
 (cd "$ROOT/harness" && golangci-lint fmt ./... 2>&1) >"$go_out" 2>&1 &
 pid_go=$!
+
+(cd "$ROOT/harness" && templ fmt . 2>&1) >"$templ_out" 2>&1 &
+pid_templ=$!
 
 (cd "$ROOT/templates/3d" && cargo fmt 2>&1) >"$rs_3d_out" 2>&1 &
 pid_rs_3d=$!
@@ -25,6 +29,14 @@ if wait $pid_go; then
 else
   echo "FAIL  harness (go fmt)"
   cat "$go_out"
+  failed=1
+fi
+
+if wait $pid_templ; then
+  echo "  ok  harness (templ fmt)"
+else
+  echo "FAIL  harness (templ fmt)"
+  cat "$templ_out"
   failed=1
 fi
 

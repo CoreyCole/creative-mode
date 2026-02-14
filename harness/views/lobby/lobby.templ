@@ -11,8 +11,10 @@ import (
 
 templ Page(user *sqlc.User, worlds []sqlc.World) {
 	@layout.Base("Lobby") {
-		<div class="flex flex-col min-h-screen"
-			data-signals={ templ.JSONString(DefaultLobbySignals()) }>
+		<div
+			class="flex flex-col min-h-screen"
+			data-signals={ templ.JSONString(DefaultLobbySignals()) }
+		>
 			<header class="flex justify-between items-center px-6 py-3 border-b border-border bg-[#111]">
 				<h1 class="text-lg font-semibold">Creative Mode</h1>
 				<div class="flex items-center gap-2">
@@ -21,8 +23,10 @@ templ Page(user *sqlc.User, worlds []sqlc.World) {
 					}
 					<span>{ user.GitHubUsername }</span>
 					if user.Role == "admin" {
-						<a href="/admin/users"
-							class="inline-flex items-center justify-center rounded-md border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground h-8 px-3 text-sm font-medium">
+						<a
+							href="/admin/users"
+							class="inline-flex items-center justify-center rounded-md border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground h-8 px-3 text-sm font-medium"
+						>
 							Admin
 						</a>
 					}
@@ -38,8 +42,10 @@ templ Page(user *sqlc.User, worlds []sqlc.World) {
 					<h2 class="mb-4">Worlds</h2>
 					<div class="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3 mb-6">
 						for _, w := range worlds {
-							<a href={ templ.SafeURL("/world/" + w.ID) }
-								class="block p-4 border border-border rounded-lg bg-card hover:border-muted-foreground/40 transition-colors no-underline text-inherit">
+							<a
+								href={ templ.SafeURL("/world/" + w.ID) }
+								class="block p-4 border border-border rounded-lg bg-card hover:border-muted-foreground/40 transition-colors no-underline text-inherit"
+							>
 								<h3 class="text-base mb-1">{ w.Name }</h3>
 								if w.Description.Valid {
 									<p class="text-muted-foreground text-[13px]">{ w.Description.String }</p>
@@ -56,17 +62,20 @@ templ Page(user *sqlc.User, worlds []sqlc.World) {
 						</select>
 						@button.Button(button.ButtonArgs{
 							Attributes: templ.Attributes{
-								"data-on:click__prevent": "@post('/world/create', {contentType: 'form'})",
+								"data-on:click__prevent":  "@post('/world/create', {contentType: 'form'})",
 								"data-indicator-fetching": true,
-								"data-attr-disabled":     "$fetching",
+								"data-attr-disabled":      "$fetching",
 							},
 						}) {
 							Create World
 						}
 					</form>
 				</div>
-				<div class="w-80 flex flex-col border-l border-border bg-[#111]" id="chat-panel"
-					data-init={ datastar.GetSSE("/events") }>
+				<div
+					class="w-80 flex flex-col border-l border-border bg-[#111]"
+					id="chat-panel"
+					data-init={ datastar.GetSSE("/events") }
+				>
 					<h3 class="px-4 py-3 border-b border-border text-sm font-semibold">Global Chat</h3>
 					<div id="chat-log" class="flex-1 overflow-y-auto px-3 py-2 flex flex-col gap-1"></div>
 					<div class="flex gap-1.5 px-3 py-2 border-t border-border">

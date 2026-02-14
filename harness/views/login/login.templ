@@ -10,8 +10,10 @@ templ Page(devMode bool) {
 		<div class="flex flex-col items-center justify-center min-h-screen gap-4">
 			<h1 class="text-3xl font-bold">Creative Mode</h1>
 			<p class="text-muted-foreground">Collaborative game development with AI</p>
-			<a href="/auth/github/login"
-				class="inline-flex items-center justify-center rounded-md bg-primary text-primary-foreground shadow-xs hover:bg-primary/90 h-9 px-4 py-2 text-sm font-medium">
+			<a
+				href="/auth/github/login"
+				class="inline-flex items-center justify-center rounded-md bg-primary text-primary-foreground shadow-xs hover:bg-primary/90 h-9 px-4 py-2 text-sm font-medium"
+			>
 				Sign in with GitHub
 			</a>
 			if devMode {

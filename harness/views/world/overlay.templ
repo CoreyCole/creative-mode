@@ -1,9 +1,9 @@
 package world
 
 import (
-	"fmt"
 	"creative-mode/harness/internal/db/sqlc"
 	"creative-mode/harness/views/chat"
+	"fmt"
 	"github.com/coreycole/datastarui/components/button"
 	"github.com/coreycole/datastarui/components/input"
 	"github.com/starfederation/datastar-go/datastar"
@@ -24,36 +24,38 @@ templ Overlay(w sqlc.World, cp sqlc.Checkpoint, checkpoints []sqlc.Checkpoint) {
 	</div>
 	// Minimized state — starts visible (overlay_expanded defaults to false)
 	<div class="fixed bottom-4 right-4" data-show="!$overlay_expanded">
-		<button class="w-12 h-12 rounded-full bg-primary/90 border-none text-primary-foreground font-bold text-sm cursor-pointer relative"
-			data-on:click={ OE.Expand() }>
+		<button
+			class="w-12 h-12 rounded-full bg-primary/90 border-none text-primary-foreground font-bold text-sm cursor-pointer relative"
+			data-on:click={ OE.Expand() }
+		>
 			CM
-			<span class="absolute -top-1 -right-1 bg-destructive text-white text-[10px] rounded-full w-[18px] h-[18px] flex items-center justify-center"
-				data-show="$unread_count > 0" data-text="$unread_count" style="display: none;"></span>
+			<span
+				class="absolute -top-1 -right-1 bg-destructive text-white text-[10px] rounded-full w-[18px] h-[18px] flex items-center justify-center"
+				data-show="$unread_count > 0"
+				data-text="$unread_count"
+				style="display: none;"
+			></span>
 		</button>
 	</div>
 }
 
 templ OverlayTopBar(w sqlc.World) {
-	<div class="bg-[rgba(17,17,17,0.92)] backdrop-blur-lg px-2 md:px-4 py-2 flex items-center justify-between border-b border-border">
-		<div class="flex items-center gap-3">
-			<span class="font-bold text-sm">Creative Mode</span>
-			<span class="text-muted-foreground text-[13px] truncate">{ w.Name }</span>
+	<div class="bg-[rgba(17,17,17,0.92)] backdrop-blur-lg px-2 md:px-4 py-2 flex flex-col gap-1 border-b border-border">
+		<div class="flex items-center justify-between">
+			<a href="/" class="font-bold text-sm hover:text-primary transition-colors">Creative Mode</a>
+			<div class="flex items-center gap-1.5">
+				@button.Button(button.ButtonArgs{Size: "sm", Variant: "outline", Attributes: templ.Attributes{"data-on:click": OE.ToggleTree()}}) {
+					Tree
+				}
+				@button.Button(button.ButtonArgs{Size: "sm", Variant: "outline", Attributes: templ.Attributes{"data-on:click": "document.getElementById('game-frame').contentWindow.postMessage({type:'reload-room'},'*')"}}) {
+					Reload
+				}
+				@button.Button(button.ButtonArgs{Size: "sm", Variant: "ghost", Attributes: templ.Attributes{"data-on:click": OE.Minimize()}}) {
+					—
+				}
+			</div>
 		</div>
-		<div class="flex items-center gap-1.5 flex-wrap md:flex-nowrap">
-			@button.Button(button.ButtonArgs{Size: "sm", Variant: "outline", Attributes: templ.Attributes{"data-on:click": OE.ToggleTree()}}) {
-				Tree
-			}
-			@button.Button(button.ButtonArgs{Size: "sm", Variant: "outline", Attributes: templ.Attributes{"data-on:click": "document.getElementById('game-frame').contentWindow.postMessage({type:'reload-room'},'*')"}}) {
-				Reload
-			}
-			<a href="/"
-				class="inline-flex items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50 h-8 px-3 text-sm font-medium">
-				Lobby
-			</a>
-			@button.Button(button.ButtonArgs{Size: "sm", Variant: "ghost", Attributes: templ.Attributes{"data-on:click": OE.Minimize()}}) {
-				—
-			}
-		</div>
+		<div class="text-muted-foreground text-[13px]">{ w.Name }</div>
 	</div>
 }
 
@@ -67,17 +69,19 @@ templ OverlayBottomBar(w sqlc.World) {
 			})
 			@button.Button(button.ButtonArgs{
 				Attributes: templ.Attributes{
-					"data-on:click":          datastar.PostSSE(fmt.Sprintf("/world/%s/prompt", w.ID)),
+					"data-on:click":           datastar.PostSSE(fmt.Sprintf("/world/%s/prompt", w.ID)),
 					"data-indicator-fetching": true,
-					"data-attr-disabled":     "$fetching",
+					"data-attr-disabled":      "$fetching",
 				},
 			}) {
 				Build
 			}
 		</div>
 		<div class="text-xs">
-			<span data-text="$build_status"
-				data-class={ OE.BuildStatusDataClass() }></span>
+			<span
+				data-text="$build_status"
+				data-class={ OE.BuildStatusDataClass() }
+			></span>
 		</div>
 	</div>
 }

@@ -12,8 +12,10 @@ templ Page(users []sqlc.User) {
 		<div class="max-w-3xl mx-auto p-6">
 			<header class="flex justify-between items-center mb-6">
 				<h1>Admin — User Management</h1>
-				<a href="/"
-					class="inline-flex items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground h-8 px-3 text-sm font-medium">
+				<a
+					href="/"
+					class="inline-flex items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground h-8 px-3 text-sm font-medium"
+				>
 					Back to Lobby
 				</a>
 			</header>
@@ -29,9 +31,9 @@ templ Page(users []sqlc.User) {
 							@button.Button(button.ButtonArgs{
 								Size: "sm",
 								Attributes: templ.Attributes{
-									"data-on:click":          datastar.PostSSE("/admin/users/" + u.ID + "/approve"),
+									"data-on:click":           datastar.PostSSE("/admin/users/" + u.ID + "/approve"),
 									"data-indicator-fetching": true,
-									"data-attr-disabled":     "$fetching",
+									"data-attr-disabled":      "$fetching",
 								},
 							}) {
 								Approve
@@ -40,9 +42,9 @@ templ Page(users []sqlc.User) {
 								Variant: "destructive",
 								Size:    "sm",
 								Attributes: templ.Attributes{
-									"data-on:click":          datastar.PostSSE("/admin/users/" + u.ID + "/reject"),
+									"data-on:click":           datastar.PostSSE("/admin/users/" + u.ID + "/reject"),
 									"data-indicator-fetching": true,
-									"data-attr-disabled":     "$fetching",
+									"data-attr-disabled":      "$fetching",
 								},
 							}) {
 								Reject

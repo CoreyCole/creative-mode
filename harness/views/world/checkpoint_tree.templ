@@ -6,8 +6,11 @@ import (
 )
 
 templ CheckpointTree(checkpoints []sqlc.Checkpoint, currentCPID string, worldID string) {
-	<div class="fixed top-[44px] left-0 w-full md:w-[280px] h-[calc(100vh-44px-80px)] bg-[rgba(17,17,17,0.95)] backdrop-blur-lg border-r border-border overflow-y-auto p-3 z-20"
-		data-show="$show_checkpoint_tree" style="display: none;">
+	<div
+		class="fixed top-[44px] left-0 w-full md:w-[280px] h-[calc(100vh-44px-80px)] bg-[rgba(17,17,17,0.95)] backdrop-blur-lg border-r border-border overflow-y-auto p-3 z-20"
+		data-show="$show_checkpoint_tree"
+		style="display: none;"
+	>
 		<h3 class="mb-3 text-sm font-semibold">Checkpoints</h3>
 		for _, cp := range checkpoints {
 			<div class={ "flex items-center gap-1.5 px-2 py-1.5 rounded text-[13px]", templ.KV("bg-blue-950/60", cp.ID == currentCPID) }>

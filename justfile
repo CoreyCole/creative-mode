@@ -27,3 +27,10 @@ debug worldID +args='--help':
 
 sync-thoughts:
     ./scripts/sync-thoughts.sh
+
+# Marketing site
+site-up:
+    cd site && just up
+
+site-down:
+    cd site && just down

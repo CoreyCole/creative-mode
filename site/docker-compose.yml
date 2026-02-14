@@ -1,0 +1,21 @@
+services:
+  app:
+    build:
+      context: .
+      target: development
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app:cached
+      - /app/node_modules
+    environment:
+      - CGO_ENABLED=0
+      - GOOS=linux
+      - GO111MODULE=on
+    working_dir: /app
+    command: sh -c "just watch"
+    networks:
+      - site-network
+networks:
+  site-network:
+    driver: bridge

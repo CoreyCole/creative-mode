@@ -1,0 +1,14 @@
+# Binaries
+site
+site-linux
+
+# Generated
+*_templ.go
+static/css/out.css
+static/css/out.*.css
+
+# Dependencies
+node_modules/
+
+# Air tmp
+.tmp/

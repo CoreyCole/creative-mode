@@ -1,0 +1,155 @@
+package pages
+
+import l "github.com/coreycole/creative-mode/site/layouts"
+
+templ HomePage(rootArgs l.RootArgs) {
+	@l.Root(rootArgs) {
+		<!-- Hero Section -->
+		<section class="py-20 md:py-32">
+			<div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 text-center">
+				<h1 class="text-4xl font-bold tracking-tight sm:text-6xl lg:text-7xl">
+					Meet the Mayor
+					<br/>
+					<span class="text-muted-foreground">Your AI Game Dev Assistant</span>
+				</h1>
+				<p class="mt-6 text-lg text-muted-foreground max-w-2xl mx-auto">
+					Describe what you want to create. The Mayor builds it.
+				</p>
+				<p class="mt-1 text-lg text-muted-foreground max-w-2xl mx-auto">
+					Chat from anywhere, play in your browser on a shared, secured server.
+				</p>
+				<div class="mt-10 flex items-center justify-center gap-4">
+					<a
+						href="http://localhost:8080"
+						class="inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground hover:bg-primary/90 h-11 px-8"
+					>
+						Meet the Mayor
+					</a>
+					<a
+						href="https://discord.gg/cPtN5vP3ty"
+						target="_blank"
+						rel="noreferrer"
+						class="inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors border border-input bg-background hover:bg-accent hover:text-accent-foreground h-11 px-8"
+					>
+						Join Discord
+					</a>
+				</div>
+			</div>
+		</section>
+		<!-- Features Section -->
+		<section class="py-20 border-t border-border/40">
+			<div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+				<h2 class="text-3xl font-bold tracking-tight text-center sm:text-4xl">
+					Everything you need to create
+				</h2>
+				<p class="mt-4 text-lg text-muted-foreground text-center max-w-2xl mx-auto">
+					Tell the Mayor what you imagine. It handles the rest.
+				</p>
+				<div class="mt-16 grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
+					<!-- Feature 1: Play in Your Browser -->
+					<div class="rounded-lg border border-border/40 bg-card p-6">
+						<div class="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+							<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<circle cx="12" cy="12" r="10"></circle>
+								<path d="M2 12h20"></path>
+								<path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+							</svg>
+						</div>
+						<h3 class="mt-4 text-lg font-semibold">Play in Your Browser</h3>
+						<p class="mt-2 text-sm text-muted-foreground">
+							No downloads, no installs. Your world runs right in the browser.
+						</p>
+					</div>
+					<!-- Feature 2: Chat from Discord -->
+					<div class="rounded-lg border border-border/40 bg-card p-6">
+						<div class="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+							<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22z"></path>
+							</svg>
+						</div>
+						<h3 class="mt-4 text-lg font-semibold">Chat from Discord</h3>
+						<p class="mt-2 text-sm text-muted-foreground">
+							Message the Mayor from your phone or desktop. Describe what you want, watch it come to life.
+						</p>
+					</div>
+					<!-- Feature 3: AI-Powered Creation -->
+					<div class="rounded-lg border border-border/40 bg-card p-6">
+						<div class="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+							<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"></path>
+								<path d="M5 3v4"></path>
+								<path d="M19 17v4"></path>
+								<path d="M3 5h4"></path>
+								<path d="M17 19h4"></path>
+							</svg>
+						</div>
+						<h3 class="mt-4 text-lg font-semibold">AI-Powered Creation</h3>
+						<p class="mt-2 text-sm text-muted-foreground">
+							The Mayor understands natural language. Ask for a forest, a puzzle, a racing track — it builds it.
+						</p>
+					</div>
+					<!-- Feature 4: Save & Rewind -->
+					<div class="rounded-lg border border-border/40 bg-card p-6">
+						<div class="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+							<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<circle cx="12" cy="12" r="10"></circle>
+								<polyline points="12 6 12 12 16 14"></polyline>
+							</svg>
+						</div>
+						<h3 class="mt-4 text-lg font-semibold">Save &amp; Rewind</h3>
+						<p class="mt-2 text-sm text-muted-foreground">
+							Every change is saved automatically. Go back to any version, branch into variations.
+						</p>
+					</div>
+					<!-- Feature 5: Build Together -->
+					<div class="rounded-lg border border-border/40 bg-card p-6">
+						<div class="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+							<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path>
+								<circle cx="9" cy="7" r="4"></circle>
+								<path d="M22 21v-2a4 4 0 0 0-3-3.87"></path>
+								<path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+							</svg>
+						</div>
+						<h3 class="mt-4 text-lg font-semibold">Build Together</h3>
+						<p class="mt-2 text-sm text-muted-foreground">
+							Invite friends to your world. Create and play in real-time, no setup required.
+						</p>
+					</div>
+					<!-- Feature 6: Open Source -->
+					<div class="rounded-lg border border-border/40 bg-card p-6">
+						<div class="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+							<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<polyline points="16 18 22 12 16 6"></polyline>
+								<polyline points="8 6 2 12 8 18"></polyline>
+							</svg>
+						</div>
+						<h3 class="mt-4 text-lg font-semibold">Open Source</h3>
+						<p class="mt-2 text-sm text-muted-foreground">
+							Free to use, fork, and customize. Build your own creative platform on top.
+						</p>
+					</div>
+				</div>
+			</div>
+		</section>
+		<!-- CTA Section -->
+		<section class="py-20 border-t border-border/40">
+			<div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 text-center">
+				<h2 class="text-3xl font-bold tracking-tight sm:text-4xl">
+					Ready to Create?
+				</h2>
+				<p class="mt-4 text-lg text-muted-foreground max-w-xl mx-auto">
+					Message the Mayor on Discord and start building your world in minutes.
+				</p>
+				<div class="mt-10">
+					<a
+						href="http://localhost:8080"
+						class="inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground hover:bg-primary/90 h-11 px-8"
+					>
+						Meet the Mayor
+					</a>
+				</div>
+			</div>
+		</section>
+	}
+}

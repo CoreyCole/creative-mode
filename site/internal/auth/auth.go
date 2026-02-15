@@ -218,13 +218,21 @@ func (sm *SessionManager) HandleCallback(c echo.Context) error {
 		Secure:   isSecure(sm.config.RedirectURI),
 	})
 
-	// Redirect directly to the correct page to avoid redirect chains
-	// that confuse Discord's OAuth app. Use 303 (See Other) — the standard
-	// for post-OAuth redirects — instead of 307 which preserves the method.
+	// Return a 200 HTML page that redirects client-side instead of a 3xx
+	// server redirect. Discord's app opens OAuth in a popup/embedded browser;
+	// a server redirect causes Discord to lose track of the popup and show
+	// "Authorization flow cancelled because your browser window was closed."
+	// A 200 response lets Discord's popup handler see success before the JS
+	// navigates away.
+	dest := "/invite"
 	if !guildVerified {
-		return c.Redirect(http.StatusSeeOther, "/join-discord")
+		dest = "/join-discord"
 	}
-	return c.Redirect(http.StatusSeeOther, "/invite")
+	return c.HTML(http.StatusOK, `<!DOCTYPE html>
+<html><head><meta http-equiv="refresh" content="0;url=`+dest+`"></head>
+<body><p>Redirecting…</p>
+<script>window.location.replace("`+dest+`");</script>
+</body></html>`)
 }
 
 // HandleLogout clears the session cookie and deletes the session.

@@ -29,7 +29,8 @@ func (m *Manager) AgentStatus(agentID string) (map[string]any, error) {
 		"agents",
 		"get",
 		agentID,
-	)	cmd.Env = append(cmd.Environ(), "OPENCLAW_HOME="+m.openclawHome)
+	)
+	cmd.Env = append(cmd.Environ(), "OPENCLAW_HOME="+m.openclawHome)
 
 	output, err := cmd.Output()
 	if err != nil {
@@ -54,7 +55,8 @@ func (m *Manager) ListAgents() ([]map[string]any, error) {
 		m.openclawBin,
 		"agents",
 		"list",
-	)	cmd.Env = append(cmd.Environ(), "OPENCLAW_HOME="+m.openclawHome)
+	)
+	cmd.Env = append(cmd.Environ(), "OPENCLAW_HOME="+m.openclawHome)
 
 	output, err := cmd.Output()
 	if err != nil {

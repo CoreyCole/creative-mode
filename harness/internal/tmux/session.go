@@ -48,8 +48,7 @@ func (s *Session) Create(
 		args = append(args, "-e", env)
 	}
 
-	return exec.CommandContext( //nolint:gosec // G204: tmux with controlled args
-		ctx, "tmux", args...,
+	return exec.CommandContext(ctx, "tmux", args...,
 	).Run()
 }
 
@@ -69,26 +68,20 @@ func (s *Session) SendPrompt(ctx context.Context, prompt string) error {
 		promptFile,
 	)
 
-	return exec.CommandContext( //nolint:gosec // G204: tmux send-keys with controlled args
-		ctx, "tmux", "send-keys", "-t", s.Name, cmd, "Enter",
-	).
+	return exec.CommandContext(ctx, "tmux", "send-keys", "-t", s.Name, cmd, "Enter").
 		Run()
 }
 
 // Kill terminates the tmux session.
 func (s *Session) Kill() error {
-	cmd := exec.CommandContext( //nolint:gosec // G204: controlled args
-		context.Background(), "tmux", "kill-session", "-t", s.Name,
-	)
+	cmd := exec.CommandContext(context.Background(), "tmux", "kill-session", "-t", s.Name)
 
 	return cmd.Run()
 }
 
 // IsAlive checks if the tmux session still exists.
 func (s *Session) IsAlive() bool {
-	cmd := exec.CommandContext( //nolint:gosec // G204: controlled args
-		context.Background(), "tmux", "has-session", "-t", s.Name,
-	)
+	cmd := exec.CommandContext(context.Background(), "tmux", "has-session", "-t", s.Name)
 
 	return cmd.Run() == nil
 }

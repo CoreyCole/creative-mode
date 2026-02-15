@@ -660,8 +660,7 @@ func cloneBuildCache(ctx context.Context, sourceDir, newDir string) error {
 	}
 
 	if runtime.GOOS == "darwin" {
-		cmd := exec.CommandContext( //nolint:gosec // G204: internal paths
-			ctx,
+		cmd := exec.CommandContext(ctx,
 			"cp",
 			"-cR",
 			src,
@@ -671,8 +670,7 @@ func cloneBuildCache(ctx context.Context, sourceDir, newDir string) error {
 		return cmd.Run()
 	}
 
-	cmd := exec.CommandContext( //nolint:gosec // G204: internal paths
-		ctx,
+	cmd := exec.CommandContext(ctx,
 		"cp",
 		"-al",
 		src,

@@ -99,7 +99,7 @@ func (m *Manager) Provision() error {
 
 	cmd := exec.CommandContext(
 		ctx,
-		m.openclawBin,		"agents",
+		m.openclawBin, "agents",
 		"add",
 		"--id",
 		presidentAgentID,
@@ -138,7 +138,8 @@ func (m *Manager) bindToChannel() error {
 		"config",
 		"get",
 		"bindings",
-	)	getCmd.Env = append(getCmd.Environ(), "OPENCLAW_HOME="+m.openclawHome)
+	)
+	getCmd.Env = append(getCmd.Environ(), "OPENCLAW_HOME="+m.openclawHome)
 	existingJSON, err := getCmd.Output()
 	if err != nil {
 		existingJSON = []byte("[]")
@@ -159,7 +160,7 @@ func (m *Manager) bindToChannel() error {
 		return err
 	}
 
-	setCmd := exec.CommandContext(		ctx,
+	setCmd := exec.CommandContext(ctx,
 		m.openclawBin,
 		"config",
 		"set",

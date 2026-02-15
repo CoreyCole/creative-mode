@@ -1,4 +1,4 @@
-package build //nolint:revive // intentional name; no conflict with stdlib "go/build"
+package build
 
 import (
 	"bufio"
@@ -118,7 +118,7 @@ func (b *Builder) Build(cp *sqlc.Checkpoint, isInitial bool, templateType string
 		trunkDir = cp.DirPath
 	}
 
-	clientCmd := exec.CommandContext( //nolint:gosec // G204: trunk with internal path arg
+	clientCmd := exec.CommandContext(
 		ctx,
 		"trunk",
 		"build",

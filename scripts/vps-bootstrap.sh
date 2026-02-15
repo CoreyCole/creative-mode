@@ -758,6 +758,11 @@ else
         info "Would create $DEPLOY_ZSHRC with oh-my-zsh + direnv hook"
     else
         cat > "$DEPLOY_ZSHRC" << 'ZSHRCEOF'
+# Nix daemon environment (puts ~/.nix-profile/bin in PATH)
+if [ -e '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh' ]; then
+  . '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh'
+fi
+
 # oh-my-zsh configuration
 export ZSH="$HOME/.oh-my-zsh"
 ZSH_THEME="robbyrussell"

@@ -29,9 +29,15 @@ templ ChatPanel() {
 				data-on:click={ CE.SelectAssetsTab() }
 				data-class={ CE.TabActiveClass("assets") }
 			>Assets</button>
+			<button
+				class="flex-1 py-2 bg-transparent border-b-2 border-transparent text-muted-foreground cursor-pointer text-[13px] hover:text-foreground/80"
+				data-on:click={ CE.SelectTab("mayor") }
+				data-class={ CE.TabActiveClass("mayor") }
+			>Mayor</button>
 		</div>
-		<div id="chat-log" class="flex-1 overflow-y-auto px-3 py-2 flex flex-col gap-1" data-show="$active_tab !== 'lineage' && $active_tab !== 'assets'"></div>
+		<div id="chat-log" class="flex-1 overflow-y-auto px-3 py-2 flex flex-col gap-1" data-show="$active_tab !== 'lineage' && $active_tab !== 'assets' && $active_tab !== 'mayor'"></div>
 		<div id="lineage-view" class="flex-1 overflow-y-auto px-3 py-2 flex flex-col gap-1" data-show="$active_tab === 'lineage'" style="display: none;"></div>
+		<div id="mayor-chat-log" class="flex-1 overflow-y-auto px-3 py-2 flex flex-col gap-2" data-show="$active_tab === 'mayor'" style="display: none;"></div>
 		@imagegen.ImageGenPanel()
 		<div class="flex gap-1.5 px-3 py-2 border-t border-border" data-show="$active_tab !== 'lineage' && $active_tab !== 'assets'">
 			@ChatInputBar()

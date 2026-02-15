@@ -1,11 +1,15 @@
 package mayor
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
 	"net/http"
+	"os"
 	"strings"
+	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/coreycole/creative-mode/pkg/worldchannel"
@@ -307,6 +311,9 @@ func (h *Handler) hatchWorld(c echo.Context, sse *datastar.ServerSentEventGenera
 	// Persist onboarding conversation for future OpenClaw agent bootstrap.
 	h.pinOnboardingConversation(c, result.ChannelID, session, finalMayorName, worldName, worldSummary)
 
+	// Notify harness that a world was hatched (fire and forget).
+	go h.notifyHarnessWorldHatched(result.ChannelID, worldName, finalMayorName, session.DiscordID, session.DiscordUsername)
+
 	// Show hatched card with Discord link and optional harness link.
 	channelURL := fmt.Sprintf("https://discord.com/channels/%s/%s",
 		h.wcClient.Config().GuildID, result.ChannelID)
@@ -342,6 +349,48 @@ func (h *Handler) pinOnboardingConversation(c echo.Context, channelID string, se
 		Messages: onboardingMessages,
 	}); err != nil {
 		c.Logger().Errorf("Failed to pin onboarding data: %v", err)
+	}
+}
+
+// notifyHarnessWorldHatched sends a webhook to the harness server to trigger
+// mayor agent provisioning. Non-blocking — errors are logged but don't fail
+// the user flow.
+func (h *Handler) notifyHarnessWorldHatched(channelID, worldName, mayorName, creatorDiscordID, creatorUsername string) {
+	harnessURL := h.HarnessURL
+	if harnessURL == "" {
+		return
+	}
+
+	hookSecret := os.Getenv("CM_HOOK_SECRET")
+
+	payload, _ := json.Marshal(map[string]string{
+		"discord_channel_id": channelID,
+		"world_name":         worldName,
+		"mayor_name":         mayorName,
+		"creator_discord_id": creatorDiscordID,
+		"creator_username":   creatorUsername,
+	})
+
+	req, err := http.NewRequest(http.MethodPost, harnessURL+"/api/world-hatched", bytes.NewReader(payload))
+	if err != nil {
+		fmt.Printf("ERROR: failed to create world-hatched request: %v\n", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if hookSecret != "" {
+		req.Header.Set("X-Hook-Secret", hookSecret)
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Printf("ERROR: world-hatched webhook failed: %v\n", err)
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusAccepted {
+		fmt.Printf("ERROR: world-hatched webhook returned %d\n", resp.StatusCode)
 	}
 }
 

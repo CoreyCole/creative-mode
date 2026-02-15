@@ -11,7 +11,9 @@ import (
 	"github.com/starfederation/datastar-go/datastar"
 
 	"creative-mode/harness/internal/events"
+	"creative-mode/harness/internal/db/sqlc"
 	"creative-mode/harness/views/chat"
+	worldview "creative-mode/harness/views/world"
 )
 
 const (
@@ -310,6 +312,21 @@ func (s *Server) handleWorldEvent(
 		return ssePatchSignals(
 			sse,
 			map[string]any{"build_status": "rate_limited"},
+		)
+	case events.EventMayorMessage:
+		authorType, _ := e["author_type"].(string)
+		authorName, _ := e["author_name"].(string)
+		content, _ := e["content"].(string)
+		msg := sqlc.MayorMessage{
+			AuthorType: authorType,
+			AuthorName: authorName,
+			Content:    content,
+			CreatedAt:  time.Now(),
+		}
+		return sse.PatchElementTempl(
+			worldview.MayorChatMessage(msg),
+			datastar.WithSelectorID("mayor-chat-log"),
+			datastar.WithModeAppend(),
 		)
 	case events.EventExecuteScript:
 		script, _ := e["script"].(string)

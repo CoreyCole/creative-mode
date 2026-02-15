@@ -55,6 +55,15 @@ func (c *Client) BotUserID() string {
 	return c.botUserID
 }
 
+// SendMessage sends a text message to a Discord channel.
+func (c *Client) SendMessage(channelID, content string) (string, error) {
+	msg, err := c.session.ChannelMessageSend(channelID, content)
+	if err != nil {
+		return "", fmt.Errorf("sending message to channel %s: %w", channelID, err)
+	}
+	return msg.ID, nil
+}
+
 // Close cleans up the Discord session.
 func (c *Client) Close() error {
 	return c.session.Close()

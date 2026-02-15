@@ -210,6 +210,10 @@ curl -s -X POST http://localhost:$CM_BRP_PORT \
 - Do NOT use `copy-dir` in client/index.html for assets — they are served separately
 - Camera-relative input: client computes movement in camera space and sends the world-space direction vector. Server applies it directly without needing camera orientation.
 
+## Mayor Context
+
+Mayor-triggered builds (via `POST /api/mayor/build`) use the same fork → Claude Code → build pipeline as browser prompts — no special handling needed.
+
 ## CHANGES.txt (Required)
 
 Before you finish, ALWAYS write a brief summary of what you changed to `CHANGES.txt`

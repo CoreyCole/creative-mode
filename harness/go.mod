@@ -23,6 +23,8 @@ require (
 	github.com/a-h/templ v0.3.977 // indirect
 	github.com/andybalholm/brotli v1.2.0 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
+	github.com/bwmarrin/discordgo v0.28.1 // indirect
+	github.com/coreycole/creative-mode/pkg/worldchannel v0.0.0-20260215081125-686d34b3d948 // indirect
 	github.com/coreycole/datastarui v0.0.0-20260131230526-8815ff5a1c48 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/google/cel-go v0.26.1 // indirect

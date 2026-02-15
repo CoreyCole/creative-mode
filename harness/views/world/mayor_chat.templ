@@ -1,0 +1,52 @@
+package world
+
+import "creative-mode/harness/internal/db/sqlc"
+
+// MayorChatPanel renders the mayor conversation panel (SSE-updated).
+templ MayorChatPanel(worldID string) {
+	<div class="flex flex-col h-full">
+		<div
+			id="mayor-chat-log"
+			class="flex-1 overflow-y-auto px-3 py-2 flex flex-col gap-2"
+		></div>
+	</div>
+}
+
+// MayorChatMessage renders a single mayor chat message (SSE fragment).
+templ MayorChatMessage(msg sqlc.MayorMessage) {
+	<div class={ "text-[13px] leading-snug px-2 py-1 rounded", mayorMessageClass(msg.AuthorType) }>
+		<span class={ "font-semibold mr-1.5", mayorAuthorColor(msg.AuthorType) }>
+			{ msg.AuthorName }
+		</span>
+		<span class="break-words whitespace-pre-wrap">{ msg.Content }</span>
+		<time class="text-muted-foreground/60 text-[11px] ml-1">
+			{ msg.CreatedAt.Format("15:04") }
+		</time>
+	</div>
+}
+
+func mayorMessageClass(authorType string) string {
+	switch authorType {
+	case "user":
+		return "bg-transparent"
+	case "mayor":
+		return "bg-primary/5"
+	case "system":
+		return "bg-muted/30 text-muted-foreground italic"
+	default:
+		return ""
+	}
+}
+
+func mayorAuthorColor(authorType string) string {
+	switch authorType {
+	case "user":
+		return "text-blue-400"
+	case "mayor":
+		return "text-emerald-400"
+	case "system":
+		return "text-yellow-400"
+	default:
+		return ""
+	}
+}

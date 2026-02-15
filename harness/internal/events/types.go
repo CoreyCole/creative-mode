@@ -11,4 +11,5 @@ const (
 	EventClaudeSessionStop = "claude.session_stopped"
 	EventClaudeRateLimited = "claude.rate_limited"
 	EventExecuteScript     = "execute_script"
+	EventMayorMessage      = "mayor.message"
 )

@@ -6,8 +6,8 @@ An OpenClaw-powered game world builder. Create multiplayer games through convers
 
 | | Creative Mode puts game development in everyone's hands — describe what you want, and a personalized AI mayor builds your multiplayer game world in real time. |
 |---|---|
-| **Impact** | Build multiplayer games from your phone via Discord — no IDE, no compile errors. Game development for everyone, not just developers. |
-| **Opus 4.6** | Every world modification spawns a Claude Code session where Opus edits Rust/Bevy source, rebuilds WASM, and deploys. Mayors use Opus to understand requests, plan changes, and generate assets. I was the first mayor — directing the codebase at a high level — but the system now improves itself with Opus. |
+| **Impact** | Build multiplayer games with friends. Game development for everyone, not just developers. |
+| **Opus 4.6** | Mayor agents use Opus to manage worlds, plan changes, use APIs to generate assets, and spawn Claude Code Opus agents to build world forks. The president agent uses Opus to maintain the project as a whole. |
 | **Depth** | 10k+ lines of Go and Rust, directed by 27k+ lines of specs and plans. Like the jump from assembly to C, we develop at a higher level of abstraction — not vibe coding, but engineering through **structured intent**. Server-authoritative multiplayer, WASM compilation, OpenClaw AI mayors, Gemini Nano Banana. |
 | **Demo** | A new user creates a 2D world, chats with their AI mayor, and watches it come to life — zero to playable in one session. |
 
@@ -90,7 +90,7 @@ Every world gets an AI mayor agent — a persistent OpenClaw agent with:
 ## Prerequisites
 
 - Docker (Docker Desktop on macOS)
-- Discord OAuth App + two Discord bots (mayor + harness)
+- Discord OAuth App + one Discord bot (shared by harness + site for mayor agents)
 - Anthropic API key (for Claude Code + OpenClaw)
 - Google AI API key (for Gemini image generation)
 

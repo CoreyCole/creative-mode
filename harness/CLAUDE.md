@@ -16,15 +16,26 @@ The harness is a Go server (Echo framework) that manages multiplayer creative wo
 | `internal/events/` | EventBus: global + per-world pub/sub channels |
 | `internal/world/` | World creation, checkpoints, game server management |
 | `internal/claude/` | Claude Code orchestrator (tmux sessions, build pipeline) |
+| `internal/mayor/` | Mayor agent lifecycle: OpenClaw provisioning, workspace files, Discord posting |
+| `internal/president/` | President agent: provisioning, repo-level operations, deploy |
+| `internal/discord/` | Discord Gateway listener: mirrors messages to DB + EventBus |
 | `views/` | templ templates (login, lobby, overlay, chat, etc.) |
+| `views/mayor/` | Mayor Dashboard templ templates |
 | `static/` | CSS + JS served at `/static/` |
 
 ### Data Flow
 
 ```
 Browser <--SSE--> Echo handlers <--EventBus--> Claude orchestrator
-                       |                            |
-                    SQLite DB                   Game servers
+                       |              |              |
+                    SQLite DB         |          Game servers
+                       ^              |
+                       |         EventMayorMessage
+                       |              |
+Discord <--Gateway--> Listener -------+
+   ^
+   |    OpenClaw Mayor/President agents
+   +--- (Discord adapter for chat, skills call harness API)
 ```
 
 ### Auth Middleware Chain
@@ -37,12 +48,69 @@ SessionMiddleware(db) -> sets c.Get("user") as *sqlc.User
 
 Extract user in any handler: `user, ok := c.Get("user").(*sqlc.User)`
 
+### Mayor API (`internal/server/mayor_api.go`)
+
+**Auth**: `mayorAuthMiddleware` validates `X-Mayor-Secret` header against per-world secrets in DB, sets `c.Get("mayor_world")` as `*sqlc.World`.
+
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/api/world-hatched` | POST | Webhook from site — creates world + provisions OpenClaw agent (auth: `hookSecretMiddleware`) |
+| `/api/mayor/build` | POST | Trigger build pipeline for mayor's world |
+| `/api/mayor/status` | GET | World state: checkpoints, game server, latest status |
+| `/api/mayor/contribute-learning` | POST | Queue a knowledge contribution (PR or file update) |
+
+### President API (`internal/server/president_api.go`)
+
+**Auth**: `presidentAuthMiddleware` validates `X-President-Secret` header against `PRESIDENT_SECRET` env var.
+
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/api/president/mayor-status` | GET | Status of all worlds with mayors |
+| `/api/president/repo-build` | POST | Run `just check` in a tmux session |
+| `/api/president/template-update` | POST | Spawn Claude Code session at repo root |
+| `/api/president/deploy` | POST | Run `just vps-deploy` in a tmux session |
+
+### Mayor Dashboard (`internal/server/mayor_dashboard.go`)
+
+Approved-user routes for world observability:
+
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/mayor/:worldID` | GET | Dashboard page: builds, activity, messages, sessions |
+| `/mayor/:worldID/events` | GET | SSE stream for live dashboard updates |
+| `/mayor/:worldID/file` | GET | Read workspace file (allowlist: SOUL.md, MEMORY.md, AGENTS.md, IDENTITY.md, USER.md) |
+| `/mayor/:worldID/file` | PUT | Edit workspace file (allowlist: SOUL.md, MEMORY.md, AGENTS.md) |
+
+### Discord Listener (`internal/discord/listener.go`)
+
+A separate discordgo Gateway session (distinct from the REST-only `worldchannel` client) that mirrors Discord messages to the DB and EventBus.
+
+- **Channel map**: Loaded from DB on startup via `GetWorldsWithDiscordChannels()`, updated dynamically via `RegisterChannel(channelID, worldID)`
+- **Message classification**: `author_type` is `user`, `mayor`, or `system` (based on bot flag and author name matching the world's mayor name)
+- **Flow**: Discord message → `MessageCreate` handler → lookup world by channel → `CreateMayorMessage` in DB → `Publish(worldID, EventMayorMessage)` to EventBus → SSE → browser
+
+### OpenClaw Integration (`internal/mayor/manager.go`)
+
+Mayors and the president are OpenClaw agents managed via CLI (`exec.CommandContext`).
+
+**Workspace structure** (`{OPENCLAW_HOME}/workspaces/`):
+- `world-{worldID}/` — mayor workspace: `SOUL.md`, `AGENTS.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`, `skills/`
+- `president/` — president workspace
+
+**Key operations**:
+- `ProvisionFromWebhook()` — creates world record, generates agent workspace files from onboarding data, registers Discord channel
+- `PostToDiscord()` — send messages to a world's Discord channel (build notifications)
+- `ContributeLearning()` — queue knowledge contributions from mayors
+
+**OpenClaw gateway**: Health checked at `localhost:18789`.
+
 ### EventBus (`internal/events/bus.go`)
 
 - `SubscribeGlobal() chan any` / `UnsubscribeGlobal(ch)` — all-player events (chat, build notifications)
-- `Subscribe(worldID) chan any` / `Unsubscribe(worldID, ch)` — world-specific events (claude activity, build progress)
+- `Subscribe(worldID) chan any` / `Unsubscribe(worldID, ch)` — world-specific events (claude activity, build progress, mayor messages)
 - `PublishGlobal(event any)` / `Publish(worldID, event any)` — non-blocking sends (drops if slow)
 - Channel buffer: 100 events
+- Event types include `EventMayorMessage = "mayor.message"` (published by Discord listener)
 
 ### DB Queries Available
 
@@ -51,6 +119,9 @@ Extract user in any handler: `user, ok := c.Get("user").(*sqlc.User)`
 - `GetCheckpointAncestry(ctx, worldID, cpID)` — root-to-current chain (custom method on DB wrapper)
 - `GetRecentMessages(ctx, limit)`, `GetRecentMessagesByWorld(ctx, params)`, `CreateMessage(ctx, params)`
 - `ListUsers(ctx)`, `GetUserByID(ctx, id)`, `UpdateUserRole(ctx, params)`
+- **Mayor/world queries**: `GetWorldByMayorSecret(ctx, secret)`, `GetWorldByDiscordChannel(ctx, channelID)`, `UpdateWorldMayor(ctx, params)`, `GetWorldsWithDiscordChannels(ctx)`
+- **Mayor messages**: `CreateMayorMessage(ctx, params)`, `GetMayorMessages(ctx, worldID)`, `GetRecentMayorMessages(ctx, params)`, `GetMayorMessageByDiscordID(ctx, discordMsgID)`
+- **Mayor instrumentation**: `CreateMayorActivity(ctx, params)`, `GetMayorActivity(ctx, params)`, `GetMayorBuilds(ctx, params)`, `GetMayorSessions(ctx, params)`
 
 ## Templ Patterns
 

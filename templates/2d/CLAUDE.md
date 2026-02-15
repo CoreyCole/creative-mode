@@ -382,6 +382,10 @@ This allows `cargo clippy` to run on the host without WASM dependencies.
 - **Data-driven** — rooms are JSON, not Rust code. Add content by editing JSON files.
 - **Multiplayer via chat** — uses the harness SSE chat system, not Lightyear replication
 
+## Mayor Context
+
+2D worlds are the default template for mayor-managed worlds created through the onboarding flow. Mayor-triggered builds (via `POST /api/mayor/build`) use the same fork → Claude Code → build pipeline as browser prompts — no special handling needed.
+
 ## CHANGES.txt (Required)
 
 Before you finish, ALWAYS write a brief summary of what you changed to `CHANGES.txt`.

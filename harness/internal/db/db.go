@@ -94,6 +94,7 @@ func (d *DB) runMigrations(ctx context.Context) error {
 		"migrations/001_initial.sql",
 		"migrations/002_cascades_indexes.sql",
 		"migrations/003_template_type.sql",
+		"migrations/004_mayor_and_instrumentation.sql",
 	}
 	for _, file := range migrationFiles {
 		// Check if already applied.
@@ -158,6 +159,17 @@ func (d *DB) bootstrapExistingMigrations(ctx context.Context) {
 		_, _ = d.db.ExecContext(ctx,
 			"INSERT OR IGNORE INTO _migrations (name) VALUES (?)",
 			"migrations/003_template_type.sql")
+	}
+
+	// 004: adds mayor_name column to worlds + mayor tables.
+	var hasMayorCol int
+	_ = d.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM pragma_table_info('worlds') WHERE name='mayor_name'",
+	).Scan(&hasMayorCol)
+	if hasMayorCol > 0 {
+		_, _ = d.db.ExecContext(ctx,
+			"INSERT OR IGNORE INTO _migrations (name) VALUES (?)",
+			"migrations/004_mayor_and_instrumentation.sql")
 	}
 }
 

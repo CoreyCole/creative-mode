@@ -12,7 +12,6 @@ set -euo pipefail
 
 # Nix packages (go, tmux, jq, sqlite, gcc, pkg-config, etc.)
 source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-eval "$(direnv export bash 2>/dev/null)"
 
 # Rust/Cargo (trunk, cargo-watch, wasm-bindgen-cli)
 export RUSTUP_HOME=/usr/local/rustup
@@ -24,6 +23,9 @@ export PATH="/home/deploy/.local/bin:$PATH"
 
 # Go tools (templ)
 export PATH="/home/deploy/go/bin:$PATH"
+
+# OpenClaw (agent framework for world mayors)
+export OPENCLAW_HOME=/home/deploy/creative-mode/data/openclaw
 
 # CGO for SQLite
 export CGO_ENABLED=1

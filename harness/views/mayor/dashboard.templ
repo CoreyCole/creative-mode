@@ -1,0 +1,269 @@
+package mayor
+
+import (
+	"creative-mode/harness/internal/db/sqlc"
+	"creative-mode/harness/views/layout"
+	"fmt"
+	"github.com/coreycole/datastarui/components/button"
+	"github.com/starfederation/datastar-go/datastar"
+	"time"
+)
+
+func fmtTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format("2006-01-02 15:04")
+}
+
+type DashboardData struct {
+	World       sqlc.World
+	Checkpoints []sqlc.Checkpoint
+	Builds      []sqlc.MayorBuild
+	Activity    []sqlc.MayorActivity
+	Messages    []sqlc.MayorMessage
+	Sessions    []sqlc.MayorSession
+}
+
+type DashboardSignals struct {
+	ActiveTab string `json:"active_tab"`
+}
+
+func DefaultDashboardSignals() DashboardSignals {
+	return DashboardSignals{ActiveTab: "overview"}
+}
+
+templ Page(data DashboardData) {
+	@layout.Base(data.World.Name + " — Mayor") {
+		<div
+			class="flex flex-col min-h-screen"
+			data-signals={ templ.JSONString(DefaultDashboardSignals()) }
+		>
+			<header class="flex justify-between items-center px-6 py-3 border-b border-border bg-[#111]">
+				<div class="flex items-center gap-3">
+					<a href="/" class="text-muted-foreground hover:text-primary transition-colors text-sm">Creative Mode</a>
+					<span class="text-muted-foreground">/</span>
+					<h1 class="text-lg font-semibold">{ data.World.Name }</h1>
+					if data.World.MayorName.Valid {
+						<span class="text-muted-foreground text-sm">Mayor: { data.World.MayorName.String }</span>
+					}
+				</div>
+				<a
+					href={ templ.SafeURL("/world/" + data.World.ID) }
+					class="inline-flex items-center justify-center rounded-md border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground h-8 px-3 text-sm font-medium"
+				>
+					View World
+				</a>
+			</header>
+			<div class="flex border-b border-border bg-[#111]">
+				@tabButton("overview", "Overview")
+				@tabButton("builds", "Builds")
+				@tabButton("activity", "Activity")
+				@tabButton("messages", "Messages")
+				@tabButton("memory", "Memory")
+			</div>
+			<div
+				class="flex-1 p-6 overflow-y-auto"
+				data-init={ datastar.GetSSE(fmt.Sprintf("/mayor/%s/events", data.World.ID)) }
+			>
+				<div data-show="$active_tab === 'overview'">
+					@OverviewTab(data)
+				</div>
+				<div data-show="$active_tab === 'builds'" style="display: none;">
+					@BuildsTab(data.Builds)
+				</div>
+				<div data-show="$active_tab === 'activity'" style="display: none;">
+					@ActivityTab(data.Activity)
+				</div>
+				<div data-show="$active_tab === 'messages'" style="display: none;">
+					@MessagesTab(data.Messages)
+				</div>
+				<div data-show="$active_tab === 'memory'" style="display: none;">
+					@MemoryTab(data.World)
+				</div>
+			</div>
+		</div>
+	}
+}
+
+templ tabButton(id, label string) {
+	@button.Button(button.ButtonArgs{
+		Size:    "sm",
+		Variant: "ghost",
+		Attributes: templ.Attributes{
+			"data-on:click": fmt.Sprintf("$active_tab = '%s'", id),
+			"data-class":    fmt.Sprintf("{'bg-accent text-accent-foreground': $active_tab === '%s'}", id),
+		},
+	}) {
+		{ label }
+	}
+}
+
+templ OverviewTab(data DashboardData) {
+	<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+		@statCard("Checkpoints", fmt.Sprintf("%d", len(data.Checkpoints)))
+		@statCard("Builds", fmt.Sprintf("%d", len(data.Builds)))
+		@statCard("Messages", fmt.Sprintf("%d", len(data.Messages)))
+	</div>
+	<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+		<div>
+			<h3 class="text-sm font-semibold mb-3 text-muted-foreground">Recent Activity</h3>
+			<div class="space-y-2">
+				if len(data.Activity) == 0 {
+					<p class="text-muted-foreground text-sm">No activity yet</p>
+				}
+				for _, a := range data.Activity {
+					if a.ActivityType != "" {
+						@activityItem(a)
+					}
+				}
+			</div>
+		</div>
+		<div>
+			<h3 class="text-sm font-semibold mb-3 text-muted-foreground">Recent Builds</h3>
+			<div class="space-y-2">
+				if len(data.Builds) == 0 {
+					<p class="text-muted-foreground text-sm">No builds yet</p>
+				}
+				for _, b := range data.Builds {
+					@buildItem(b)
+				}
+			</div>
+		</div>
+	</div>
+}
+
+templ statCard(label, value string) {
+	<div class="rounded-lg border border-border bg-card p-4">
+		<div class="text-2xl font-bold">{ value }</div>
+		<div class="text-sm text-muted-foreground">{ label }</div>
+	</div>
+}
+
+templ BuildsTab(builds []sqlc.MayorBuild) {
+	<div class="space-y-3">
+		if len(builds) == 0 {
+			<p class="text-muted-foreground">No builds recorded</p>
+		}
+		for _, b := range builds {
+			@buildItem(b)
+		}
+	</div>
+}
+
+templ buildItem(b sqlc.MayorBuild) {
+	<div class="rounded-lg border border-border bg-card p-3">
+		<div class="flex items-center justify-between mb-1">
+			<span class={ "text-xs px-2 py-0.5 rounded-full", buildStatusClass(b.Status) }>
+				{ b.Status }
+			</span>
+			<span class="text-xs text-muted-foreground">{ fmtTime(b.StartedAt) }</span>
+		</div>
+		<p class="text-sm">{ b.Prompt }</p>
+		if b.ErrorMessage.Valid {
+			<p class="text-xs text-destructive mt-1">{ b.ErrorMessage.String }</p>
+		}
+	</div>
+}
+
+func buildStatusClass(status string) string {
+	switch status {
+	case "building":
+		return "bg-yellow-900/50 text-yellow-300"
+	case "ready":
+		return "bg-green-900/50 text-green-300"
+	case "failed":
+		return "bg-red-900/50 text-red-300"
+	default:
+		return "bg-muted text-muted-foreground"
+	}
+}
+
+templ ActivityTab(activity []sqlc.MayorActivity) {
+	<div class="space-y-2">
+		if len(activity) == 0 {
+			<p class="text-muted-foreground">No activity recorded</p>
+		}
+		for _, a := range activity {
+			@activityItem(a)
+		}
+	</div>
+}
+
+templ activityItem(a sqlc.MayorActivity) {
+	<div class="flex items-start gap-3 py-2 border-b border-border last:border-0">
+		<span class="text-xs bg-muted px-2 py-0.5 rounded">{ a.ActivityType }</span>
+		<div class="flex-1">
+			if a.Detail.Valid {
+				<p class="text-sm">{ a.Detail.String }</p>
+			}
+		</div>
+		<span class="text-xs text-muted-foreground whitespace-nowrap">{ fmtTime(a.CreatedAt) }</span>
+	</div>
+}
+
+templ MessagesTab(messages []sqlc.MayorMessage) {
+	<div class="space-y-2">
+		if len(messages) == 0 {
+			<p class="text-muted-foreground">No messages recorded</p>
+		}
+		for _, msg := range messages {
+			@messageItem(msg)
+		}
+	</div>
+}
+
+templ messageItem(msg sqlc.MayorMessage) {
+	<div class={ "py-2 px-3 rounded", messageClass(msg.AuthorType) }>
+		<div class="flex items-center gap-2 mb-1">
+			<span class={ "text-xs font-semibold", authorColor(msg.AuthorType) }>{ msg.AuthorName }</span>
+			<span class="text-xs text-muted-foreground">{ fmtTime(msg.CreatedAt) }</span>
+		</div>
+		<p class="text-sm">{ msg.Content }</p>
+	</div>
+}
+
+func messageClass(authorType string) string {
+	switch authorType {
+	case "mayor":
+		return "bg-primary/10"
+	case "system":
+		return "bg-muted/50"
+	default:
+		return ""
+	}
+}
+
+func authorColor(authorType string) string {
+	switch authorType {
+	case "mayor":
+		return "text-primary"
+	case "system":
+		return "text-yellow-400"
+	default:
+		return "text-foreground"
+	}
+}
+
+templ MemoryTab(w sqlc.World) {
+	<div class="space-y-4">
+		<div>
+			<h3 class="text-sm font-semibold mb-2">SOUL.md</h3>
+			<div
+				id="mayor-soul-content"
+				class="rounded border border-border bg-card p-4 text-sm whitespace-pre-wrap font-mono max-h-96 overflow-y-auto"
+			>
+				Loading...
+			</div>
+		</div>
+		<div>
+			<h3 class="text-sm font-semibold mb-2">MEMORY.md</h3>
+			<div
+				id="mayor-memory-content"
+				class="rounded border border-border bg-card p-4 text-sm whitespace-pre-wrap font-mono max-h-96 overflow-y-auto"
+			>
+				Loading...
+			</div>
+		</div>
+	</div>
+}

@@ -26,16 +26,17 @@ set -euo pipefail
 #   13. Creates systemd service for auto-start on reboot (native binary)
 #   14. Installs Nix (daemon mode)
 #   15. Enables Nix flakes
-#   16. Installs direnv
+#   16. Installs flake tools to nix profile
 #   16b. Installs Rust toolchain (system-wide)
 #   16c. Installs cargo tools (trunk, cargo-watch, wasm-bindgen-cli)
-#   16d. Installs Go tools (templ)
+#   16d. Installs Go tools (templ, air)
 #   16e. Installs Tailwind CSS standalone binary
 #   17. Installs oh-my-zsh + configures zsh as login shell
-#   18. Activates dev environment (direnv allow)
 #   19. Creates .env file (interactive prompts for secrets)
 #   20. Sets up Tailscale Serve (HTTPS)
 #   20b. Installs Claude Code CLI
+#   20c. Installs uv (Python package runner for Claude Code hooks)
+#   20d. Installs playwright-cli (autonomous browser testing)
 #   21. Starts the server via systemd
 #   22. Prints summary
 #
@@ -707,22 +708,23 @@ else
 fi
 
 # ============================================================================
-# Step 16: Install direnv
+# Step 16: Install flake tools to nix profile
 # ============================================================================
-# direnv automatically activates the Nix dev environment when you cd into
-# the project directory. We install it via Nix. The shell hook is added in
-# the .zshrc created in Step 17.
+# Installs all dev tools from flake.nix (go, just, tmux, sqlc, etc.) into
+# ~/.nix-profile/bin/ via nix profile. This makes tools available system-wide
+# — in interactive shells, Claude Code, tmux sessions, and systemd — without
+# requiring direnv.
 # ============================================================================
-section "Step 16: Install direnv"
+section "Step 16: Install flake tools to nix profile"
 
-if sudo -u deploy bash -lc 'command -v direnv' &>/dev/null; then
-    skip "direnv already installed for deploy user"
+if sudo -u deploy bash -lc 'source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh && command -v just' &>/dev/null; then
+    skip "Flake tools already installed to nix profile"
 else
     if $DRY_RUN; then
-        info "Would install direnv via nix profile for deploy user"
+        info "Would install flake tools via nix profile install"
     else
-        sudo -u deploy bash -lc 'nix profile install nixpkgs#direnv'
-        ok "Installed direnv for deploy user"
+        sudo -u deploy bash -lc "source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh && nix profile install $CREATIVE_MODE_DIR"
+        ok "Installed flake tools to nix profile"
     fi
 fi
 
@@ -795,9 +797,8 @@ fi
 # ============================================================================
 section "Step 16d: Install Go tools (templ, air)"
 
-# Source Nix + direnv to get Go on PATH
+# Source Nix to get Go on PATH
 source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh 2>/dev/null || true
-eval "$(sudo -u deploy bash -c 'cd '"$CREATIVE_MODE_DIR"' && direnv export bash 2>/dev/null')" 2>/dev/null || true
 
 if command -v templ &>/dev/null && command -v air &>/dev/null; then
     skip "templ and air already installed"
@@ -805,7 +806,7 @@ else
     if $DRY_RUN; then
         info "Would install templ and air via go install"
     else
-        sudo -u deploy bash -lc 'cd '"$CREATIVE_MODE_DIR"' && eval "$(direnv export bash 2>/dev/null)" && go install github.com/a-h/templ/cmd/templ@v0.3.977 && go install github.com/air-verse/air@latest'
+        sudo -u deploy bash -lc 'source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh && go install github.com/a-h/templ/cmd/templ@v0.3.977 && go install github.com/air-verse/air@latest'
         ok "Installed templ and air"
     fi
 fi
@@ -841,12 +842,8 @@ fi
 # Step 17: Install oh-my-zsh + configure zsh as login shell
 # ============================================================================
 # Sets zsh as deploy's login shell, installs oh-my-zsh for a nice prompt and
-# plugin ecosystem, and writes a .zshrc that hooks direnv (so the Nix flake
-# dev environment activates automatically on cd into the project).
-#
-# Note: The flake.nix shellHook sources oh-my-zsh, but direnv only captures
-# environment variable diffs — it can't source scripts in the parent shell.
-# So oh-my-zsh must be installed independently for the login shell.
+# plugin ecosystem, and writes .zshenv (PATH for all sessions) and .zshrc
+# (interactive config only).
 # ============================================================================
 section "Step 17: Install oh-my-zsh + configure zsh"
 
@@ -862,35 +859,64 @@ else
     fi
 fi
 
-# Create .zshrc for deploy user (BEFORE oh-my-zsh install so the installer
-# sees an existing .zshrc and KEEP_ZSHRC=yes prevents overwriting it)
-DEPLOY_ZSHRC="$DEPLOY_HOME/.zshrc"
-if grep -q 'cd ~/creative-mode' "$DEPLOY_ZSHRC" 2>/dev/null; then
-    skip ".zshrc already configured"
+# Create .zshenv — sourced for ALL zsh sessions (interactive, non-interactive,
+# login, non-login). This ensures Claude Code and other non-interactive
+# contexts get all tools on PATH.
+DEPLOY_ZSHENV="$DEPLOY_HOME/.zshenv"
+if [ -f "$DEPLOY_ZSHENV" ] && grep -q 'nix-daemon.sh' "$DEPLOY_ZSHENV" 2>/dev/null; then
+    skip ".zshenv already configured"
 else
     if $DRY_RUN; then
-        info "Would create $DEPLOY_ZSHRC with oh-my-zsh + direnv hook"
+        info "Would create $DEPLOY_ZSHENV with PATH for all sessions"
     else
-        cat > "$DEPLOY_ZSHRC" << 'ZSHRCEOF'
-# Nix daemon environment (puts ~/.nix-profile/bin in PATH)
+        cat > "$DEPLOY_ZSHENV" << 'ZSHENVEOF'
+# Nix profile PATH (tools from flake.nix)
 if [ -e '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh' ]; then
   . '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh'
 fi
 
+# Go-installed tools (templ, air)
+export PATH="$HOME/go/bin:$PATH"
+
+# Rust/Cargo
+export RUSTUP_HOME=/usr/local/rustup
+export CARGO_HOME=/usr/local/cargo
+export PATH="/usr/local/cargo/bin:$PATH"
+
+# Claude Code CLI
+export PATH="$HOME/.local/bin:$PATH"
+
+# npm global packages (playwright-cli)
+export PATH="$HOME/.npm-global/bin:$PATH"
+ZSHENVEOF
+        chown deploy:deploy "$DEPLOY_ZSHENV"
+        ok "Created $DEPLOY_ZSHENV"
+    fi
+fi
+
+# Create .zshrc for deploy user (BEFORE oh-my-zsh install so the installer
+# sees an existing .zshrc and KEEP_ZSHRC=yes prevents overwriting it)
+DEPLOY_ZSHRC="$DEPLOY_HOME/.zshrc"
+if [ -f "$DEPLOY_ZSHRC" ] && ! grep -q 'direnv' "$DEPLOY_ZSHRC" 2>/dev/null; then
+    skip ".zshrc already configured (no direnv)"
+else
+    if $DRY_RUN; then
+        info "Would create $DEPLOY_ZSHRC with oh-my-zsh config"
+    else
+        cat > "$DEPLOY_ZSHRC" << 'ZSHRCEOF'
 # oh-my-zsh configuration
 export ZSH="$HOME/.oh-my-zsh"
 ZSH_THEME="robbyrussell"
 plugins=(git fzf docker docker-compose)
 source $ZSH/oh-my-zsh.sh
 
-# direnv hook — activates Nix flake dev environment on cd
-eval "$(direnv hook zsh)"
+alias cld='claude --dangerously-skip-permissions'
 
-# Auto-cd to project directory (triggers direnv)
-cd ~/creative-mode
+export PATH="$HOME/.npm-global/bin:$PATH"
+export PATH="$HOME/.nvim/bin:$PATH"
 ZSHRCEOF
         chown deploy:deploy "$DEPLOY_ZSHRC"
-        ok "Created $DEPLOY_ZSHRC with oh-my-zsh + direnv hook"
+        ok "Created $DEPLOY_ZSHRC"
     fi
 fi
 
@@ -907,27 +933,7 @@ else
 fi
 
 # ============================================================================
-# Step 18: Activate dev environment
-# ============================================================================
-# direnv allow tells direnv to trust the .envrc in the project directory.
-# This triggers the Nix flake to build the dev environment on first use.
-# ============================================================================
-section "Step 18: Activate dev environment"
-
-if [ -f "$CREATIVE_MODE_DIR/.direnv/flake-profile/bin/just" ]; then
-    skip "Dev environment already activated"
-else
-    if $DRY_RUN; then
-        info "Would run 'direnv allow' in $CREATIVE_MODE_DIR"
-    else
-        sudo -u deploy bash -lc "cd $CREATIVE_MODE_DIR && direnv allow"
-        ok "Activated dev environment (direnv allow)"
-        info "First activation may take a while as Nix builds the environment"
-    fi
-fi
-
-# ============================================================================
-# Step 19: Create .env file
+# Step 18: Create .env file (was Step 19)
 # ============================================================================
 # The harness needs secrets for GitHub OAuth, AI APIs, etc. This step
 # prompts interactively for each secret and auto-computes what it can
@@ -1031,6 +1037,59 @@ else
 fi
 
 # ============================================================================
+# Step 20c: Install uv (Python package runner)
+# ============================================================================
+# uv is an extremely fast Python package installer/runner. Claude Code hooks
+# use `uv run` with PEP 723 inline script metadata to run Python scripts
+# with auto-managed dependencies. Installed system-wide so hooks work
+# outside the Nix dev shell.
+# ============================================================================
+section "Step 20c: Install uv"
+
+if command -v uv &>/dev/null; then
+    skip "uv already installed"
+else
+    if $DRY_RUN; then
+        info "Would install uv via official install script"
+    else
+        curl -LsSf https://astral.sh/uv/install.sh | sudo -u deploy sh
+        ok "Installed uv"
+    fi
+fi
+
+# ============================================================================
+# Step 20d: Install playwright-cli
+# ============================================================================
+# playwright-cli enables autonomous browser testing for world mayors.
+# Installed via npm to ~/.npm-global (Nix store is read-only).
+# Also downloads Chromium browser for headless testing.
+# ============================================================================
+section "Step 20d: Install playwright-cli"
+
+# Configure npm global prefix to a writable location (Nix node store is read-only)
+if [ ! -f "$DEPLOY_HOME/.npmrc" ] || ! grep -q 'prefix' "$DEPLOY_HOME/.npmrc" 2>/dev/null; then
+    if $DRY_RUN; then
+        info "Would configure npm global prefix to ~/.npm-global"
+    else
+        sudo -u deploy mkdir -p "$DEPLOY_HOME/.npm-global"
+        sudo -u deploy bash -lc 'npm config set prefix ~/.npm-global'
+        ok "Configured npm global prefix to ~/.npm-global"
+    fi
+fi
+
+if sudo -u deploy bash -lc 'export PATH="$HOME/.npm-global/bin:$PATH" && command -v playwright-cli' &>/dev/null; then
+    skip "playwright-cli already installed"
+else
+    if $DRY_RUN; then
+        info "Would install playwright-cli and Chromium browser"
+    else
+        sudo -u deploy bash -lc 'source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh && npm install -g @playwright/cli@latest'
+        sudo -u deploy bash -lc 'source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh && export PATH="$HOME/.npm-global/bin:$PATH" && playwright-cli install'
+        ok "Installed playwright-cli + Chromium"
+    fi
+fi
+
+# ============================================================================
 # Step 21: Start the server
 # ============================================================================
 # Start the harness via the systemd service created in Step 13. The harness
@@ -1067,9 +1126,9 @@ echo ""
 echo "  1. Check server logs:"
 echo "       journalctl -u creative-mode -f"
 echo ""
-echo -e "  2. ${YELLOW}IMPORTANT:${NC} Update your GitHub OAuth App callback URL to:"
-echo "       https://$TS_DNS_NAME/auth/github/callback"
-echo "     (This must be done manually in the GitHub web UI)"
+echo -e "  2. ${YELLOW}IMPORTANT:${NC} Update your Discord OAuth App redirect URI to:"
+echo "       https://$TS_DNS_NAME/auth/discord/callback"
+echo "     (Discord Developer Portal > Your App > OAuth2 > Redirects)"
 echo ""
 echo "  3. SSH in via Tailscale going forward:"
 echo "       ssh deploy@$TS_DNS_NAME"

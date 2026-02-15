@@ -41,6 +41,20 @@ When the Anthropic API is unavailable (billing error, rate limit, overload), the
 
 After world hatching, the full onboarding conversation is pinned as a JSON message in the Discord channel (`PinOnboardingData`). This enables future OpenClaw agent bootstrap — the harness reads the pinned conversation back with `ReadOnboardingData` and uses it to generate the agent's personality files (IDENTITY.md, SOUL.md, etc).
 
+### World Hatching Webhook
+
+After the Discord channel is created, the site fires a webhook to the harness to trigger mayor agent provisioning:
+
+```
+POST {HARNESS_URL}/api/world-hatched
+Header: X-Hook-Secret: {CM_HOOK_SECRET}
+Body: { discord_channel_id, world_name, mayor_name, creator_discord_id, creator_username }
+```
+
+This is fire-and-forget (goroutine in `notifyHarnessWorldHatched`). Errors are logged but not surfaced to the user. The harness creates a world record and provisions the OpenClaw agent asynchronously.
+
+**Required env vars** in `site.env`: `CM_HOOK_SECRET` (shared secret) and `HARNESS_URL` (e.g., `http://100.x.x.x:8080` via Tailscale).
+
 ### Key Constraints
 
 - **ReadSignals before NewSSE** — `ReadSignals` must be called before `NewSSE` (which flushes headers). Reversing this silently breaks the handler.

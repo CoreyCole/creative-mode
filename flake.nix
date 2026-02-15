@@ -11,6 +11,18 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
       in {
+        # Installable package: nix profile install /home/deploy/creative-mode
+        # Puts all dev tools into ~/.nix-profile/bin/ (available system-wide)
+        packages.default = pkgs.buildEnv {
+          name = "creative-mode-tools";
+          paths = with pkgs; [
+            just git curl jq sqlite
+            go_1_24 gcc pkg-config
+            tmux sqlc nodejs_22
+            python3 uv
+          ];
+        };
+
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
             # Shell
@@ -36,14 +48,18 @@
             # Code generation
             sqlc
 
+            # Node.js (playwright-cli for autonomous world testing)
+            nodejs_22
+
+            # Python + uv (Claude Code hook scripts use `uv run`, debug.sh JSON processing)
+            python3
+            uv
+
             # Docker (CLI only — Docker Engine installed by bootstrap script)
             docker
             docker-compose
           ];
 
-          # oh-my-zsh is configured in the login shell (.zshrc) — not here.
-          # direnv evaluates shellHook inside bash, so sourcing oh-my-zsh
-          # fails. The flake still provides fzf/zsh as packages for PATH.
           shellHook = "";
         };
       }

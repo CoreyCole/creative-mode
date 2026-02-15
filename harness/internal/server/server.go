@@ -24,6 +24,8 @@ import (
 	"creative-mode/harness/internal/db/sqlc"
 	"creative-mode/harness/internal/events"
 	"creative-mode/harness/internal/gemini"
+	"creative-mode/harness/internal/mayor"
+	"creative-mode/harness/internal/president"
 	"creative-mode/harness/internal/world"
 	"creative-mode/harness/views/admin"
 	"creative-mode/harness/views/lobby"
@@ -47,7 +49,9 @@ type Server struct {
 	Orchestrator *claude.Orchestrator
 	EventBus     *events.EventBus
 	GeminiClient *gemini.Client
-	DataDir      string
+	MayorManager     *mayor.Manager
+	PresidentManager *president.Manager
+	DataDir          string
 	dev          *devState // nil when DEV_MODE is not set
 }
 
@@ -127,6 +131,24 @@ func (s *Server) RegisterRoutes(e *echo.Echo) {
 	// Claude hook event endpoint (protected by CM_HOOK_SECRET if set).
 	e.POST("/api/claude-event", s.handleClaudeEvent, hookSecretMiddleware())
 
+	// World-hatched webhook (from site, protected by CM_HOOK_SECRET).
+	e.POST("/api/world-hatched", s.handleWorldHatched, hookSecretMiddleware())
+
+	// Mayor API (protected by per-world X-Mayor-Secret).
+	mayorGroup := e.Group("/api/mayor")
+	mayorGroup.Use(s.mayorAuthMiddleware)
+	mayorGroup.POST("/build", s.handleMayorBuild)
+	mayorGroup.GET("/status", s.handleMayorStatus)
+	mayorGroup.POST("/contribute-learning", s.handleContributeLearning)
+
+	// President API (protected by PRESIDENT_SECRET).
+	presidentGroup := e.Group("/api/president")
+	presidentGroup.Use(presidentAuthMiddleware())
+	presidentGroup.GET("/mayor-status", s.handlePresidentMayorStatus)
+	presidentGroup.POST("/repo-build", s.handlePresidentRepoBuild)
+	presidentGroup.POST("/template-update", s.handlePresidentTemplateUpdate)
+	presidentGroup.POST("/deploy", s.handlePresidentDeploy)
+
 	// Root route — soft session check renders login/pending/lobby.
 	e.GET("/", s.handleRoot)
 
@@ -146,6 +168,12 @@ func (s *Server) RegisterRoutes(e *echo.Echo) {
 	// Approved users only.
 	approved := authed.Group("", auth.ApprovedMiddleware())
 	s.registerWorldRoutes(approved)
+
+	// Mayor dashboard (approved users).
+	approved.GET("/mayor/:worldID", s.handleMayorDashboard)
+	approved.GET("/mayor/:worldID/events", s.handleMayorDashboardSSE)
+	approved.GET("/mayor/:worldID/file", s.handleMayorFileRead)
+	approved.PUT("/mayor/:worldID/file", s.handleMayorFileSave)
 
 	// WASM artifact serving (approved users).
 	approved.GET("/wasm/:worldID/:cpID/*", s.handleWASMArtifacts)

@@ -28,17 +28,22 @@ const (
 	claudeSessionParts = 3
 )
 
+// BuildCompleteFunc is a callback invoked after a build completes or fails.
+// Used to notify external systems (e.g., Discord via MayorManager).
+type BuildCompleteFunc func(worldID, cpID string, success bool, summary string)
+
 // Orchestrator manages the prompt-to-build pipeline: forking checkpoints,
 // launching Claude Code in tmux sessions, triggering builds on completion,
 // and publishing events through the EventBus.
 type Orchestrator struct {
-	db           *db.DB
-	logger       *slog.Logger
-	worldManager *world.Manager
-	builder      *build.Builder
-	eventBus     *events.EventBus
-	logsDir      string
-	harnessURL   string
+	db              *db.DB
+	logger          *slog.Logger
+	worldManager    *world.Manager
+	builder         *build.Builder
+	eventBus        *events.EventBus
+	logsDir         string
+	harnessURL      string
+	OnBuildComplete BuildCompleteFunc // optional callback for build notifications
 }
 
 // NewOrchestrator creates a new Claude Code orchestrator.
@@ -182,6 +187,10 @@ func (o *Orchestrator) BuildCheckpoint(worldID, cpID string) {
 			"error":   buildErr.Error(),
 		})
 
+		if o.OnBuildComplete != nil {
+			o.OnBuildComplete(worldID, cpID, false, buildErr.Error())
+		}
+
 		return
 	}
 
@@ -237,6 +246,10 @@ func (o *Orchestrator) BuildCheckpoint(worldID, cpID string) {
 		"worldName":  worldName,
 		"serverPort": serverPort,
 	})
+
+	if o.OnBuildComplete != nil {
+		o.OnBuildComplete(worldID, cpID, true, promptSnippet)
+	}
 }
 
 // createAndPublishMessage persists a message to the DB and publishes it to

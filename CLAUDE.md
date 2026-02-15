@@ -10,8 +10,44 @@ Multiplayer creative sandbox — Go harness server + Bevy/WASM game client.
 | `templates/3d/` | 3D Bevy/Lightyear game template — see `templates/3d/CLAUDE.md` |
 | `templates/2d/` | 2D Bevy room-based template — see `templates/2d/CLAUDE.md` |
 | `scripts/` | Build, format, and setup scripts |
+| `site/`    | Marketing site + onboarding (Echo + templ) — see `site/CLAUDE.md` |
+| `pkg/`     | Shared Go packages (`worldchannel` — Discord channel management) |
 | `context/` | Reference code (gitignored) |
 | `thoughts/` | Plans, reviews, and notes |
+
+## Agent System
+
+Creative Mode uses a hierarchical AI agent system: **mayors** (per-world) and a **president** (global).
+
+### Mayors
+
+Every world gets a mayor — an OpenClaw agent with a personality, evolving memory, and build skills. Mayors chat with users in Discord and trigger builds via the harness API.
+
+**Flow**: Site onboarding → Discord channel created → `POST /api/world-hatched` webhook → harness provisions OpenClaw agent → mayor responds in Discord → can trigger builds via `POST /api/mayor/build`.
+
+**Discord listener**: A separate discordgo Gateway session mirrors all messages from world channels into `mayor_messages` in SQLite, publishes `EventMayorMessage` to the EventBus, and streams them to the browser via SSE.
+
+**Mayor Dashboard**: `/mayor/:worldID` — view builds, activity, messages, sessions, and read/edit workspace files (SOUL.md, MEMORY.md, AGENTS.md).
+
+### President
+
+One president agent oversees all mayors and the repo. It can query all mayor statuses, run `just check`, spawn Claude Code sessions for template updates, and trigger deploys.
+
+### Environment Variables (Agent System)
+
+| Variable | Required For | Purpose |
+|----------|-------------|---------|
+| `DISCORD_BOT_TOKEN` | Mayors + Discord listener | Bot auth (shared with site) |
+| `DISCORD_GUILD_ID` | Mayors | Discord server ID |
+| `DISCORD_WORLDS_CATEGORY_ID` | Mayors | Category for world channels |
+| `DISCORD_PRESIDENT_CHANNEL_ID` | President | #creative-mode-dev channel |
+| `PRESIDENT_SECRET` | President | Auth for `/api/president/*` |
+| `CM_HOOK_SECRET` | Site→Harness webhook | Shared secret for `/api/world-hatched` |
+| `OPENCLAW_HOME` | Both | Data dir (default: `data/openclaw`) |
+
+### OpenClaw
+
+OpenClaw is installed at `/opt/openclaw/`, CLI at `/opt/openclaw/node_modules/.bin/openclaw`. Setup script: `harness/scripts/setup-openclaw.sh`.
 
 ## Running the Server
 

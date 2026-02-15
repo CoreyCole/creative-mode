@@ -9,7 +9,7 @@ set -euo pipefail
 # running the Creative Mode harness. Pipable from curl on a fresh instance.
 #
 # What this script does:
-#   0.  Installs prerequisites (git, curl, sqlite3)
+#   0.  Installs prerequisites (git, curl, sqlite3, jq, openssl)
 #   1.  Creates a 'deploy' user with sudo access
 #   1b. Clones the repository to ~deploy/creative-mode
 #   2.  Installs Tailscale (private networking)
@@ -24,7 +24,14 @@ set -euo pipefail
 #   11. Adds deploy user to docker group
 #   12. Sets up daily SQLite backup cron job
 #   13. Creates systemd service for auto-start on reboot
-#   14. Prints summary and next steps
+#   14. Installs Nix (daemon mode)
+#   15. Enables Nix flakes
+#   16. Installs direnv + configures bash hook
+#   17. Activates dev environment (direnv allow)
+#   18. Creates .env file (interactive prompts for secrets)
+#   19. Sets up Tailscale Serve (HTTPS)
+#   20. Starts the server via systemd
+#   21. Prints summary
 #
 # Usage:
 #   curl -fsSL <raw-url>/scripts/vps-bootstrap.sh | sudo bash
@@ -98,18 +105,20 @@ info "Install path: $CREATIVE_MODE_DIR"
 # A fresh Ubuntu 24.04 minimal image may not have git or curl. Install them
 # now so the rest of the script can clone the repo and fetch install scripts.
 # sqlite3 is needed for the daily backup cron job (Step 12).
+# jq is needed for parsing Tailscale DNS name (Step 18).
+# openssl is needed for generating CM_HOOK_SECRET (Step 18).
 # ============================================================================
 section "Step 0: Install prerequisites"
 
-if command -v git &>/dev/null && command -v curl &>/dev/null && command -v sqlite3 &>/dev/null; then
-    skip "Prerequisites already installed (git, curl, sqlite3)"
+if command -v git &>/dev/null && command -v curl &>/dev/null && command -v sqlite3 &>/dev/null && command -v jq &>/dev/null && command -v openssl &>/dev/null; then
+    skip "Prerequisites already installed (git, curl, sqlite3, jq, openssl)"
 else
     if $DRY_RUN; then
-        info "Would apt-get update and install git, curl, sqlite3"
+        info "Would apt-get update and install git, curl, sqlite3, jq, openssl"
     else
         apt-get update
-        apt-get install -y git curl sqlite3
-        ok "Installed prerequisites (git, curl, sqlite3)"
+        apt-get install -y git curl sqlite3 jq openssl
+        ok "Installed prerequisites (git, curl, sqlite3, jq, openssl)"
     fi
 fi
 
@@ -129,7 +138,22 @@ else
     else
         adduser --disabled-password --gecos "" deploy
         usermod -aG sudo deploy
-        ok "Created user 'deploy' with sudo access"
+        ok "Created user 'deploy'"
+    fi
+fi
+
+# Passwordless sudo — deploy has no password set (--disabled-password)
+# so normal sudo would be unusable without this. Idempotent check
+# ensures this works even if the user was created in a previous run.
+if [ -f /etc/sudoers.d/deploy ]; then
+    skip "Passwordless sudo already configured"
+else
+    if $DRY_RUN; then
+        info "Would configure passwordless sudo for deploy"
+    else
+        echo "deploy ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/deploy
+        chmod 440 /etc/sudoers.d/deploy
+        ok "Configured passwordless sudo for deploy"
     fi
 fi
 
@@ -635,57 +659,228 @@ if ! $DRY_RUN && [ -f "$SERVICE_FILE" ]; then
 fi
 
 # ============================================================================
-# Step 14: Summary
+# Step 14: Install Nix
+# ============================================================================
+# Nix is a package manager that provides reproducible dev environments.
+# We install in daemon mode so it's available system-wide.
+# The --yes flag skips interactive confirmation.
+# ============================================================================
+section "Step 14: Install Nix"
+
+if [ -d /nix ]; then
+    skip "Nix already installed"
+else
+    if $DRY_RUN; then
+        info "Would install Nix in daemon mode"
+    else
+        sh <(curl -L https://nixos.org/nix/install) --daemon --yes
+        ok "Installed Nix (daemon mode)"
+    fi
+fi
+
+# ============================================================================
+# Step 15: Enable Nix flakes
+# ============================================================================
+# Flakes are Nix's modern project management feature. The creative-mode repo
+# uses a flake.nix for its dev environment. This is still behind an
+# experimental feature flag.
+# ============================================================================
+section "Step 15: Enable Nix flakes"
+
+NIX_CONF="/etc/nix/nix.conf"
+if grep -q "experimental-features.*flakes" "$NIX_CONF" 2>/dev/null; then
+    skip "Nix flakes already enabled in $NIX_CONF"
+else
+    if $DRY_RUN; then
+        info "Would add 'experimental-features = nix-command flakes' to $NIX_CONF"
+    else
+        mkdir -p /etc/nix
+        echo "experimental-features = nix-command flakes" >> "$NIX_CONF"
+        systemctl restart nix-daemon
+        ok "Enabled Nix flakes and restarted nix-daemon"
+    fi
+fi
+
+# ============================================================================
+# Step 16: Install direnv + configure bash hook
+# ============================================================================
+# direnv automatically activates the Nix dev environment when you cd into
+# the project directory. We install it via Nix and add the bash hook.
+# ============================================================================
+section "Step 16: Install direnv"
+
+if sudo -u deploy bash -lc 'command -v direnv' &>/dev/null; then
+    skip "direnv already installed for deploy user"
+else
+    if $DRY_RUN; then
+        info "Would install direnv via nix profile for deploy user"
+    else
+        sudo -u deploy bash -lc 'nix profile install nixpkgs#direnv'
+        ok "Installed direnv for deploy user"
+    fi
+fi
+
+DEPLOY_BASHRC="$DEPLOY_HOME/.bashrc"
+if grep -q 'direnv hook bash' "$DEPLOY_BASHRC" 2>/dev/null; then
+    skip "direnv bash hook already in $DEPLOY_BASHRC"
+else
+    if $DRY_RUN; then
+        info "Would add direnv hook to $DEPLOY_BASHRC"
+    else
+        echo 'eval "$(direnv hook bash)"' >> "$DEPLOY_BASHRC"
+        ok "Added direnv bash hook to $DEPLOY_BASHRC"
+    fi
+fi
+
+# ============================================================================
+# Step 17: Activate dev environment
+# ============================================================================
+# direnv allow tells direnv to trust the .envrc in the project directory.
+# This triggers the Nix flake to build the dev environment on first use.
+# ============================================================================
+section "Step 17: Activate dev environment"
+
+if [ -f "$CREATIVE_MODE_DIR/.direnv/flake-profile/bin/just" ]; then
+    skip "Dev environment already activated"
+else
+    if $DRY_RUN; then
+        info "Would run 'direnv allow' in $CREATIVE_MODE_DIR"
+    else
+        sudo -u deploy bash -lc "cd $CREATIVE_MODE_DIR && direnv allow"
+        ok "Activated dev environment (direnv allow)"
+        info "First activation may take a while as Nix builds the environment"
+    fi
+fi
+
+# ============================================================================
+# Step 18: Create .env file
+# ============================================================================
+# The harness needs secrets for GitHub OAuth, AI APIs, etc. This step
+# prompts interactively for each secret and auto-computes what it can
+# (HARNESS_URL from Tailscale DNS, CM_HOOK_SECRET via openssl).
+# ============================================================================
+section "Step 18: Create .env file"
+
+ENV_FILE="$CREATIVE_MODE_DIR/harness/.env"
+if [ -f "$ENV_FILE" ]; then
+    skip ".env file already exists at $ENV_FILE"
+else
+    if $DRY_RUN; then
+        info "Would prompt for secrets and create $ENV_FILE"
+    else
+        echo ""
+        echo -e "${BOLD}Enter secrets for the .env file (leave blank to skip):${NC}"
+        echo ""
+
+        read -rp "  GitHub OAuth Client ID: " GITHUB_CLIENT_ID
+        read -rp "  GitHub OAuth Client Secret: " GITHUB_CLIENT_SECRET
+        read -rp "  Gemini API Key: " GEMINI_API_KEY
+        read -rp "  Anthropic API Key: " ANTHROPIC_API_KEY
+
+        # Auto-compute HARNESS_URL from Tailscale DNS name
+        TS_DNS=$(tailscale status --json 2>/dev/null | jq -r '.Self.DNSName' | sed 's/\.$//' || true)
+        if [ -n "$TS_DNS" ]; then
+            HARNESS_URL="https://$TS_DNS"
+            info "Auto-detected HARNESS_URL: $HARNESS_URL"
+        else
+            HARNESS_URL=""
+            info "Could not detect Tailscale DNS name — HARNESS_URL left blank"
+        fi
+
+        # Auto-generate hook secret
+        HOOK_SECRET=$(openssl rand -hex 32)
+        info "Auto-generated CM_HOOK_SECRET"
+
+        cat > "$ENV_FILE" << EOF
+# GitHub OAuth (required for authentication)
+GITHUB_CLIENT_ID=$GITHUB_CLIENT_ID
+GITHUB_CLIENT_SECRET=$GITHUB_CLIENT_SECRET
+
+# Gemini API key (required for AI features)
+GEMINI_API_KEY=$GEMINI_API_KEY
+
+# Anthropic API key (required for Claude Code sessions)
+ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
+
+# --- VPS only ---
+
+# Harness URL — Tailscale Serve HTTPS URL
+HARNESS_URL=$HARNESS_URL
+
+# Hook secret — protects /api/claude-event endpoint
+CM_HOOK_SECRET=$HOOK_SECRET
+EOF
+
+        chown deploy:deploy "$ENV_FILE"
+        chmod 600 "$ENV_FILE"
+        ok "Created $ENV_FILE (owner: deploy, mode: 600)"
+    fi
+fi
+
+# ============================================================================
+# Step 19: Set up Tailscale Serve
+# ============================================================================
+# Tailscale Serve provides HTTPS with automatic TLS certificates, proxying
+# traffic from https://{machine}.{tailnet}.ts.net to localhost:8080.
+# This is how the harness is accessed over the Tailscale network.
+# ============================================================================
+section "Step 19: Tailscale Serve"
+
+if tailscale serve status 2>/dev/null | grep -q 'https'; then
+    skip "Tailscale Serve already configured"
+else
+    if $DRY_RUN; then
+        info "Would configure Tailscale Serve: https / -> http://localhost:8080"
+    else
+        tailscale serve https / http://localhost:8080
+        ok "Configured Tailscale Serve (https -> localhost:8080)"
+    fi
+fi
+
+# ============================================================================
+# Step 20: Start the server
+# ============================================================================
+# Start the harness via the systemd service created in Step 13. This runs
+# docker compose up -d as the deploy user. The first build takes a while
+# because Docker needs to pull images and compile the WASM client.
+# ============================================================================
+section "Step 20: Start the server"
+
+if systemctl is-active --quiet creative-mode; then
+    skip "creative-mode service is already running"
+else
+    if $DRY_RUN; then
+        info "Would start creative-mode service"
+    else
+        systemctl start creative-mode
+        ok "Started creative-mode service"
+        info "First build takes a while — Docker is pulling images and compiling"
+        info "Check progress: journalctl -u creative-mode -f"
+    fi
+fi
+
+# ============================================================================
+# Step 21: Summary
 # ============================================================================
 section "Bootstrap Complete"
 
+TS_DNS_NAME=$(tailscale status --json 2>/dev/null | jq -r '.Self.DNSName' | sed 's/\.$//' || echo '{machine}.{tailnet}.ts.net')
+
 echo ""
-echo -e "${GREEN}${BOLD}What was done:${NC}"
-echo "  - prerequisites: git, curl, sqlite3"
-echo "  - deploy user: created with sudo access"
-echo "  - repository: cloned to $CREATIVE_MODE_DIR"
-echo "  - Tailscale: installed and connected"
-echo "  - Tailscale SSH: enabled"
-echo "  - Docker Engine: installed"
-echo "  - UFW firewall: deny incoming, allow tailscale0"
-echo "  - DOCKER-USER rules: drop $PUBLIC_IF, allow tailscale0"
-echo "  - Docker daemon: live-restore, no-new-privileges, log rotation"
-echo "  - Fail2Ban: installed and running"
-echo "  - SSH: Tailscale-only ($(tailscale ip -4 2>/dev/null || echo 'N/A')), port 2222, no passwords"
-echo "  - deploy user: added to docker group"
-echo "  - SQLite backup: daily cron job"
-echo "  - systemd: creative-mode.service enabled"
+echo -e "${GREEN}${BOLD}Everything is set up and running!${NC}"
 echo ""
-echo -e "${YELLOW}${BOLD}Detected public interface:${NC} $PUBLIC_IF"
+echo -e "${BOLD}What to do next:${NC}"
 echo ""
-echo -e "${BOLD}Next steps:${NC}"
-echo "  1. Switch to the deploy user:"
-echo "       su - deploy"
+echo "  1. Check server logs:"
+echo "       journalctl -u creative-mode -f"
 echo ""
-echo "  2. Install Nix (dev environment manager):"
-echo "       sh <(curl -L https://nixos.org/nix/install) --daemon"
+echo -e "  2. ${YELLOW}IMPORTANT:${NC} Update your GitHub OAuth App callback URL to:"
+echo "       https://$TS_DNS_NAME/auth/github/callback"
+echo "     (This must be done manually in the GitHub web UI)"
 echo ""
-echo "  3. Enable Nix flakes — add to /etc/nix/nix.conf:"
-echo "       experimental-features = nix-command flakes"
-echo "     Then: sudo systemctl restart nix-daemon"
+echo "  3. SSH in via Tailscale going forward:"
+echo "       ssh deploy@$TS_DNS_NAME"
 echo ""
-echo "  4. Install direnv:"
-echo "       nix profile install nixpkgs#direnv"
-echo "     Add to ~/.bashrc: eval \"\$(direnv hook bash)\""
-echo ""
-echo "  5. Activate the dev environment:"
-echo "       cd ~/creative-mode && direnv allow"
-echo ""
-echo "  6. Create .env file:"
-echo "       cp harness/.env.example harness/.env"
-echo "       # Edit harness/.env with your secrets"
-echo ""
-echo "  7. Start the server:"
-echo "       cd harness && just up"
-echo ""
-echo "  8. Set up Tailscale Serve for HTTPS:"
-echo "       sudo tailscale serve https / http://localhost:8080"
-echo ""
-echo -e "  ${YELLOW}IMPORTANT:${NC} Update your GitHub OAuth App callback URL to:"
-echo "       https://$(tailscale status --json 2>/dev/null | jq -r '.Self.DNSName' | sed 's/\.$//' || echo '{machine}.{tailnet}.ts.net')/auth/github/callback"
+echo "  4. Visit your server:"
+echo "       https://$TS_DNS_NAME"
 echo ""

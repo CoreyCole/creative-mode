@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -167,7 +168,8 @@ func (s *Server) handlePresidentTemplateUpdate(c echo.Context) error {
 
 	sessionName := fmt.Sprintf("cm-president-tpl-%d", time.Now().Unix())
 
-	cmd := exec.CommandContext(c.Request().Context(),
+	cmd := exec.CommandContext(
+		c.Request().Context(),
 		"tmux",
 		"new-session",
 		"-d",
@@ -175,7 +177,10 @@ func (s *Server) handlePresidentTemplateUpdate(c echo.Context) error {
 		sessionName,
 		"-c",
 		repoRoot,
-		fmt.Sprintf("claude --print '%s' 2>&1; echo '[DONE]'", req.Prompt),
+		fmt.Sprintf(
+			"claude --print '%s' 2>&1; echo '[DONE]'",
+			strings.ReplaceAll(req.Prompt, "'", "'\\''"),
+		),
 	)
 	if output, cmdErr := cmd.CombinedOutput(); cmdErr != nil {
 		return echo.NewHTTPError(

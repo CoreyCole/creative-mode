@@ -70,6 +70,8 @@ Extract user in any handler: `user, ok := c.Get("user").(*sqlc.User)`
 | `/api/president/template-update` | POST | Spawn Claude Code session at repo root |
 | `/api/president/deploy` | POST | Run `just vps-deploy` in a tmux session |
 
+**Notes**: Auto-provisions on startup when `PRESIDENT_SECRET` and `DISCORD_PRESIDENT_CHANNEL_ID` env vars are set (currently disabled in production — env vars not configured). Spawned tmux sessions are fire-and-forget (no status polling endpoint).
+
 ### Mayor Dashboard (`internal/server/mayor_dashboard.go`)
 
 Approved-user routes for world observability:
@@ -86,7 +88,8 @@ Approved-user routes for world observability:
 A separate discordgo Gateway session (distinct from the REST-only `worldchannel` client) that mirrors Discord messages to the DB and EventBus.
 
 - **Channel map**: Loaded from DB on startup via `GetWorldsWithDiscordChannels()`, updated dynamically via `RegisterChannel(channelID, worldID)`
-- **Message classification**: `author_type` is `user`, `mayor`, or `system` (based on bot flag and author name matching the world's mayor name)
+- **Message classification**: `author_type` is `user`, `mayor`, or `system` — based on bot flag and message content prefix: non-bot messages → `user`, bot messages with `[BUILD`/`[SYSTEM` prefix → `system`, other bot messages → `mayor`
+- **Channel registration**: Channel map is loaded from DB on startup; `RegisterChannel()` exists but new worlds provisioned at runtime won't have Discord mirroring until harness restart
 - **Flow**: Discord message → `MessageCreate` handler → lookup world by channel → `CreateMayorMessage` in DB → `Publish(worldID, EventMayorMessage)` to EventBus → SSE → browser
 
 ### OpenClaw Integration (`internal/mayor/manager.go`)
@@ -95,14 +98,23 @@ Mayors and the president are OpenClaw agents managed via CLI (`exec.CommandConte
 
 **Workspace structure** (`{OPENCLAW_HOME}/workspaces/`):
 - `world-{worldID}/` — mayor workspace: `SOUL.md`, `AGENTS.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`, `skills/`
-- `president/` — president workspace
+- `president/` — president workspace: `SOUL.md`, `AGENTS.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`, `HEARTBEAT.md`, `skills/` (4 skills: `mayor-status`, `repo-build`, `template-update`, `deploy`)
 
 **Key operations**:
 - `ProvisionFromWebhook()` — creates world record, generates agent workspace files from onboarding data, registers Discord channel
 - `PostToDiscord()` — send messages to a world's Discord channel (build notifications)
 - `ContributeLearning()` — queue knowledge contributions from mayors
+- `BindAgentToDiscord()` — exists but is not called during mayor provisioning (only president uses channel binding)
 
 **OpenClaw gateway**: Health checked at `localhost:18789`.
+
+### Build Notifications
+
+The `OnBuildComplete` callback is wired in `main.go` to post build results to Discord:
+- On success: `[BUILD COMPLETE] Checkpoint {cpID} — {summary}`
+- On failure: `[BUILD FAILED] Checkpoint {cpID} — {summary}`
+- Sent via `mayorManager.PostToDiscord()` to the world's Discord channel
+- The Discord listener then mirrors these back as `system`-type messages (matched by `[BUILD` prefix)
 
 ### EventBus (`internal/events/bus.go`)
 

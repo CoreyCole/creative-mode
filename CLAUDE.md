@@ -31,7 +31,7 @@ Every world gets a mayor — an OpenClaw agent with a personality, evolving memo
 
 ### President
 
-One president agent oversees all mayors and the repo. It can query all mayor statuses, run `just check`, spawn Claude Code sessions for template updates, and trigger deploys.
+One president agent oversees all mayors and the repo. It can query all mayor statuses, run `just check`, spawn Claude Code sessions for template updates, and trigger deploys. Auto-provisions on startup when `PRESIDENT_SECRET` and `DISCORD_PRESIDENT_CHANNEL_ID` env vars are set (currently disabled in production).
 
 ### Environment Variables (Agent System)
 
@@ -43,6 +43,7 @@ One president agent oversees all mayors and the repo. It can query all mayor sta
 | `DISCORD_PRESIDENT_CHANNEL_ID` | President | #creative-mode-dev channel |
 | `PRESIDENT_SECRET` | President | Auth for `/api/president/*` |
 | `CM_HOOK_SECRET` | Site→Harness webhook | Shared secret for `/api/world-hatched` |
+| `ANTHROPIC_API_KEY` | Both | Claude API for OpenClaw agents + Claude Code builds |
 | `OPENCLAW_HOME` | Both | Data dir (default: `data/openclaw`) |
 
 ### OpenClaw

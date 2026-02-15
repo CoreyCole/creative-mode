@@ -643,6 +643,7 @@ After=network.target
 [Service]
 Type=simple
 User=deploy
+KillMode=process
 WorkingDirectory=$CREATIVE_MODE_DIR/harness
 ExecStart=$CREATIVE_MODE_DIR/scripts/harness-run.sh
 Restart=on-failure

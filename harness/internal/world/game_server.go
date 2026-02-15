@@ -44,15 +44,16 @@ type GameServer struct {
 
 // IsAlive checks if the tmux session still exists.
 func (s *GameServer) IsAlive() bool {
-	return exec.CommandContext(context.Background(), "tmux", "has-session", "-t", s.SessionName).
-		Run() ==
-		nil
+	return exec.CommandContext(
+		context.Background(), "tmux", "has-session", "-t", s.SessionName,
+	).Run() == nil
 }
 
 // Stop kills the tmux session.
 func (s *GameServer) Stop() error {
-	return exec.CommandContext(context.Background(), "tmux", "kill-session", "-t", s.SessionName).
-		Run()
+	return exec.CommandContext(
+		context.Background(), "tmux", "kill-session", "-t", s.SessionName,
+	).Run()
 }
 
 func serverSessionName(worldID, cpID string) string {
@@ -160,12 +161,14 @@ func (m *GameServerManager) startServerTmux(
 	}
 
 	// Kill any stale session with the same name.
-	_ = exec.CommandContext(context.Background(),
+	_ = exec.CommandContext(
+		context.Background(),
 		"tmux", "kill-session", "-t", sessionName,
 	).Run()
 
 	// Create tmux session.
-	createErr := exec.CommandContext(context.Background(), "tmux", "new-session", "-d",
+	createErr := exec.CommandContext(
+		context.Background(), "tmux", "new-session", "-d",
 		"-s", sessionName,
 		"-c", checkpointDir,
 		"-e", fmt.Sprintf("GAME_PORT=%d", port),
@@ -178,7 +181,8 @@ func (m *GameServerManager) startServerTmux(
 
 	// Set up log capture via pipe-pane.
 	logFile := filepath.Join(logDir, "game-server.log")
-	_ = exec.CommandContext(context.Background(),
+	_ = exec.CommandContext(
+		context.Background(),
 		"tmux", "pipe-pane", "-t", sessionName, "-o",
 		"cat >> "+logFile,
 	).Run()
@@ -190,11 +194,13 @@ func (m *GameServerManager) startServerTmux(
 	}
 
 	// Send the command.
-	sendErr := exec.CommandContext(context.Background(),
+	sendErr := exec.CommandContext(
+		context.Background(),
 		"tmux", "send-keys", "-t", sessionName, cmd, "Enter",
 	).Run()
 	if sendErr != nil {
-		_ = exec.CommandContext(context.Background(),
+		_ = exec.CommandContext(
+			context.Background(),
 			"tmux", "kill-session", "-t", sessionName,
 		).Run()
 
@@ -241,7 +247,8 @@ func (m *GameServerManager) GetServer(worldID, cpID string) *GameServer {
 		if srv.TrunkSessionName == "" {
 			return nil
 		}
-		alive := exec.CommandContext(context.Background(), "tmux", "has-session",
+		alive := exec.CommandContext(
+			context.Background(), "tmux", "has-session",
 			"-t", srv.TrunkSessionName,
 		).Run() == nil
 		if !alive {
@@ -282,7 +289,8 @@ func (m *GameServerManager) Disconnect(worldID, cpID string) {
 
 	// Kill trunk session if running.
 	if srv.TrunkSessionName != "" {
-		_ = exec.CommandContext(context.Background(),
+		_ = exec.CommandContext(
+			context.Background(),
 			"tmux", "kill-session", "-t", srv.TrunkSessionName,
 		).Run()
 		if srv.TrunkPort > 0 {
@@ -311,7 +319,8 @@ func (m *GameServerManager) StopByWorldExcept(worldID, keepCPID string) {
 		}
 
 		if srv.TrunkSessionName != "" {
-			_ = exec.CommandContext(context.Background(),
+			_ = exec.CommandContext(
+				context.Background(),
 				"tmux", "kill-session", "-t", srv.TrunkSessionName,
 			).Run()
 			if srv.TrunkPort > 0 {
@@ -338,7 +347,8 @@ func (m *GameServerManager) Shutdown() {
 
 	for key, srv := range m.servers {
 		if srv.TrunkSessionName != "" {
-			_ = exec.CommandContext(context.Background(),
+			_ = exec.CommandContext(
+				context.Background(),
 				"tmux", "kill-session", "-t", srv.TrunkSessionName,
 			).Run()
 			if srv.TrunkPort > 0 {
@@ -527,7 +537,8 @@ func (m *GameServerManager) ReapOrphans() {
 		}
 
 		// Orphaned session — not in our map. Kill it.
-		_ = exec.CommandContext(context.Background(),
+		_ = exec.CommandContext(
+			context.Background(),
 			"tmux", "kill-session", "-t", line,
 		).Run()
 		m.logger.Info("reaped orphaned session",
@@ -619,9 +630,9 @@ func (m *GameServerManager) StartTrunkServe(
 
 	// Already running?
 	if srv.TrunkPort > 0 && srv.TrunkSessionName != "" {
-		alive := exec.CommandContext(context.Background(), "tmux", "has-session", "-t", srv.TrunkSessionName).
-			Run() ==
-			nil
+		alive := exec.CommandContext(
+			context.Background(), "tmux", "has-session", "-t", srv.TrunkSessionName,
+		).Run() == nil
 		if alive {
 			return srv.TrunkPort, nil
 		}
@@ -649,12 +660,14 @@ func (m *GameServerManager) StartTrunkServe(
 	}
 
 	// Kill any stale session with the same name.
-	_ = exec.CommandContext(context.Background(),
+	_ = exec.CommandContext(
+		context.Background(),
 		"tmux", "kill-session", "-t", sessionName,
 	).Run()
 
 	// Create tmux session.
-	createErr := exec.CommandContext(context.Background(), "tmux", "new-session", "-d",
+	createErr := exec.CommandContext(
+		context.Background(), "tmux", "new-session", "-d",
 		"-s", sessionName,
 		"-c", clientDir,
 		"-e", fmt.Sprintf("TRUNK_PORT=%d", trunkPort),
@@ -666,7 +679,8 @@ func (m *GameServerManager) StartTrunkServe(
 
 	// Log capture.
 	logFile := filepath.Join(logDir, "trunk-serve.log")
-	_ = exec.CommandContext(context.Background(),
+	_ = exec.CommandContext(
+		context.Background(),
 		"tmux", "pipe-pane", "-t", sessionName, "-o",
 		"cat >> "+logFile,
 	).Run()
@@ -675,11 +689,13 @@ func (m *GameServerManager) StartTrunkServe(
 	cmd := fmt.Sprintf(
 		"trunk serve --address 0.0.0.0 --port %d", trunkPort,
 	)
-	sendErr := exec.CommandContext(context.Background(),
+	sendErr := exec.CommandContext(
+		context.Background(),
 		"tmux", "send-keys", "-t", sessionName, cmd, "Enter",
 	).Run()
 	if sendErr != nil {
-		_ = exec.CommandContext(context.Background(),
+		_ = exec.CommandContext(
+			context.Background(),
 			"tmux", "kill-session", "-t", sessionName,
 		).Run()
 		m.trunkPorts.Release(trunkPort)
@@ -710,7 +726,8 @@ func (m *GameServerManager) StopTrunkServe(worldID, cpID string) {
 		return
 	}
 
-	_ = exec.CommandContext(context.Background(),
+	_ = exec.CommandContext(
+		context.Background(),
 		"tmux", "kill-session", "-t", srv.TrunkSessionName,
 	).Run()
 

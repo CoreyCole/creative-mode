@@ -30,14 +30,14 @@ func (s *Server) handleMayorDashboard(c echo.Context) error {
 
 	checkpoints, _ := s.DB.GetCheckpointTree(ctx, worldID)
 	builds, _ := s.DB.GetMayorBuilds(ctx, sqlc.GetMayorBuildsParams{
-		WorldID: worldID, Limit: 50,
+		WorldID: worldID, Limit: defaultQueryLimit,
 	})
 	activity, _ := s.DB.GetMayorActivity(ctx, sqlc.GetMayorActivityParams{
-		WorldID: worldID, Limit: 50,
+		WorldID: worldID, Limit: defaultQueryLimit,
 	})
 	messages, _ := s.DB.GetMayorMessages(ctx, worldID)
 	sessions, _ := s.DB.GetMayorSessions(ctx, sqlc.GetMayorSessionsParams{
-		WorldID: worldID, Limit: 50,
+		WorldID: worldID, Limit: defaultQueryLimit,
 	})
 
 	data := mayorview.DashboardData{
@@ -68,10 +68,10 @@ func (s *Server) handleMayorDashboardSSE(c echo.Context) error {
 			// Refresh builds and activity on any world event.
 			ctx := r.Context()
 			builds, _ := s.DB.GetMayorBuilds(ctx, sqlc.GetMayorBuildsParams{
-				WorldID: worldID, Limit: 50,
+				WorldID: worldID, Limit: defaultQueryLimit,
 			})
 			activity, _ := s.DB.GetMayorActivity(ctx, sqlc.GetMayorActivityParams{
-				WorldID: worldID, Limit: 50,
+				WorldID: worldID, Limit: defaultQueryLimit,
 			})
 			if err := sse.PatchElementTempl(
 				mayorview.BuildsTab(builds),
@@ -112,7 +112,7 @@ func (s *Server) handleMayorFileRead(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid path")
 	}
 
-	content, err := os.ReadFile(fullPath) //nolint:gosec // path validated above
+	content, err := os.ReadFile(fullPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return echo.NewHTTPError(http.StatusNotFound, "file not found")

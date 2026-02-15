@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -12,13 +13,18 @@ import (
 	"creative-mode/harness/internal/db/sqlc"
 )
 
+const defaultQueryLimit = 50
+
 // presidentAuthMiddleware validates the X-President-Secret header.
 func presidentAuthMiddleware() echo.MiddlewareFunc {
 	secret := os.Getenv("PRESIDENT_SECRET")
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			if secret == "" {
-				return echo.NewHTTPError(http.StatusServiceUnavailable, "president not configured")
+				return echo.NewHTTPError(
+					http.StatusServiceUnavailable,
+					"president not configured",
+				)
 			}
 			if c.Request().Header.Get("X-President-Secret") != secret {
 				return echo.NewHTTPError(http.StatusForbidden, "invalid president secret")
@@ -38,6 +44,7 @@ func (s *Server) handlePresidentMayorStatus(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to query worlds")
 	}
 
+	//nolint:tagliatelle // snake_case JSON is the public API contract
 	type worldStatus struct {
 		WorldID        string `json:"world_id"`
 		WorldName      string `json:"world_name"`
@@ -68,7 +75,10 @@ func (s *Server) handlePresidentMayorStatus(c echo.Context) error {
 				latest := checkpoints[len(checkpoints)-1]
 				ws.LatestStatus = latest.Status
 				if s.WorldManager != nil {
-					if gs := s.WorldManager.GameServers.GetServer(w.ID, latest.ID); gs != nil {
+					if gs := s.WorldManager.GameServers.GetServer(
+						w.ID,
+						latest.ID,
+					); gs != nil {
 						ws.GameRunning = true
 					}
 				}
@@ -76,14 +86,14 @@ func (s *Server) handlePresidentMayorStatus(c echo.Context) error {
 		}
 
 		builds, bErr := s.DB.GetMayorBuilds(ctx, sqlc.GetMayorBuildsParams{
-			WorldID: w.ID, Limit: 50,
+			WorldID: w.ID, Limit: defaultQueryLimit,
 		})
 		if bErr == nil {
 			ws.RecentBuilds = len(builds)
 		}
 
 		activity, aErr := s.DB.GetMayorActivity(ctx, sqlc.GetMayorActivityParams{
-			WorldID: w.ID, Limit: 50,
+			WorldID: w.ID, Limit: defaultQueryLimit,
 		})
 		if aErr == nil {
 			ws.RecentActivity = len(activity)
@@ -103,18 +113,29 @@ func (s *Server) handlePresidentMayorStatus(c echo.Context) error {
 func (s *Server) handlePresidentRepoBuild(c echo.Context) error {
 	repoRoot, err := os.Getwd()
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get working directory")
+		return echo.NewHTTPError(
+			http.StatusInternalServerError,
+			"failed to get working directory",
+		)
 	}
 	// Harness runs from harness/, so repo root is parent.
-	repoRoot = repoRoot + "/.."
+	repoRoot = filepath.Clean(filepath.Join(repoRoot, ".."))
 
 	sessionName := fmt.Sprintf("cm-president-%d", time.Now().Unix())
 
-	cmd := exec.Command("tmux", "new-session", "-d", "-s", sessionName, "-c", repoRoot,
-		"just check 2>&1; echo '[DONE] exit code:'$?")
-	if output, err := cmd.CombinedOutput(); err != nil {
+	cmd := exec.CommandContext(c.Request().Context(),
+		"tmux",
+		"new-session",
+		"-d",
+		"-s",
+		sessionName,
+		"-c",
+		repoRoot,
+		"just check 2>&1; echo '[DONE] exit code:'$?",
+	)
+	if output, cmdErr := cmd.CombinedOutput(); cmdErr != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError,
-			fmt.Sprintf("failed to start build: %s: %s", err, string(output)))
+			fmt.Sprintf("failed to start build: %s: %s", cmdErr, string(output)))
 	}
 
 	s.Logger.Info("president repo-build started", "session", sessionName)
@@ -137,17 +158,34 @@ func (s *Server) handlePresidentTemplateUpdate(c echo.Context) error {
 
 	repoRoot, err := os.Getwd()
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get working directory")
+		return echo.NewHTTPError(
+			http.StatusInternalServerError,
+			"failed to get working directory",
+		)
 	}
-	repoRoot = repoRoot + "/.."
+	repoRoot = filepath.Clean(filepath.Join(repoRoot, ".."))
 
 	sessionName := fmt.Sprintf("cm-president-tpl-%d", time.Now().Unix())
 
-	cmd := exec.Command("tmux", "new-session", "-d", "-s", sessionName, "-c", repoRoot,
-		fmt.Sprintf("claude --print '%s' 2>&1; echo '[DONE]'", req.Prompt))
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError,
-			fmt.Sprintf("failed to start template update: %s: %s", err, string(output)))
+	cmd := exec.CommandContext(c.Request().Context(),
+		"tmux",
+		"new-session",
+		"-d",
+		"-s",
+		sessionName,
+		"-c",
+		repoRoot,
+		fmt.Sprintf("claude --print '%s' 2>&1; echo '[DONE]'", req.Prompt),
+	)
+	if output, cmdErr := cmd.CombinedOutput(); cmdErr != nil {
+		return echo.NewHTTPError(
+			http.StatusInternalServerError,
+			fmt.Sprintf(
+				"failed to start template update: %s: %s",
+				cmdErr,
+				string(output),
+			),
+		)
 	}
 
 	s.Logger.Info("president template-update started",
@@ -166,17 +204,28 @@ func (s *Server) handlePresidentTemplateUpdate(c echo.Context) error {
 func (s *Server) handlePresidentDeploy(c echo.Context) error {
 	repoRoot, err := os.Getwd()
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get working directory")
+		return echo.NewHTTPError(
+			http.StatusInternalServerError,
+			"failed to get working directory",
+		)
 	}
-	repoRoot = repoRoot + "/.."
+	repoRoot = filepath.Clean(filepath.Join(repoRoot, ".."))
 
 	sessionName := fmt.Sprintf("cm-president-deploy-%d", time.Now().Unix())
 
-	cmd := exec.Command("tmux", "new-session", "-d", "-s", sessionName, "-c", repoRoot,
-		"just vps-deploy 2>&1; echo '[DONE] exit code:'$?")
-	if output, err := cmd.CombinedOutput(); err != nil {
+	cmd := exec.CommandContext(c.Request().Context(),
+		"tmux",
+		"new-session",
+		"-d",
+		"-s",
+		sessionName,
+		"-c",
+		repoRoot,
+		"just vps-deploy 2>&1; echo '[DONE] exit code:'$?",
+	)
+	if output, cmdErr := cmd.CombinedOutput(); cmdErr != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError,
-			fmt.Sprintf("failed to start deploy: %s: %s", err, string(output)))
+			fmt.Sprintf("failed to start deploy: %s: %s", cmdErr, string(output)))
 	}
 
 	s.Logger.Info("president deploy started", "session", sessionName)

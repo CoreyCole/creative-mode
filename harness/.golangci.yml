@@ -180,6 +180,7 @@ linters:
       replace-local: true
     gosec:
       excludes:
+        - G204 # all exec.CommandContext calls use trusted internal CLIs (openclaw, tmux, git)
         - G601
     govet:
       disable:

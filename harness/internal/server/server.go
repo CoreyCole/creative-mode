@@ -42,17 +42,17 @@ const (
 
 // Server holds application dependencies and registers HTTP routes.
 type Server struct {
-	DB           *db.DB
-	Logger       *slog.Logger
-	AuthHandler  *auth.Handler
-	WorldManager *world.Manager
-	Orchestrator *claude.Orchestrator
-	EventBus     *events.EventBus
-	GeminiClient *gemini.Client
+	DB               *db.DB
+	Logger           *slog.Logger
+	AuthHandler      *auth.Handler
+	WorldManager     *world.Manager
+	Orchestrator     *claude.Orchestrator
+	EventBus         *events.EventBus
+	GeminiClient     *gemini.Client
 	MayorManager     *mayor.Manager
 	PresidentManager *president.Manager
 	DataDir          string
-	dev          *devState // nil when DEV_MODE is not set
+	dev              *devState // nil when DEV_MODE is not set
 }
 
 // New creates a new Server with the given database and logger.

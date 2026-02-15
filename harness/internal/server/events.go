@@ -10,8 +10,8 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/starfederation/datastar-go/datastar"
 
-	"creative-mode/harness/internal/events"
 	"creative-mode/harness/internal/db/sqlc"
+	"creative-mode/harness/internal/events"
 	"creative-mode/harness/views/chat"
 	worldview "creative-mode/harness/views/world"
 )

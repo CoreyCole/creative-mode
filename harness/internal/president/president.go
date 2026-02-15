@@ -13,6 +13,8 @@ import (
 	"creative-mode/harness/internal/db"
 )
 
+const openclawCLITimeout = 30 * time.Second
+
 // Manager handles the president agent lifecycle.
 type Manager struct {
 	openclawHome    string
@@ -73,24 +75,36 @@ func (m *Manager) Provision() error {
 	}
 
 	for name, content := range files {
-		if err := os.WriteFile(filepath.Join(workspaceDir, name), []byte(content), 0o600); err != nil {
+		if err := os.WriteFile(
+			filepath.Join(workspaceDir, name),
+			[]byte(content),
+			0o600,
+		); err != nil {
 			return fmt.Errorf("writing %s: %w", name, err)
 		}
 	}
 
 	// Write skills.
-	if err := writePresidentSkills(workspaceDir, m.presidentSecret, m.harnessURL); err != nil {
+	if err := writePresidentSkills(
+		workspaceDir,
+		m.presidentSecret,
+		m.harnessURL,
+	); err != nil {
 		return fmt.Errorf("writing skills: %w", err)
 	}
 
 	// Register agent via CLI.
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), openclawCLITimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, m.openclawBin,
-		"agents", "add",
-		"--id", presidentAgentID,
-		"--workspace", workspaceDir,
+	cmd := exec.CommandContext(
+		ctx,
+		m.openclawBin,		"agents",
+		"add",
+		"--id",
+		presidentAgentID,
+		"--workspace",
+		workspaceDir,
 	)
 	cmd.Env = append(cmd.Environ(), "OPENCLAW_HOME="+m.openclawHome)
 
@@ -114,25 +128,30 @@ func (m *Manager) Provision() error {
 
 // bindToChannel binds the president agent to its Discord channel.
 func (m *Manager) bindToChannel() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), openclawCLITimeout)
 	defer cancel()
 
 	// Read existing bindings.
-	getCmd := exec.CommandContext(ctx, m.openclawBin, "config", "get", "bindings")
-	getCmd.Env = append(getCmd.Environ(), "OPENCLAW_HOME="+m.openclawHome)
+	getCmd := exec.CommandContext(
+		ctx,
+		m.openclawBin,
+		"config",
+		"get",
+		"bindings",
+	)	getCmd.Env = append(getCmd.Environ(), "OPENCLAW_HOME="+m.openclawHome)
 	existingJSON, err := getCmd.Output()
 	if err != nil {
 		existingJSON = []byte("[]")
 	}
 
-	var bindings []map[string]any
-	if err := json.Unmarshal(existingJSON, &bindings); err != nil {
+	bindings := make([]map[string]any, 0, 1)
+	if unmarshalErr := json.Unmarshal(existingJSON, &bindings); unmarshalErr != nil {
 		bindings = []map[string]any{}
 	}
 
 	bindings = append(bindings, map[string]any{
 		"agent":   presidentAgentID,
-		"channel": fmt.Sprintf("discord:%s", m.channelID),
+		"channel": "discord:" + m.channelID,
 	})
 
 	bindingsJSON, err := json.Marshal(bindings)
@@ -140,10 +159,16 @@ func (m *Manager) bindToChannel() error {
 		return err
 	}
 
-	setCmd := exec.CommandContext(ctx, m.openclawBin, "config", "set", "bindings", string(bindingsJSON))
+	setCmd := exec.CommandContext(		ctx,
+		m.openclawBin,
+		"config",
+		"set",
+		"bindings",
+		string(bindingsJSON),
+	)
 	setCmd.Env = append(setCmd.Environ(), "OPENCLAW_HOME="+m.openclawHome)
-	if output, err := setCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("openclaw config set bindings: %s: %w", string(output), err)
+	if output, setErr := setCmd.CombinedOutput(); setErr != nil {
+		return fmt.Errorf("openclaw config set bindings: %s: %w", string(output), setErr)
 	}
 
 	return nil

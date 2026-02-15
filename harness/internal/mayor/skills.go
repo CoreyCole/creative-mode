@@ -7,7 +7,7 @@ import (
 )
 
 // writeSkills creates the skills directory and skill files for a mayor agent.
-func writeSkills(workspaceDir, worldID, mayorSecret, harnessURL string) error {
+func writeSkills(workspaceDir, _, mayorSecret, harnessURL string) error {
 	skillsDir := filepath.Join(workspaceDir, "skills")
 
 	// world-build skill
@@ -39,7 +39,11 @@ Replace the prompt with a description of what to build or change.
 - Only one build can run at a time per world
 `, "```bash\ncurl -s -X POST \""+harnessURL+"/api/mayor/build\" \\\n  -H \"X-Mayor-Secret: "+mayorSecret+"\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"prompt\": \"YOUR BUILD PROMPT HERE\"}'\n```")
 
-	if err := os.WriteFile(filepath.Join(buildDir, "SKILL.md"), []byte(buildSkill), 0o600); err != nil {
+	if err := os.WriteFile(
+		filepath.Join(buildDir, "SKILL.md"),
+		[]byte(buildSkill),
+		0o600,
+	); err != nil {
 		return err
 	}
 
@@ -67,9 +71,9 @@ Returns the current checkpoint, build status, and game server state for your wor
 JSON with world_id, checkpoint_id, build_status, and game_server info.
 `, "```bash\ncurl -s \""+harnessURL+"/api/mayor/status\" \\\n  -H \"X-Mayor-Secret: "+mayorSecret+"\"\n```")
 
-	if err := os.WriteFile(filepath.Join(statusDir, "SKILL.md"), []byte(statusSkill), 0o600); err != nil {
-		return err
-	}
-
-	return nil
+	return os.WriteFile(
+		filepath.Join(statusDir, "SKILL.md"),
+		[]byte(statusSkill),
+		0o600,
+	)
 }

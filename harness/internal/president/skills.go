@@ -75,7 +75,11 @@ Runs the build pipeline and restarts the harness systemd service.
 		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return err
 		}
-		if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(content), 0o600); err != nil {
+		if err := os.WriteFile(
+			filepath.Join(dir, "SKILL.md"),
+			[]byte(content),
+			0o600,
+		); err != nil {
 			return err
 		}
 	}

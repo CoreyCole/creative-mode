@@ -8,13 +8,24 @@ import (
 )
 
 // generateSOUL creates the SOUL.md content from onboarding data.
-func generateSOUL(mayorName, worldName string, onboarding *worldchannel.OnboardingData) string {
+func generateSOUL(
+	mayorName, worldName string,
+	onboarding *worldchannel.OnboardingData,
+) string {
 	var sb strings.Builder
 
-	sb.WriteString(fmt.Sprintf("# Soul\nYou are **%s**, the mayor of **%s**.\n\n", mayorName, worldName))
+	sb.WriteString(
+		fmt.Sprintf(
+			"# Soul\nYou are **%s**, the mayor of **%s**.\n\n",
+			mayorName,
+			worldName,
+		),
+	)
 
 	if onboarding != nil && len(onboarding.Messages) > 0 {
-		sb.WriteString("## Your Origin\nYou were born from a conversation with your world's creator:\n\n")
+		sb.WriteString(
+			"## Your Origin\nYou were born from a conversation with your world's creator:\n\n",
+		)
 		for _, msg := range onboarding.Messages {
 			role := "Creator"
 			if msg.Role == "assistant" {

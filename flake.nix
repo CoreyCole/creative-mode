@@ -17,7 +17,7 @@
           name = "creative-mode-tools";
           paths = with pkgs; [
             just git curl jq sqlite
-            go_1_24 gcc pkg-config
+            go_1_24 golangci-lint gcc pkg-config
             tmux sqlc nodejs_22
             python3 uv
           ];
@@ -39,6 +39,7 @@
 
             # Build tools (Go harness compilation)
             go_1_24
+            golangci-lint
             gcc
             pkg-config
 
@@ -54,10 +55,6 @@
             # Python + uv (Claude Code hook scripts use `uv run`, debug.sh JSON processing)
             python3
             uv
-
-            # Docker (CLI only — Docker Engine installed by bootstrap script)
-            docker
-            docker-compose
           ];
 
           shellHook = "";

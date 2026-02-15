@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/coreycole/creative-mode/pkg/worldchannel"
 	"github.com/labstack/echo/v4"
 
 	"creative-mode/harness/internal/auth"
@@ -26,8 +28,6 @@ import (
 	"creative-mode/harness/internal/president"
 	"creative-mode/harness/internal/server"
 	"creative-mode/harness/internal/world"
-
-	"github.com/coreycole/creative-mode/pkg/worldchannel"
 )
 
 func main() {
@@ -240,72 +240,21 @@ func main() {
 	}
 
 	// Set up mayor manager (optional — requires DISCORD_BOT_TOKEN).
-	var mayorManager *mayor.Manager
-	if botToken := os.Getenv("DISCORD_BOT_TOKEN"); botToken != "" {
-		guildID := os.Getenv("DISCORD_GUILD_ID")
-		categoryID := os.Getenv("DISCORD_WORLDS_CATEGORY_ID")
-
-		if guildID != "" && categoryID != "" {
-			wcClient, wcErr := worldchannel.NewClient(worldchannel.Config{
-				BotToken:         botToken,
-				GuildID:          guildID,
-				WorldsCategoryID: categoryID,
-			}, logger)
-			if wcErr != nil {
-				logger.Error("failed to create worldchannel client", "error", wcErr)
-			} else {
-				openclawHome := os.Getenv("OPENCLAW_HOME")
-				if openclawHome == "" {
-					openclawHome = filepath.Join(dataDir, "openclaw")
-				}
-				openclawBin := "/opt/openclaw/node_modules/.bin/openclaw"
-
-				mayorManager = mayor.NewManager(
-					openclawHome, openclawBin, baseURL,
-					wcClient, database, logger,
-				)
-				logger.Info("Mayor manager enabled",
-					"openclaw_home", openclawHome,
-					"guild_id", guildID,
-				)
-			}
-		} else {
-			logger.Warn("DISCORD_BOT_TOKEN set but DISCORD_GUILD_ID or DISCORD_WORLDS_CATEGORY_ID missing — mayors disabled")
-		}
-	}
+	mayorManager := initMayorManager(baseURL, dataDir, database, logger)
 
 	// Set up president manager (optional — requires DISCORD_PRESIDENT_CHANNEL_ID + PRESIDENT_SECRET).
-	var presidentManager *president.Manager
-	if presidentChannelID := os.Getenv("DISCORD_PRESIDENT_CHANNEL_ID"); presidentChannelID != "" {
-		presidentSecret := os.Getenv("PRESIDENT_SECRET")
-		if presidentSecret == "" {
-			logger.Warn("DISCORD_PRESIDENT_CHANNEL_ID set but PRESIDENT_SECRET missing — president disabled")
-		} else {
-			openclawHome := os.Getenv("OPENCLAW_HOME")
-			if openclawHome == "" {
-				openclawHome = filepath.Join(dataDir, "openclaw")
-			}
-			openclawBin := "/opt/openclaw/node_modules/.bin/openclaw"
-
-			presidentManager = president.NewManager(
-				openclawHome, openclawBin, baseURL,
-				presidentSecret, presidentChannelID,
-				database, logger,
-			)
-
-			if err := presidentManager.Provision(); err != nil {
-				logger.Error("failed to provision president agent", "error", err)
-			} else {
-				logger.Info("President agent ready", "channel_id", presidentChannelID)
-			}
-		}
-	}
+	presidentManager := initPresidentManager(baseURL, dataDir, database, logger)
 
 	// Start Discord gateway listener (mirrors messages to DB + EventBus).
 	var discordListener *discordlistener.Listener
 	if botToken := os.Getenv("DISCORD_BOT_TOKEN"); botToken != "" && mayorManager != nil {
 		var listenerErr error
-		discordListener, listenerErr = discordlistener.NewListener(botToken, database, eventBus, logger)
+		discordListener, listenerErr = discordlistener.NewListener(
+			botToken,
+			database,
+			eventBus,
+			logger,
+		)
 		if listenerErr != nil {
 			logger.Error("failed to create discord listener", "error", listenerErr)
 		} else if startErr := discordListener.Start(); startErr != nil {
@@ -367,4 +316,87 @@ func main() {
 		// echo.ErrServerClosed is expected on graceful shutdown.
 		logger.Info("Server stopped", "reason", startErr.Error())
 	}
+}
+
+func resolveOpenclawPaths(dataDir string) (home, bin string) {
+	home = os.Getenv("OPENCLAW_HOME")
+	if home == "" {
+		home = filepath.Join(dataDir, "openclaw")
+	}
+	bin = "/opt/openclaw/node_modules/.bin/openclaw"
+	return home, bin
+}
+
+func initMayorManager(
+	baseURL, dataDir string,
+	database *db.DB,
+	logger *slog.Logger,
+) *mayor.Manager {
+	botToken := os.Getenv("DISCORD_BOT_TOKEN")
+	if botToken == "" {
+		return nil
+	}
+
+	guildID := os.Getenv("DISCORD_GUILD_ID")
+	categoryID := os.Getenv("DISCORD_WORLDS_CATEGORY_ID")
+	if guildID == "" || categoryID == "" {
+		logger.Warn(
+			"DISCORD_BOT_TOKEN set but DISCORD_GUILD_ID or DISCORD_WORLDS_CATEGORY_ID missing — mayors disabled",
+		)
+		return nil
+	}
+
+	wcClient, wcErr := worldchannel.NewClient(worldchannel.Config{
+		BotToken:         botToken,
+		GuildID:          guildID,
+		WorldsCategoryID: categoryID,
+	}, logger)
+	if wcErr != nil {
+		logger.Error("failed to create worldchannel client", "error", wcErr)
+		return nil
+	}
+
+	openclawHome, openclawBin := resolveOpenclawPaths(dataDir)
+	mgr := mayor.NewManager(
+		openclawHome, openclawBin, baseURL,
+		wcClient, database, logger,
+	)
+	logger.Info("Mayor manager enabled",
+		"openclaw_home", openclawHome,
+		"guild_id", guildID,
+	)
+	return mgr
+}
+
+func initPresidentManager(
+	baseURL, dataDir string,
+	database *db.DB,
+	logger *slog.Logger,
+) *president.Manager {
+	presidentChannelID := os.Getenv("DISCORD_PRESIDENT_CHANNEL_ID")
+	if presidentChannelID == "" {
+		return nil
+	}
+
+	presidentSecret := os.Getenv("PRESIDENT_SECRET")
+	if presidentSecret == "" {
+		logger.Warn(
+			"DISCORD_PRESIDENT_CHANNEL_ID set but PRESIDENT_SECRET missing — president disabled",
+		)
+		return nil
+	}
+
+	openclawHome, openclawBin := resolveOpenclawPaths(dataDir)
+	mgr := president.NewManager(
+		openclawHome, openclawBin, baseURL,
+		presidentSecret, presidentChannelID,
+		database, logger,
+	)
+
+	if err := mgr.Provision(); err != nil {
+		logger.Error("failed to provision president agent", "error", err)
+	} else {
+		logger.Info("President agent ready", "channel_id", presidentChannelID)
+	}
+	return mgr
 }

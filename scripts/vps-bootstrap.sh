@@ -15,30 +15,26 @@ set -euo pipefail
 #   2.  Installs Tailscale (private networking)
 #   3.  Connects to your Tailscale network (interactive)
 #   4.  Enables Tailscale SSH (so you can SSH over Tailscale)
-#   5.  Installs Docker Engine (container runtime)
-#   6.  Configures UFW firewall (blocks all public traffic)
-#   7.  Adds DOCKER-USER iptables rules (prevents Docker from bypassing the firewall)
-#   8.  Creates Docker daemon config (security + logging)
-#   9.  Installs Fail2Ban (blocks brute-force login attempts)
-#   10. Locks down SSH (Tailscale-only, non-standard port, no passwords)
-#   11. Adds deploy user to docker group
-#   12. Sets up daily SQLite backup cron job
-#   13. Creates systemd service for auto-start on reboot (native binary)
-#   14. Installs Nix (daemon mode)
-#   15. Enables Nix flakes
-#   16. Installs flake tools to nix profile
-#   16b. Installs Rust toolchain (system-wide)
-#   16c. Installs cargo tools (trunk, cargo-watch, wasm-bindgen-cli)
-#   16d. Installs Go tools (templ, air)
-#   16e. Installs Tailwind CSS standalone binary
-#   17. Installs oh-my-zsh + configures zsh as login shell
-#   19. Creates .env file (interactive prompts for secrets)
-#   20. Sets up Tailscale Serve (HTTPS)
-#   20b. Installs Claude Code CLI
-#   20c. Installs uv (Python package runner for Claude Code hooks)
-#   20d. Installs playwright-cli (autonomous browser testing)
-#   21. Starts the server via systemd
-#   22. Prints summary
+#   5.  Configures UFW firewall (blocks all public traffic)
+#   6.  Installs Fail2Ban (blocks brute-force login attempts)
+#   7.  Locks down SSH (Tailscale-only, non-standard port, no passwords)
+#   8.  Sets up daily SQLite backup cron job
+#   9.  Creates systemd service for auto-start on reboot (native binary)
+#   10. Installs Nix (daemon mode)
+#   11. Enables Nix flakes
+#   12. Installs flake tools to nix profile
+#   12b. Installs Rust toolchain (system-wide)
+#   12c. Installs cargo tools (trunk, cargo-watch, wasm-bindgen-cli)
+#   12d. Installs Go tools (templ, air)
+#   12e. Installs Tailwind CSS standalone binary
+#   13. Installs oh-my-zsh + configures zsh as login shell
+#   14. Creates .env file (interactive prompts for secrets)
+#   15. Sets up Tailscale Serve (HTTPS)
+#   15b. Installs Claude Code CLI
+#   15c. Installs uv (Python package runner for Claude Code hooks)
+#   15d. Installs playwright-cli (autonomous browser testing)
+#   16. Starts the server via systemd
+#   17. Prints summary
 #
 # Usage:
 #   curl -fsSL <raw-url>/scripts/vps-bootstrap.sh | sudo bash
@@ -244,55 +240,7 @@ else
 fi
 
 # ============================================================================
-# Step 5: Install Docker Engine
-# ============================================================================
-# Docker runs the game server inside an isolated container. This means the
-# game has its own filesystem, network, and processes — separate from the
-# rest of the server. If something goes wrong inside Docker, it can't affect
-# the host system.
-#
-# We install Docker Engine (the server daemon), NOT Docker Desktop (the GUI
-# app). Docker Engine runs natively on Linux with near-zero overhead.
-#
-# The install auto-detects your CPU architecture (arm64 for UTM/QEMU VMs,
-# amd64 for most cloud VPS) via dpkg --print-architecture.
-# ============================================================================
-section "Step 5: Install Docker Engine"
-
-if command -v docker &>/dev/null; then
-    skip "Docker is already installed"
-else
-    if $DRY_RUN; then
-        info "Would install Docker Engine from official Docker apt repository"
-    else
-        # Install prerequisites for adding apt repositories over HTTPS
-        apt-get update
-        apt-get install -y ca-certificates curl
-
-        # Add Docker's official GPG key (verifies packages are from Docker)
-        install -m 0755 -d /etc/apt/keyrings
-        curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-        chmod a+r /etc/apt/keyrings/docker.asc
-
-        # Add the Docker apt repository for our architecture
-        ARCH=$(dpkg --print-architecture)
-        CODENAME=$(. /etc/os-release && echo "$VERSION_CODENAME")
-        echo "deb [arch=$ARCH signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $CODENAME stable" \
-            > /etc/apt/sources.list.d/docker.list
-
-        # Install Docker Engine + CLI + plugins
-        apt-get update
-        apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-
-        # Start and enable Docker so it runs on boot
-        systemctl enable --now docker
-
-        ok "Installed Docker Engine ($ARCH)"
-    fi
-fi
-
-# ============================================================================
-# Step 6: Configure UFW firewall
+# Step 5: Configure UFW firewall
 # ============================================================================
 # UFW (Uncomplicated Firewall) is like a bouncer at the door. It blocks all
 # uninvited network traffic by default and only lets through connections from
@@ -303,7 +251,7 @@ fi
 #   - Allow all outgoing traffic (the server can still reach the internet)
 #   - Allow traffic on the tailscale0 interface (your private tunnel)
 # ============================================================================
-section "Step 6: Configure UFW firewall"
+section "Step 5: Configure UFW firewall"
 
 if ufw status | grep -q "Status: active"; then
     skip "UFW is already active"
@@ -320,128 +268,14 @@ else
 fi
 
 # ============================================================================
-# Step 7: Add DOCKER-USER iptables rules
-# ============================================================================
-# Here's a gotcha: Docker bypasses UFW by default. Docker manages its own
-# iptables rules, which means even with UFW blocking everything, Docker
-# containers could still be reachable from the public internet.
-#
-# The fix: Docker provides a special chain called DOCKER-USER that runs
-# BEFORE Docker's own rules. We add rules here that:
-#   1. Allow established connections to continue (so responses work)
-#   2. Allow traffic from Tailscale (your private network)
-#   3. DROP everything else from the public network interface
-#
-# We auto-detect the public interface (the one with the default route).
-# Common values: enp0s1 (UTM/QEMU ARM64), eth0 or ens3 (cloud VPS).
-# ============================================================================
-section "Step 7: DOCKER-USER iptables rules"
-
-# Detect the public-facing network interface (the one with the default route)
-PUBLIC_IF=$(ip route show default | awk '{print $5}' | head -1)
-if [ -z "$PUBLIC_IF" ]; then
-    fail "Cannot detect public network interface — no default route found"
-    exit 1
-fi
-info "Detected public interface: $PUBLIC_IF"
-
-if grep -q "DOCKER-USER" /etc/ufw/after.rules 2>/dev/null; then
-    skip "DOCKER-USER rules already in /etc/ufw/after.rules"
-else
-    if $DRY_RUN; then
-        info "Would append DOCKER-USER rules to /etc/ufw/after.rules"
-        info "  - Allow established connections"
-        info "  - Allow tailscale0"
-        info "  - Drop traffic from $PUBLIC_IF"
-    else
-        # Append the DOCKER-USER rules to the end of after.rules
-        cat >> /etc/ufw/after.rules << EOF
-
-# Creative Mode: Prevent Docker from bypassing UFW.
-# Without these rules, Docker containers are reachable from the public internet
-# even though UFW blocks incoming traffic. The DOCKER-USER chain runs before
-# Docker's own rules, so we can enforce our firewall policy here.
-*filter
-:DOCKER-USER - [0:0]
--A DOCKER-USER -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
--A DOCKER-USER -i tailscale0 -j RETURN
--A DOCKER-USER -i $PUBLIC_IF -j DROP
-COMMIT
-EOF
-        ok "Added DOCKER-USER rules (drop $PUBLIC_IF, allow tailscale0)"
-    fi
-fi
-
-# Ensure rules are loaded (ufw reload is idempotent)
-if ! $DRY_RUN && grep -q "DOCKER-USER" /etc/ufw/after.rules 2>/dev/null; then
-    ufw reload
-    if iptables -L DOCKER-USER -v -n 2>/dev/null | grep -q DROP; then
-        ok "Verified: DOCKER-USER DROP rule is active"
-    else
-        info "DOCKER-USER chain not yet active (normal if Docker hasn't started a container yet)"
-        info "Rules will take effect after the first 'docker compose up'"
-    fi
-fi
-
-# ============================================================================
-# Step 8: Create Docker daemon configuration
-# ============================================================================
-# These settings improve Docker's security and reliability:
-#
-#   live-restore: true     — Containers keep running even if the Docker daemon
-#                            restarts (e.g., during a Docker update). Without
-#                            this, updating Docker would kill all containers.
-#
-#   userland-proxy: false  — Disables Docker's userland proxy for port mapping.
-#                            Uses iptables instead, which is faster and doesn't
-#                            create extra processes.
-#
-#   no-new-privileges: true — Prevents processes inside containers from gaining
-#                             additional Linux privileges (like setuid). Defense
-#                             in depth against container escapes.
-#
-#   log-driver + log-opts  — Limits container log files to 10 MB each, keeps
-#                            the last 3 files. Without this, logs grow forever
-#                            and can fill the disk.
-# ============================================================================
-section "Step 8: Docker daemon configuration"
-
-if [ -f /etc/docker/daemon.json ]; then
-    skip "/etc/docker/daemon.json already exists"
-else
-    if $DRY_RUN; then
-        info "Would create /etc/docker/daemon.json with security + logging settings"
-    else
-        mkdir -p /etc/docker
-        cat > /etc/docker/daemon.json << 'EOF'
-{
-  "live-restore": true,
-  "userland-proxy": false,
-  "no-new-privileges": true,
-  "log-driver": "json-file",
-  "log-opts": {
-    "max-size": "10m",
-    "max-file": "3"
-  }
-}
-EOF
-
-        # Restart Docker to pick up the new config
-        systemctl restart docker
-
-        ok "Created /etc/docker/daemon.json"
-    fi
-fi
-
-# ============================================================================
-# Step 9: Install Fail2Ban
+# Step 6: Install Fail2Ban
 # ============================================================================
 # Fail2Ban watches log files for repeated failed login attempts (like someone
 # trying to guess your password) and automatically blocks their IP address.
 # It's an extra layer of defense — even though we lock down SSH in the next
 # step, Fail2Ban catches brute-force attempts before they can do any damage.
 # ============================================================================
-section "Step 9: Install Fail2Ban"
+section "Step 6: Install Fail2Ban"
 
 if command -v fail2ban-client &>/dev/null; then
     skip "Fail2Ban is already installed"
@@ -456,7 +290,7 @@ else
 fi
 
 # ============================================================================
-# Step 10: Lock down SSH
+# Step 7: Lock down SSH
 # ============================================================================
 # We make SSH much harder to attack by:
 #
@@ -475,7 +309,7 @@ fi
 # IMPORTANT: Make sure Tailscale SSH (step 4) is working before this step,
 # because this locks you out of regular SSH on the public interface.
 # ============================================================================
-section "Step 10: Lock down SSH"
+section "Step 7: Lock down SSH"
 
 SSHD_CONFIG="/etc/ssh/sshd_config"
 SSHD_DROP_IN="/etc/ssh/sshd_config.d/99-creative-mode.conf"
@@ -537,26 +371,7 @@ if ! $DRY_RUN && [ -f "$SSHD_DROP_IN" ]; then
 fi
 
 # ============================================================================
-# Step 11: Add deploy user to docker group
-# ============================================================================
-# This lets the 'deploy' user run Docker commands without sudo. The deploy
-# user needs this to start and manage the game server containers.
-# ============================================================================
-section "Step 11: Add deploy to docker group"
-
-if id -nG deploy 2>/dev/null | grep -qw docker; then
-    skip "User 'deploy' is already in the docker group"
-else
-    if $DRY_RUN; then
-        info "Would add 'deploy' to the docker group"
-    else
-        usermod -aG docker deploy
-        ok "Added 'deploy' to docker group"
-    fi
-fi
-
-# ============================================================================
-# Step 12: Set up SQLite backup cron job
+# Step 8: Set up SQLite backup cron job
 # ============================================================================
 # The game's database is a single SQLite file. This cron job backs it up
 # every day using SQLite's built-in .backup command, which creates a
@@ -568,7 +383,7 @@ fi
 # The repo path is written to /etc/creative-mode.conf so the cron script
 # can find it regardless of where the repo lives.
 # ============================================================================
-section "Step 12: SQLite backup cron"
+section "Step 8: SQLite backup cron"
 
 if [ -f /etc/cron.daily/backup-creative-mode ]; then
     skip "Backup cron job already exists"
@@ -616,7 +431,7 @@ CRONEOF
 fi
 
 # ============================================================================
-# Step 13: Create systemd service
+# Step 9: Create systemd service
 # ============================================================================
 # systemd is Linux's service manager. This service definition tells Linux to:
 #   - Start the game server automatically when the machine boots
@@ -624,14 +439,14 @@ fi
 #   - Restart on failure with a 5-second delay
 #   - Allow stopping the server cleanly with 'systemctl stop creative-mode'
 #
-# The harness runs as a native binary (not Docker). The harness-run.sh
-# wrapper sets up PATH (Nix, Cargo, Go tools, Claude CLI) and starts tmux.
+# The harness runs as a native binary. The harness-run.sh wrapper sets up
+# PATH (Nix, Cargo, Go tools, Claude CLI) and starts tmux.
 # ============================================================================
-section "Step 13: systemd service"
+section "Step 9: systemd service"
 
 SERVICE_FILE="/etc/systemd/system/creative-mode.service"
 
-# Always overwrite — the service definition may have changed (e.g., Docker → native)
+# Always overwrite — the service definition may have changed
 if $DRY_RUN; then
     info "Would create $SERVICE_FILE"
     info "Would enable creative-mode.service"
@@ -665,13 +480,13 @@ if ! $DRY_RUN && [ -f "$SERVICE_FILE" ]; then
 fi
 
 # ============================================================================
-# Step 14: Install Nix
+# Step 10: Install Nix
 # ============================================================================
 # Nix is a package manager that provides reproducible dev environments.
 # We install in daemon mode so it's available system-wide.
 # The --yes flag skips interactive confirmation.
 # ============================================================================
-section "Step 14: Install Nix"
+section "Step 10: Install Nix"
 
 if [ -d /nix ]; then
     skip "Nix already installed"
@@ -685,13 +500,13 @@ else
 fi
 
 # ============================================================================
-# Step 15: Enable Nix flakes
+# Step 11: Enable Nix flakes
 # ============================================================================
 # Flakes are Nix's modern project management feature. The creative-mode repo
 # uses a flake.nix for its dev environment. This is still behind an
 # experimental feature flag.
 # ============================================================================
-section "Step 15: Enable Nix flakes"
+section "Step 11: Enable Nix flakes"
 
 NIX_CONF="/etc/nix/nix.conf"
 if grep -q "experimental-features.*flakes" "$NIX_CONF" 2>/dev/null; then
@@ -708,14 +523,14 @@ else
 fi
 
 # ============================================================================
-# Step 16: Install flake tools to nix profile
+# Step 12: Install flake tools to nix profile
 # ============================================================================
 # Installs all dev tools from flake.nix (go, just, tmux, sqlc, etc.) into
 # ~/.nix-profile/bin/ via nix profile. This makes tools available system-wide
 # — in interactive shells, Claude Code, tmux sessions, and systemd — without
 # requiring direnv.
 # ============================================================================
-section "Step 16: Install flake tools to nix profile"
+section "Step 12: Install flake tools to nix profile"
 
 if sudo -u deploy bash -lc 'source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh && command -v just' &>/dev/null; then
     skip "Flake tools already installed to nix profile"
@@ -729,13 +544,13 @@ else
 fi
 
 # ============================================================================
-# Step 16b: Install Rust toolchain
+# Step 12b: Install Rust toolchain
 # ============================================================================
 # Rust is needed for building Bevy game servers and WASM clients. We install
 # system-wide to /usr/local so tmux sessions (spawned by the harness for game
 # servers and Claude Code) inherit Rust on PATH automatically.
 # ============================================================================
-section "Step 16b: Install Rust toolchain"
+section "Step 12b: Install Rust toolchain"
 
 if [ -f /usr/local/cargo/bin/rustup ]; then
     skip "Rust toolchain already installed"
@@ -745,8 +560,8 @@ else
     else
         RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo \
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
-            sh -s -- -y --default-toolchain stable --profile minimal
-        ok "Installed Rust toolchain"
+            sh -s -- -y --default-toolchain stable --profile default
+        ok "Installed Rust toolchain (includes rustfmt + clippy)"
     fi
 fi
 
@@ -763,14 +578,17 @@ else
     fi
 fi
 
+# Ensure cargo registry is writable by deploy (rustup installs as root)
+chown -R deploy:deploy /usr/local/cargo/registry/ 2>/dev/null || true
+
 # ============================================================================
-# Step 16c: Install cargo tools
+# Step 12c: Install cargo tools
 # ============================================================================
 # trunk: WASM bundler for Bevy client
 # cargo-watch: auto-rebuild during Claude dev sessions
 # wasm-bindgen-cli: WASM bindings (pinned version must match Cargo.lock)
 # ============================================================================
-section "Step 16c: Install cargo tools"
+section "Step 12c: Install cargo tools"
 
 export RUSTUP_HOME=/usr/local/rustup
 export CARGO_HOME=/usr/local/cargo
@@ -789,13 +607,13 @@ else
 fi
 
 # ============================================================================
-# Step 16d: Install Go tools (templ, air)
+# Step 12d: Install Go tools (templ, air)
 # ============================================================================
 # templ: Go HTML templating engine — compiles .templ files to Go code.
 # air: live-reload — watches files and rebuilds/restarts the harness.
 # Needs Go on PATH from Nix first.
 # ============================================================================
-section "Step 16d: Install Go tools (templ, air)"
+section "Step 12d: Install Go tools (templ, air)"
 
 # Source Nix to get Go on PATH
 source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh 2>/dev/null || true
@@ -812,12 +630,12 @@ else
 fi
 
 # ============================================================================
-# Step 16e: Install Tailwind CSS standalone binary
+# Step 12e: Install Tailwind CSS standalone binary
 # ============================================================================
 # Standalone binary — no Node.js/npm/pnpm required at runtime.
 # Detects architecture (arm64 or x64) automatically.
 # ============================================================================
-section "Step 16e: Install Tailwind CSS"
+section "Step 12e: Install Tailwind CSS"
 
 if command -v tailwindcss &>/dev/null; then
     skip "tailwindcss already installed"
@@ -839,13 +657,13 @@ else
 fi
 
 # ============================================================================
-# Step 17: Install oh-my-zsh + configure zsh as login shell
+# Step 13: Install oh-my-zsh + configure zsh as login shell
 # ============================================================================
 # Sets zsh as deploy's login shell, installs oh-my-zsh for a nice prompt and
 # plugin ecosystem, and writes .zshenv (PATH for all sessions) and .zshrc
 # (interactive config only).
 # ============================================================================
-section "Step 17: Install oh-my-zsh + configure zsh"
+section "Step 13: Install oh-my-zsh + configure zsh"
 
 # Set zsh as deploy's login shell
 if getent passwd deploy | grep -q '/bin/zsh'; then
@@ -907,7 +725,7 @@ else
 # oh-my-zsh configuration
 export ZSH="$HOME/.oh-my-zsh"
 ZSH_THEME="robbyrussell"
-plugins=(git fzf docker docker-compose)
+plugins=(git fzf)
 source $ZSH/oh-my-zsh.sh
 
 alias cld='claude --dangerously-skip-permissions'
@@ -933,13 +751,13 @@ else
 fi
 
 # ============================================================================
-# Step 18: Create .env file (was Step 19)
+# Step 14: Create .env file
 # ============================================================================
 # The harness needs secrets for GitHub OAuth, AI APIs, etc. This step
 # prompts interactively for each secret and auto-computes what it can
 # (HARNESS_URL from Tailscale DNS, CM_HOOK_SECRET via openssl).
 # ============================================================================
-section "Step 19: Create .env file"
+section "Step 14: Create .env file"
 
 ENV_FILE="$CREATIVE_MODE_DIR/harness/.env"
 if [ -f "$ENV_FILE" ]; then
@@ -998,13 +816,13 @@ EOF
 fi
 
 # ============================================================================
-# Step 20: Set up Tailscale Serve
+# Step 15:Set up Tailscale Serve
 # ============================================================================
 # Tailscale Serve provides HTTPS with automatic TLS certificates, proxying
 # traffic from https://{machine}.{tailnet}.ts.net to localhost:8080.
 # This is how the harness is accessed over the Tailscale network.
 # ============================================================================
-section "Step 20: Tailscale Serve"
+section "Step 15: Tailscale Serve"
 
 if tailscale serve status 2>/dev/null | grep -q 'https'; then
     skip "Tailscale Serve already configured"
@@ -1018,12 +836,12 @@ else
 fi
 
 # ============================================================================
-# Step 20b: Install Claude Code CLI
+# Step 15b: Install Claude Code CLI
 # ============================================================================
 # Claude Code CLI is used by the harness to run Claude sessions in tmux.
 # Installed as the deploy user to ~/.local/bin.
 # ============================================================================
-section "Step 20b: Install Claude Code CLI"
+section "Step 15b: Install Claude Code CLI"
 
 if sudo -u deploy bash -lc 'command -v claude' &>/dev/null; then
     skip "Claude Code CLI already installed"
@@ -1037,14 +855,14 @@ else
 fi
 
 # ============================================================================
-# Step 20c: Install uv (Python package runner)
+# Step 15c: Install uv (Python package runner)
 # ============================================================================
 # uv is an extremely fast Python package installer/runner. Claude Code hooks
 # use `uv run` with PEP 723 inline script metadata to run Python scripts
 # with auto-managed dependencies. Installed system-wide so hooks work
 # outside the Nix dev shell.
 # ============================================================================
-section "Step 20c: Install uv"
+section "Step 15c: Install uv"
 
 if command -v uv &>/dev/null; then
     skip "uv already installed"
@@ -1058,13 +876,13 @@ else
 fi
 
 # ============================================================================
-# Step 20d: Install playwright-cli
+# Step 15d: Install playwright-cli
 # ============================================================================
 # playwright-cli enables autonomous browser testing for world mayors.
 # Installed via npm to ~/.npm-global (Nix store is read-only).
 # Also downloads Chromium browser for headless testing.
 # ============================================================================
-section "Step 20d: Install playwright-cli"
+section "Step 15d: Install playwright-cli"
 
 # Configure npm global prefix to a writable location (Nix node store is read-only)
 if [ ! -f "$DEPLOY_HOME/.npmrc" ] || ! grep -q 'prefix' "$DEPLOY_HOME/.npmrc" 2>/dev/null; then
@@ -1090,13 +908,13 @@ else
 fi
 
 # ============================================================================
-# Step 21: Start the server
+# Step 16: Start the server
 # ============================================================================
 # Start the harness via the systemd service created in Step 13. The harness
 # runs as a native binary via harness-run.sh. The first build must be done
 # manually with 'just vps-build' before starting.
 # ============================================================================
-section "Step 21: Start the server"
+section "Step 16: Start the server"
 
 if systemctl is-active --quiet creative-mode; then
     skip "creative-mode service is already running"
@@ -1112,7 +930,7 @@ else
 fi
 
 # ============================================================================
-# Step 22: Summary
+# Step 17: Summary
 # ============================================================================
 section "Bootstrap Complete"
 

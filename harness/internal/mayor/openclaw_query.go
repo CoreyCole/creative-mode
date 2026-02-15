@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+const openclawQueryTimeout = 10 * time.Second
+
 // GatewayStatus returns the OpenClaw gateway health status.
 func (m *Manager) GatewayStatus() map[string]any {
 	healthy := m.IsGatewayHealthy()
@@ -18,11 +20,16 @@ func (m *Manager) GatewayStatus() map[string]any {
 
 // AgentStatus returns the OpenClaw agent status for a given agent ID.
 func (m *Manager) AgentStatus(agentID string) (map[string]any, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), openclawQueryTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, m.openclawBin, "agents", "get", agentID)
-	cmd.Env = append(cmd.Environ(), "OPENCLAW_HOME="+m.openclawHome)
+	cmd := exec.CommandContext(
+		ctx,
+		m.openclawBin,
+		"agents",
+		"get",
+		agentID,
+	)	cmd.Env = append(cmd.Environ(), "OPENCLAW_HOME="+m.openclawHome)
 
 	output, err := cmd.Output()
 	if err != nil {
@@ -39,11 +46,15 @@ func (m *Manager) AgentStatus(agentID string) (map[string]any, error) {
 
 // ListAgents returns all registered OpenClaw agents.
 func (m *Manager) ListAgents() ([]map[string]any, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), openclawQueryTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, m.openclawBin, "agents", "list")
-	cmd.Env = append(cmd.Environ(), "OPENCLAW_HOME="+m.openclawHome)
+	cmd := exec.CommandContext(
+		ctx,
+		m.openclawBin,
+		"agents",
+		"list",
+	)	cmd.Env = append(cmd.Environ(), "OPENCLAW_HOME="+m.openclawHome)
 
 	output, err := cmd.Output()
 	if err != nil {

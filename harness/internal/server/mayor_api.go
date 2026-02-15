@@ -13,18 +13,22 @@ import (
 // It creates a harness world record and kicks off mayor agent provisioning.
 // Auth: hookSecretMiddleware (CM_HOOK_SECRET).
 func (s *Server) handleWorldHatched(c echo.Context) error {
+	//nolint:tagliatelle // snake_case JSON is the public API contract
 	var req struct {
 		DiscordChannelID string `json:"discord_channel_id"`
 		WorldName        string `json:"world_name"`
 		MayorName        string `json:"mayor_name"`
 		CreatorDiscordID string `json:"creator_discord_id"`
-		CreatorUsername   string `json:"creator_username"`
+		CreatorUsername  string `json:"creator_username"`
 	}
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
 	if req.DiscordChannelID == "" || req.WorldName == "" || req.MayorName == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "discord_channel_id, world_name, and mayor_name are required")
+		return echo.NewHTTPError(
+			http.StatusBadRequest,
+			"discord_channel_id, world_name, and mayor_name are required",
+		)
 	}
 
 	s.Logger.Info("world-hatched webhook received",
@@ -99,12 +103,15 @@ func (s *Server) handleMayorBuild(c echo.Context) error {
 	var req struct {
 		Prompt string `json:"prompt"`
 	}
-	if err := c.Bind(&req); err != nil || req.Prompt == "" {
+	if bindErr := c.Bind(&req); bindErr != nil || req.Prompt == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "prompt is required")
 	}
 
 	if s.Orchestrator == nil {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "orchestrator not configured")
+		return echo.NewHTTPError(
+			http.StatusServiceUnavailable,
+			"orchestrator not configured",
+		)
 	}
 
 	// Find the latest ready checkpoint for this world.
@@ -134,7 +141,10 @@ func (s *Server) handleMayorBuild(c echo.Context) error {
 	cp, err := s.Orchestrator.HandlePrompt(ctx, w.ID, sourceCPID, req.Prompt, userID)
 	if err != nil {
 		s.Logger.Error("mayor build failed", "world_id", w.ID, "error", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, "build failed: "+err.Error())
+		return echo.NewHTTPError(
+			http.StatusInternalServerError,
+			"build failed: "+err.Error(),
+		)
 	}
 
 	return c.JSON(http.StatusAccepted, map[string]string{
@@ -156,7 +166,10 @@ func (s *Server) handleMayorStatus(c echo.Context) error {
 
 	checkpoints, err := s.DB.GetCheckpointTree(ctx, w.ID)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get checkpoints")
+		return echo.NewHTTPError(
+			http.StatusInternalServerError,
+			"failed to get checkpoints",
+		)
 	}
 
 	result := map[string]any{
@@ -208,7 +221,10 @@ func (s *Server) handleContributeLearning(c echo.Context) error {
 	}
 
 	if s.MayorManager == nil {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "mayor manager not configured")
+		return echo.NewHTTPError(
+			http.StatusServiceUnavailable,
+			"mayor manager not configured",
+		)
 	}
 
 	s.Logger.Info("mayor contribute-learning request",
@@ -217,7 +233,12 @@ func (s *Server) handleContributeLearning(c echo.Context) error {
 	)
 
 	go func() {
-		if err := s.MayorManager.ContributeLearning(w.ID, req.Title, req.Content, req.Path); err != nil {
+		if err := s.MayorManager.ContributeLearning(
+			w.ID,
+			req.Title,
+			req.Content,
+			req.Path,
+		); err != nil {
 			s.Logger.Error("failed to contribute learning",
 				"world_id", w.ID,
 				"error", err,

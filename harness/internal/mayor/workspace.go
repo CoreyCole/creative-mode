@@ -10,7 +10,7 @@ import (
 // writeWorkspaceFiles creates all the workspace files for a mayor agent.
 func writeWorkspaceFiles(
 	workspaceDir, worldID, worldName, mayorName, mayorSecret, harnessURL string,
-	onboardingData interface{},
+	onboardingData any,
 ) error {
 	if err := os.MkdirAll(workspaceDir, 0o750); err != nil {
 		return err
@@ -44,9 +44,5 @@ func writeWorkspaceFiles(
 	}
 
 	// Write skills.
-	if err := writeSkills(workspaceDir, worldID, mayorSecret, harnessURL); err != nil {
-		return err
-	}
-
-	return nil
+	return writeSkills(workspaceDir, worldID, mayorSecret, harnessURL)
 }

@@ -98,15 +98,23 @@ func (m *Manager) ProvisionFromWebhook(
 	}
 
 	// Generate mayor secret.
-	secretBytes := make([]byte, 32)
+	const secretLen = 32
+	secretBytes := make([]byte, secretLen)
 	if _, err := rand.Read(secretBytes); err != nil {
 		return fmt.Errorf("generating mayor secret: %w", err)
 	}
 	mayorSecret := hex.EncodeToString(secretBytes)
 
 	// Provision the OpenClaw agent.
-	agentID := fmt.Sprintf("world-%s", worldID)
-	if err := m.provisionAgent(agentID, worldID, worldName, mayorName, mayorSecret, onboarding); err != nil {
+	agentID := "world-" + worldID
+	if err := m.provisionAgent(
+		agentID,
+		worldID,
+		worldName,
+		mayorName,
+		mayorSecret,
+		onboarding,
+	); err != nil {
 		return fmt.Errorf("provisioning agent: %w", err)
 	}
 
@@ -127,8 +135,12 @@ func (m *Manager) ProvisionFromWebhook(
 		WorldID:      worldID,
 		ActivityType: "agent_provisioned",
 		Detail: sql.NullString{
-			String: fmt.Sprintf("Mayor %q provisioned for world %q", mayorName, worldName),
-			Valid:  true,
+			String: fmt.Sprintf(
+				"Mayor %q provisioned for world %q",
+				mayorName,
+				worldName,
+			),
+			Valid: true,
 		},
 	}); err != nil {
 		m.logger.Warn("failed to log provisioning activity", "error", err)

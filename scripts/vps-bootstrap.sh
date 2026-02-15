@@ -519,6 +519,7 @@ fi
 
 # Validate config and restart SSH if needed
 if ! $DRY_RUN && [ -f "$SSHD_DROP_IN" ]; then
+    mkdir -p /run/sshd
     if ! sshd -t 2>&1; then
         fail "SSH config validation failed (see above). Fix and run: systemctl restart ssh"
     elif ss -tlnp | grep -q ':2222'; then

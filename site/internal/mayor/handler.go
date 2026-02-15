@@ -97,6 +97,11 @@ func (h *Handler) HandleChat(c echo.Context) error {
 		c.Logger().Errorf("Failed to clear input: %v", err)
 	}
 
+	// Clear any previous rate limit error.
+	if err := sse.PatchElementTempl(p.RateLimitClear()); err != nil {
+		c.Logger().Errorf("Failed to clear rate limit error: %v", err)
+	}
+
 	// Append user message to chat.
 	userMsgID := uuid.New().String()
 	if err := sse.PatchElementTempl(p.UserMessage(userMsgID, content, session.DiscordAvatar),

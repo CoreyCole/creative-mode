@@ -21,13 +21,13 @@ func SessionMiddleware(database *db.DB) echo.MiddlewareFunc {
 
 			cookie, err := c.Cookie("session")
 			if err != nil || cookie.Value == "" {
-				return c.Redirect(http.StatusTemporaryRedirect, "/auth/github/login")
+				return c.Redirect(http.StatusTemporaryRedirect, "/auth/discord/login")
 			}
 
 			session, err := database.GetSession(ctx, cookie.Value)
 			if err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
-					return c.Redirect(http.StatusTemporaryRedirect, "/auth/github/login")
+					return c.Redirect(http.StatusTemporaryRedirect, "/auth/discord/login")
 				}
 				return echo.NewHTTPError(
 					http.StatusInternalServerError,
@@ -38,7 +38,7 @@ func SessionMiddleware(database *db.DB) echo.MiddlewareFunc {
 			user, err := database.GetUserByID(ctx, session.UserID)
 			if err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
-					return c.Redirect(http.StatusTemporaryRedirect, "/auth/github/login")
+					return c.Redirect(http.StatusTemporaryRedirect, "/auth/discord/login")
 				}
 				return echo.NewHTTPError(
 					http.StatusInternalServerError,
@@ -61,7 +61,7 @@ func ApprovedMiddleware() echo.MiddlewareFunc {
 		return func(c echo.Context) error {
 			user, ok := c.Get("user").(*sqlc.User)
 			if !ok {
-				return c.Redirect(http.StatusTemporaryRedirect, "/auth/github/login")
+				return c.Redirect(http.StatusTemporaryRedirect, "/auth/discord/login")
 			}
 			if user.Role == RolePending {
 				return c.Redirect(http.StatusTemporaryRedirect, "/auth/pending")

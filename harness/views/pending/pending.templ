@@ -11,7 +11,7 @@ templ Page(user *sqlc.User) {
 			if user.AvatarURL.Valid {
 				<img src={ user.AvatarURL.String } class="w-16 h-16 rounded-full" alt="avatar"/>
 			}
-			<h2>Welcome, { user.GitHubUsername }</h2>
+			<h2>Welcome, { user.DiscordUsername }</h2>
 			<p class="text-muted-foreground">Your request to join has been submitted. An admin will approve your access.</p>
 		</div>
 	}

@@ -29,7 +29,7 @@ type Querier interface {
 	GetRecentMessagesByWorld(ctx context.Context, arg GetRecentMessagesByWorldParams) ([]Message, error)
 	GetRecentMessagesWithUser(ctx context.Context, limit int64) ([]GetRecentMessagesWithUserRow, error)
 	GetSession(ctx context.Context, id string) (Session, error)
-	GetUserByGitHubID(ctx context.Context, githubID int64) (User, error)
+	GetUserByDiscordID(ctx context.Context, discordID string) (User, error)
 	GetUserByID(ctx context.Context, id string) (User, error)
 	GetUserPosition(ctx context.Context, arg GetUserPositionParams) (string, error)
 	GetWorld(ctx context.Context, id string) (World, error)

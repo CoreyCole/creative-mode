@@ -78,7 +78,7 @@ func (s *Server) handleWorldSSE(c echo.Context) error {
 	if user != nil {
 		s.EventBus.PublishGlobal(map[string]any{
 			"event":    events.EventPlayerJoined,
-			"username": user.GitHubUsername,
+			"username": user.DiscordUsername,
 			"worldID":  worldID,
 		})
 	}
@@ -101,7 +101,7 @@ func (s *Server) handleWorldSSE(c echo.Context) error {
 			if user != nil {
 				s.EventBus.PublishGlobal(map[string]any{
 					"event":    events.EventPlayerLeft,
-					"username": user.GitHubUsername,
+					"username": user.DiscordUsername,
 					"worldID":  worldID,
 				})
 			}
@@ -162,8 +162,8 @@ func (s *Server) sendChatHistory(
 		msg := recentMsgs[i]
 
 		username := ""
-		if msg.GitHubUsername.Valid {
-			username = msg.GitHubUsername.String
+		if msg.DiscordUsername.Valid {
+			username = msg.DiscordUsername.String
 		}
 
 		avatarURL := ""

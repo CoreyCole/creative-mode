@@ -1,7 +1,9 @@
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
-    github_id INTEGER UNIQUE NOT NULL,
-    github_username TEXT NOT NULL,
+    discord_id TEXT UNIQUE NOT NULL,
+    discord_username TEXT NOT NULL,
+    github_id INTEGER UNIQUE,
+    github_username TEXT,
     avatar_url TEXT,
     role TEXT NOT NULL DEFAULT 'pending',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

@@ -945,8 +945,8 @@ else
         echo -e "${BOLD}Enter secrets for the .env file (leave blank to skip):${NC}"
         echo ""
 
-        read -rp "  GitHub OAuth Client ID: " GITHUB_CLIENT_ID
-        read -rp "  GitHub OAuth Client Secret: " GITHUB_CLIENT_SECRET
+        read -rp "  Discord OAuth Client ID: " DISCORD_CLIENT_ID
+        read -rp "  Discord OAuth Client Secret: " DISCORD_CLIENT_SECRET
         read -rp "  Gemini API Key: " GEMINI_API_KEY
         read -rp "  Anthropic API Key: " ANTHROPIC_API_KEY
 
@@ -965,9 +965,9 @@ else
         info "Auto-generated CM_HOOK_SECRET"
 
         cat > "$ENV_FILE" << EOF
-# GitHub OAuth (required for authentication)
-GITHUB_CLIENT_ID=$GITHUB_CLIENT_ID
-GITHUB_CLIENT_SECRET=$GITHUB_CLIENT_SECRET
+# Discord OAuth (required for authentication)
+DISCORD_CLIENT_ID=$DISCORD_CLIENT_ID
+DISCORD_CLIENT_SECRET=$DISCORD_CLIENT_SECRET
 
 # Gemini API key (required for AI features)
 GEMINI_API_KEY=$GEMINI_API_KEY

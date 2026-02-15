@@ -7,7 +7,8 @@ failed=0
 # Phase 1: Format (modifies files, must run first).
 "$ROOT/scripts/fmt.sh"
 
-# Phase 2: Generate (templ + tailwind — catches template errors early).
+# Phase 2: Generate (sqlc + templ + tailwind — catches template errors early).
+(cd "$ROOT/harness" && sqlc generate 2>&1)
 (cd "$ROOT/harness" && templ generate 2>&1)
 (cd "$ROOT/harness" && just build-tailwind 2>&1)
 (cd "$ROOT/site" && templ generate 2>&1)

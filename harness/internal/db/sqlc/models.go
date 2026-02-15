@@ -54,13 +54,15 @@ type Session struct {
 }
 
 type User struct {
-	ID             string
-	GitHubID       int64
-	GitHubUsername string
-	AvatarURL      sql.NullString
-	Role           string
-	CreatedAt      time.Time
-	LastSeenAt     time.Time
+	ID              string
+	DiscordID       string
+	DiscordUsername string
+	GitHubID        sql.NullInt64
+	GitHubUsername  sql.NullString
+	AvatarURL       sql.NullString
+	Role            string
+	CreatedAt       time.Time
+	LastSeenAt      time.Time
 }
 
 type UserPosition struct {

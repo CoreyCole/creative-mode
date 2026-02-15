@@ -21,7 +21,7 @@ templ Page(user *sqlc.User, worlds []sqlc.World) {
 					if user.AvatarURL.Valid {
 						<img src={ user.AvatarURL.String } class="w-7 h-7 rounded-full" alt=""/>
 					}
-					<span>{ user.GitHubUsername }</span>
+					<span>{ user.DiscordUsername }</span>
 					if user.Role == "admin" {
 						<a
 							href="/admin/users"

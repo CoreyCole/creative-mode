@@ -25,7 +25,7 @@ templ Page(users []sqlc.User) {
 						if u.AvatarURL.Valid {
 							<img src={ u.AvatarURL.String } class="w-7 h-7 rounded-full" alt=""/>
 						}
-						<span class="flex-1 font-medium">{ u.GitHubUsername }</span>
+						<span class="flex-1 font-medium">{ u.DiscordUsername }</span>
 						@RoleBadge(u.Role)
 						if u.Role == "pending" {
 							@button.Button(button.ButtonArgs{

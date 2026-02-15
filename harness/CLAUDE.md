@@ -2,7 +2,7 @@
 
 ## Architecture Overview
 
-The harness is a Go server (Echo framework) that manages multiplayer creative worlds. Users authenticate via GitHub OAuth, browse/create worlds in a lobby, and play Bevy/WASM games inside an iframe with a Datastar-powered overlay for chat, build status, and checkpoint navigation.
+The harness is a Go server (Echo framework) that manages multiplayer creative worlds. Users authenticate via Discord OAuth, browse/create worlds in a lobby, and play Bevy/WASM games inside an iframe with a Datastar-powered overlay for chat, build status, and checkpoint navigation.
 
 **Stack**: Go + Echo + SQLite (sqlc) + templ (HTML) + Datastar (hypermedia/SSE) + static CSS/JS
 
@@ -11,7 +11,7 @@ The harness is a Go server (Echo framework) that manages multiplayer creative wo
 | Package | Purpose |
 |---------|---------|
 | `internal/server/` | HTTP handlers, routes, SSE events |
-| `internal/auth/` | GitHub OAuth, session middleware, role checks |
+| `internal/auth/` | Discord OAuth, session middleware, role checks |
 | `internal/db/` | SQLite wrapper, migrations, sqlc queries |
 | `internal/events/` | EventBus: global + per-world pub/sub channels |
 | `internal/world/` | World creation, checkpoints, game server management |
@@ -72,7 +72,7 @@ templ LoginPage() {
         </head>
         <body>
             <h1>Creative Mode</h1>
-            <a href="/auth/github/login">Sign in with GitHub</a>
+            <a href="/auth/discord/login">Sign in with Discord</a>
         </body>
     </html>
 }

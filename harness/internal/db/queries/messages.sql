@@ -8,7 +8,7 @@ FROM messages WHERE world_id = ? ORDER BY created_at DESC LIMIT ?;
 
 -- name: GetRecentMessagesWithUser :many
 SELECT m.id, m.type, m.user_id, m.world_id, m.checkpoint_id, m.content, m.created_at,
-       u.github_username, u.avatar_url
+       u.discord_username, u.avatar_url
 FROM messages m
 LEFT JOIN users u ON m.user_id = u.id
 ORDER BY m.created_at DESC LIMIT ?;

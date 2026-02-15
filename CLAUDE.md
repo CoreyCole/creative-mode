@@ -78,7 +78,7 @@ playwright-cli run-code "async page => { await page.evaluate(async () => { await
 
 **Verifying SSE connections**: `playwright-cli network` shows active SSE streams as `[GET] /events => [200] OK`. Check this after page load to confirm `data-init` attributes are working.
 
-**Cookie management for auth testing**: Use `cookie-delete session` to simulate logged-out state, then navigate to verify middleware redirects. With `--persistent`, GitHub OAuth auto-completes on re-login, so you can't easily observe the login page after middleware redirects — delete cookies and navigate to `/` directly instead.
+**Cookie management for auth testing**: Use `cookie-delete session` to simulate logged-out state, then navigate to verify middleware redirects. With `--persistent`, Discord OAuth auto-completes on re-login, so you can't easily observe the login page after middleware redirects — delete cookies and navigate to `/` directly instead.
 
 **Reading snapshots**: Element refs like `[ref=e15]` are stable within a snapshot but change between snapshots. Always `snapshot` before interacting. The `[active]` annotation on elements indicates CSS active state (e.g., selected tab).
 

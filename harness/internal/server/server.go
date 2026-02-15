@@ -135,8 +135,8 @@ func (s *Server) RegisterRoutes(e *echo.Echo) {
 		return
 	}
 
-	e.GET("/auth/github/login", s.AuthHandler.HandleLogin)
-	e.GET("/auth/github/callback", s.AuthHandler.HandleCallback)
+	e.GET("/auth/discord/login", s.AuthHandler.HandleLogin)
+	e.GET("/auth/discord/callback", s.AuthHandler.HandleCallback)
 	e.POST("/auth/logout", s.AuthHandler.HandleLogout)
 
 	// Authenticated but possibly pending.
@@ -639,7 +639,7 @@ func (s *Server) handleChatMessage(c echo.Context) error {
 	if s.EventBus != nil {
 		s.EventBus.PublishGlobal(map[string]any{
 			"event":    events.EventChatMessage,
-			"username": user.GitHubUsername,
+			"username": user.DiscordUsername,
 			"avatar":   user.AvatarURL.String,
 			"content":  input.ChatText,
 			"ts":       time.Now().UTC().Format("15:04"),

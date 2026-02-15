@@ -10,6 +10,8 @@ sql:
         emit_interface: true
         emit_empty_slices: true
         rename:
+          discord_id: "DiscordID"
+          discord_username: "DiscordUsername"
           github_id: "GitHubID"
           github_username: "GitHubUsername"
           avatar_url: "AvatarURL"

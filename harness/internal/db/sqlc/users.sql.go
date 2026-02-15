@@ -30,16 +30,18 @@ func (q *Queries) DeleteUser(ctx context.Context, id string) error {
 	return err
 }
 
-const getUserByGitHubID = `-- name: GetUserByGitHubID :one
-SELECT id, github_id, github_username, avatar_url, role, created_at, last_seen_at
-FROM users WHERE github_id = ?
+const getUserByDiscordID = `-- name: GetUserByDiscordID :one
+SELECT id, discord_id, discord_username, github_id, github_username, avatar_url, role, created_at, last_seen_at
+FROM users WHERE discord_id = ?
 `
 
-func (q *Queries) GetUserByGitHubID(ctx context.Context, githubID int64) (User, error) {
-	row := q.db.QueryRowContext(ctx, getUserByGitHubID, githubID)
+func (q *Queries) GetUserByDiscordID(ctx context.Context, discordID string) (User, error) {
+	row := q.db.QueryRowContext(ctx, getUserByDiscordID, discordID)
 	var i User
 	err := row.Scan(
 		&i.ID,
+		&i.DiscordID,
+		&i.DiscordUsername,
 		&i.GitHubID,
 		&i.GitHubUsername,
 		&i.AvatarURL,
@@ -51,7 +53,7 @@ func (q *Queries) GetUserByGitHubID(ctx context.Context, githubID int64) (User, 
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, github_id, github_username, avatar_url, role, created_at, last_seen_at
+SELECT id, discord_id, discord_username, github_id, github_username, avatar_url, role, created_at, last_seen_at
 FROM users WHERE id = ?
 `
 
@@ -60,6 +62,8 @@ func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
 	var i User
 	err := row.Scan(
 		&i.ID,
+		&i.DiscordID,
+		&i.DiscordUsername,
 		&i.GitHubID,
 		&i.GitHubUsername,
 		&i.AvatarURL,
@@ -71,7 +75,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
 }
 
 const listPendingUsers = `-- name: ListPendingUsers :many
-SELECT id, github_id, github_username, avatar_url, role, created_at, last_seen_at
+SELECT id, discord_id, discord_username, github_id, github_username, avatar_url, role, created_at, last_seen_at
 FROM users WHERE role = 'pending' ORDER BY created_at ASC
 `
 
@@ -86,6 +90,8 @@ func (q *Queries) ListPendingUsers(ctx context.Context) ([]User, error) {
 		var i User
 		if err := rows.Scan(
 			&i.ID,
+			&i.DiscordID,
+			&i.DiscordUsername,
 			&i.GitHubID,
 			&i.GitHubUsername,
 			&i.AvatarURL,
@@ -107,7 +113,7 @@ func (q *Queries) ListPendingUsers(ctx context.Context) ([]User, error) {
 }
 
 const listUsers = `-- name: ListUsers :many
-SELECT id, github_id, github_username, avatar_url, role, created_at, last_seen_at
+SELECT id, discord_id, discord_username, github_id, github_username, avatar_url, role, created_at, last_seen_at
 FROM users ORDER BY created_at ASC
 `
 
@@ -122,6 +128,8 @@ func (q *Queries) ListUsers(ctx context.Context) ([]User, error) {
 		var i User
 		if err := rows.Scan(
 			&i.ID,
+			&i.DiscordID,
+			&i.DiscordUsername,
 			&i.GitHubID,
 			&i.GitHubUsername,
 			&i.AvatarURL,
@@ -165,27 +173,27 @@ func (q *Queries) UpdateUserRole(ctx context.Context, arg UpdateUserRoleParams) 
 }
 
 const upsertUser = `-- name: UpsertUser :exec
-INSERT INTO users (id, github_id, github_username, avatar_url, role)
+INSERT INTO users (id, discord_id, discord_username, avatar_url, role)
 VALUES (?, ?, ?, ?, ?)
-ON CONFLICT(github_id) DO UPDATE SET
-    github_username = excluded.github_username,
+ON CONFLICT(discord_id) DO UPDATE SET
+    discord_username = excluded.discord_username,
     avatar_url = excluded.avatar_url,
     last_seen_at = CURRENT_TIMESTAMP
 `
 
 type UpsertUserParams struct {
-	ID             string
-	GitHubID       int64
-	GitHubUsername string
-	AvatarURL      sql.NullString
-	Role           string
+	ID              string
+	DiscordID       string
+	DiscordUsername string
+	AvatarURL       sql.NullString
+	Role            string
 }
 
 func (q *Queries) UpsertUser(ctx context.Context, arg UpsertUserParams) error {
 	_, err := q.db.ExecContext(ctx, upsertUser,
 		arg.ID,
-		arg.GitHubID,
-		arg.GitHubUsername,
+		arg.DiscordID,
+		arg.DiscordUsername,
 		arg.AvatarURL,
 		arg.Role,
 	)

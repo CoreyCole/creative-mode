@@ -37,14 +37,14 @@ const (
 	RolePending = "pending"
 )
 
-// Config holds GitHub OAuth configuration.
+// Config holds Discord OAuth configuration.
 type Config struct {
-	GitHubClientID     string
-	GitHubClientSecret string
-	BaseURL            string // e.g. "http://localhost:8080"
+	DiscordClientID     string
+	DiscordClientSecret string
+	BaseURL             string // e.g. "http://localhost:8080"
 }
 
-// Handler implements GitHub OAuth login, callback, and logout.
+// Handler implements Discord OAuth login, callback, and logout.
 type Handler struct {
 	db     *db.DB
 	config *Config
@@ -56,7 +56,7 @@ func NewHandler(database *db.DB, config *Config, logger *slog.Logger) *Handler {
 	return &Handler{db: database, config: config, logger: logger}
 }
 
-// HandleLogin redirects to GitHub OAuth authorize URL with a CSRF state token.
+// HandleLogin redirects to Discord OAuth authorize URL with a CSRF state token.
 func (h *Handler) HandleLogin(c echo.Context) error {
 	state, err := randomHex(oauthStateBytes)
 	if err != nil {
@@ -74,16 +74,16 @@ func (h *Handler) HandleLogin(c echo.Context) error {
 	})
 
 	redirectURL := fmt.Sprintf(
-		"https://github.com/login/oauth/authorize?client_id=%s&redirect_uri=%s&scope=read:user&state=%s",
-		url.QueryEscape(h.config.GitHubClientID),
-		url.QueryEscape(h.config.BaseURL+"/auth/github/callback"),
+		"https://discord.com/api/oauth2/authorize?client_id=%s&redirect_uri=%s&response_type=code&scope=identify&state=%s",
+		url.QueryEscape(h.config.DiscordClientID),
+		url.QueryEscape(h.config.BaseURL+"/auth/discord/callback"),
 		url.QueryEscape(state),
 	)
 
 	return c.Redirect(http.StatusTemporaryRedirect, redirectURL)
 }
 
-// HandleCallback processes the GitHub OAuth callback.
+// HandleCallback processes the Discord OAuth callback.
 func (h *Handler) HandleCallback(c echo.Context) error {
 	ctx := c.Request().Context()
 
@@ -120,25 +120,25 @@ func (h *Handler) HandleCallback(c echo.Context) error {
 		)
 	}
 
-	// Fetch user info from GitHub.
-	ghUser, err := h.fetchGitHubUser(ctx, accessToken)
+	// Fetch user info from Discord.
+	dUser, err := h.fetchDiscordUser(ctx, accessToken)
 	if err != nil {
-		h.logger.Error("failed to fetch GitHub user", "error", err)
+		h.logger.Error("failed to fetch Discord user", "error", err)
 
 		return echo.NewHTTPError(
 			http.StatusInternalServerError,
-			"failed to fetch GitHub user info",
+			"failed to fetch Discord user info",
 		)
 	}
 
 	// Determine role: first user is admin, others are pending.
 	// Check if user already exists first.
-	existingUser, err := h.db.GetUserByGitHubID(ctx, ghUser.ID)
+	existingUser, err := h.db.GetUserByDiscordID(ctx, dUser.ID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("checking existing user: %w", err)
 	}
 
-	userID, err := h.resolveUser(ctx, ghUser, existingUser, err)
+	userID, err := h.resolveUser(ctx, dUser, existingUser, err)
 	if err != nil {
 		return err
 	}
@@ -168,32 +168,32 @@ func (h *Handler) HandleCallback(c echo.Context) error {
 		Secure:   !isLocalhost(h.config.BaseURL),
 	})
 
-	h.logger.Info("user logged in", "userID", userID, "github_username", ghUser.Login)
+	h.logger.Info("user logged in", "userID", userID, "discord_username", dUser.Username)
 
 	return c.Redirect(http.StatusTemporaryRedirect, "/")
 }
 
-// resolveUser creates or updates a user based on GitHub user info. Returns
+// resolveUser creates or updates a user based on Discord user info. Returns
 // the user ID. For new users, the first user gets the "admin" role atomically.
 func (h *Handler) resolveUser(
 	ctx context.Context,
-	ghUser *gitHubUser,
+	dUser *discordUser,
 	existingUser sqlc.User,
 	lookupErr error,
 ) (string, error) {
 	avatar := sql.NullString{
-		String: ghUser.AvatarURL,
-		Valid:  ghUser.AvatarURL != "",
+		String: dUser.avatarURL(),
+		Valid:  dUser.Avatar != "",
 	}
 
 	if lookupErr == nil {
 		// Existing user: update username/avatar, keep existing role.
 		if upsertErr := h.db.UpsertUser(ctx, sqlc.UpsertUserParams{
-			ID:             existingUser.ID,
-			GitHubID:       ghUser.ID,
-			GitHubUsername: ghUser.Login,
-			AvatarURL:      avatar,
-			Role:           existingUser.Role,
+			ID:              existingUser.ID,
+			DiscordID:       dUser.ID,
+			DiscordUsername: dUser.Username,
+			AvatarURL:       avatar,
+			Role:            existingUser.Role,
 		}); upsertErr != nil {
 			return "", fmt.Errorf("updating user: %w", upsertErr)
 		}
@@ -222,11 +222,11 @@ func (h *Handler) resolveUser(
 
 	userID := uuid.New().String()
 	if upsertErr := qtx.UpsertUser(ctx, sqlc.UpsertUserParams{
-		ID:             userID,
-		GitHubID:       ghUser.ID,
-		GitHubUsername: ghUser.Login,
-		AvatarURL:      avatar,
-		Role:           role,
+		ID:              userID,
+		DiscordID:       dUser.ID,
+		DiscordUsername: dUser.Username,
+		AvatarURL:       avatar,
+		Role:            role,
 	}); upsertErr != nil {
 		return "", fmt.Errorf("creating user: %w", upsertErr)
 	}
@@ -263,7 +263,7 @@ func (h *Handler) HandleLogout(c echo.Context) error {
 func (h *Handler) HandlePendingApproval(c echo.Context) error {
 	user, ok := c.Get("user").(*sqlc.User)
 	if !ok {
-		return c.Redirect(http.StatusTemporaryRedirect, "/auth/github/login")
+		return c.Redirect(http.StatusTemporaryRedirect, "/auth/discord/login")
 	}
 
 	c.Response().Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -315,31 +315,41 @@ func (h *Handler) HandleRejectUser(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"status": "rejected"})
 }
 
-// gitHubUser represents the subset of GitHub API user response we need.
-type gitHubUser struct {
-	ID        int64  `json:"id"`
-	Login     string `json:"login"`
-	AvatarURL string `json:"avatar_url"` //nolint:tagliatelle // GitHub API format
+// discordUser represents the subset of Discord API user response we need.
+type discordUser struct {
+	ID       string `json:"id"`
+	Username string `json:"username"`
+	Avatar   string `json:"avatar"`
 }
 
-// exchangeCode exchanges an OAuth code for a GitHub access token.
+// avatarURL returns the Discord CDN URL for the user's avatar.
+func (u *discordUser) avatarURL() string {
+	if u.Avatar == "" {
+		return ""
+	}
+
+	return fmt.Sprintf("https://cdn.discordapp.com/avatars/%s/%s.png", u.ID, u.Avatar)
+}
+
+// exchangeCode exchanges an OAuth code for a Discord access token.
 func (h *Handler) exchangeCode(ctx context.Context, code string) (string, error) {
 	data := url.Values{
-		"client_id":     {h.config.GitHubClientID},
-		"client_secret": {h.config.GitHubClientSecret},
+		"client_id":     {h.config.DiscordClientID},
+		"client_secret": {h.config.DiscordClientSecret},
+		"grant_type":    {"authorization_code"},
 		"code":          {code},
+		"redirect_uri":  {h.config.BaseURL + "/auth/discord/callback"},
 	}
 
 	req, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodPost,
-		"https://github.com/login/oauth/access_token",
+		"https://discord.com/api/oauth2/token",
 		strings.NewReader(data.Encode()),
 	)
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := http.DefaultClient.Do(req)
@@ -354,9 +364,9 @@ func (h *Handler) exchangeCode(ctx context.Context, code string) (string, error)
 	}
 
 	var tokenResp struct {
-		AccessToken string `json:"access_token"` //nolint:tagliatelle // GitHub API format
+		AccessToken string `json:"access_token"` //nolint:tagliatelle // Discord API format
 		Error       string `json:"error"`
-		ErrorDesc   string `json:"error_description"` //nolint:tagliatelle // GitHub API format
+		ErrorDesc   string `json:"error_description"` //nolint:tagliatelle // Discord API format
 	}
 	if err := json.Unmarshal(body, &tokenResp); err != nil {
 		return "", fmt.Errorf("parsing token response: %w", err)
@@ -371,36 +381,35 @@ func (h *Handler) exchangeCode(ctx context.Context, code string) (string, error)
 	return tokenResp.AccessToken, nil
 }
 
-// fetchGitHubUser fetches user info from the GitHub API.
-func (h *Handler) fetchGitHubUser(
+// fetchDiscordUser fetches user info from the Discord API.
+func (h *Handler) fetchDiscordUser(
 	ctx context.Context,
 	accessToken string,
-) (*gitHubUser, error) {
+) (*discordUser, error) {
 	req, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodGet,
-		"https://api.github.com/user",
+		"https://discord.com/api/users/@me",
 		http.NoBody,
 	)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("Accept", "application/vnd.github+json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("GitHub API request: %w", err)
+		return nil, fmt.Errorf("discord API request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 
-		return nil, fmt.Errorf("GitHub API returned %d: %s", resp.StatusCode, body)
+		return nil, fmt.Errorf("discord API returned %d: %s", resp.StatusCode, body)
 	}
 
-	var user gitHubUser
+	var user discordUser
 	if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
 		return nil, fmt.Errorf("parsing user response: %w", err)
 	}
@@ -439,9 +448,9 @@ func (h *Handler) HandleDevLogin(c echo.Context) error {
 		)
 	}
 
-	githubID := devGitHubID(username)
+	discordID := devDiscordID(username)
 
-	existingUser, err := h.db.GetUserByGitHubID(ctx, githubID)
+	existingUser, err := h.db.GetUserByDiscordID(ctx, discordID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("checking existing user: %w", err)
 	}
@@ -451,10 +460,10 @@ func (h *Handler) HandleDevLogin(c echo.Context) error {
 		// New user.
 		userID = uuid.New().String()
 		if upsertErr := h.db.UpsertUser(ctx, sqlc.UpsertUserParams{
-			ID:             userID,
-			GitHubID:       githubID,
-			GitHubUsername: username,
-			Role:           role,
+			ID:              userID,
+			DiscordID:       discordID,
+			DiscordUsername: username,
+			Role:            role,
 		}); upsertErr != nil {
 			return fmt.Errorf("creating dev user: %w", upsertErr)
 		}
@@ -500,12 +509,13 @@ func (h *Handler) HandleDevLogin(c echo.Context) error {
 	return c.Redirect(http.StatusSeeOther, "/")
 }
 
-// devGitHubID returns a deterministic negative GitHub ID for a dev username.
-// Negative IDs avoid collision with real GitHub user IDs.
-func devGitHubID(username string) int64 {
+// devDiscordID returns a deterministic Discord-style ID for a dev username.
+// Prefixed with "dev-" to avoid collision with real Discord user IDs.
+func devDiscordID(username string) string {
 	hasher := fnv.New32a()
 	_, _ = hasher.Write([]byte(username))
-	return -int64(hasher.Sum32())
+
+	return fmt.Sprintf("dev-%d", hasher.Sum32())
 }
 
 // isLocalhost returns true if the base URL refers to localhost.

@@ -89,22 +89,22 @@ func (q *Queries) GetRecentMessagesByWorld(ctx context.Context, arg GetRecentMes
 
 const getRecentMessagesWithUser = `-- name: GetRecentMessagesWithUser :many
 SELECT m.id, m.type, m.user_id, m.world_id, m.checkpoint_id, m.content, m.created_at,
-       u.github_username, u.avatar_url
+       u.discord_username, u.avatar_url
 FROM messages m
 LEFT JOIN users u ON m.user_id = u.id
 ORDER BY m.created_at DESC LIMIT ?
 `
 
 type GetRecentMessagesWithUserRow struct {
-	ID             string
-	Type           string
-	UserID         sql.NullString
-	WorldID        sql.NullString
-	CheckpointID   sql.NullString
-	Content        string
-	CreatedAt      time.Time
-	GitHubUsername sql.NullString
-	AvatarURL      sql.NullString
+	ID              string
+	Type            string
+	UserID          sql.NullString
+	WorldID         sql.NullString
+	CheckpointID    sql.NullString
+	Content         string
+	CreatedAt       time.Time
+	DiscordUsername sql.NullString
+	AvatarURL       sql.NullString
 }
 
 func (q *Queries) GetRecentMessagesWithUser(ctx context.Context, limit int64) ([]GetRecentMessagesWithUserRow, error) {
@@ -124,7 +124,7 @@ func (q *Queries) GetRecentMessagesWithUser(ctx context.Context, limit int64) ([
 			&i.CheckpointID,
 			&i.Content,
 			&i.CreatedAt,
-			&i.GitHubUsername,
+			&i.DiscordUsername,
 			&i.AvatarURL,
 		); err != nil {
 			return nil, err

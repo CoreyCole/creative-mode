@@ -112,11 +112,11 @@ func main() {
 		}
 	}()
 
-	// Set up auth (optional — requires GITHUB_CLIENT_ID).
+	// Set up auth (optional — requires DISCORD_CLIENT_ID).
 	var authHandler *auth.Handler
 
-	ghClientID := os.Getenv("GITHUB_CLIENT_ID")
-	ghClientSecret := os.Getenv("GITHUB_CLIENT_SECRET")
+	discordClientID := os.Getenv("DISCORD_CLIENT_ID")
+	discordClientSecret := os.Getenv("DISCORD_CLIENT_SECRET")
 
 	baseURL := os.Getenv("HARNESS_URL")
 	if baseURL == "" {
@@ -124,21 +124,21 @@ func main() {
 	}
 
 	switch {
-	case ghClientID != "" && ghClientSecret != "":
+	case discordClientID != "" && discordClientSecret != "":
 		authHandler = auth.NewHandler(database, &auth.Config{
-			GitHubClientID:     ghClientID,
-			GitHubClientSecret: ghClientSecret,
-			BaseURL:            baseURL,
+			DiscordClientID:     discordClientID,
+			DiscordClientSecret: discordClientSecret,
+			BaseURL:             baseURL,
 		}, logger)
-		logger.Info("GitHub OAuth enabled")
+		logger.Info("Discord OAuth enabled")
 	case os.Getenv("DEV_MODE") == "true":
 		authHandler = auth.NewHandler(database, &auth.Config{
 			BaseURL: baseURL,
 		}, logger)
-		logger.Info("Dev auth enabled (no GitHub OAuth)")
+		logger.Info("Dev auth enabled (no Discord OAuth)")
 	default:
 		logger.Warn(
-			"GitHub OAuth disabled (GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET not set)",
+			"Discord OAuth disabled (DISCORD_CLIENT_ID/DISCORD_CLIENT_SECRET not set)",
 		)
 	}
 

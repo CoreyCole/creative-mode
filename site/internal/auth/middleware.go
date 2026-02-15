@@ -13,12 +13,12 @@ func SessionMiddleware(sm *SessionManager) echo.MiddlewareFunc {
 		return func(c echo.Context) error {
 			cookie, err := c.Cookie("session")
 			if err != nil || cookie.Value == "" {
-				return c.Redirect(http.StatusTemporaryRedirect, "/auth/discord/login")
+				return c.Redirect(http.StatusFound, "/auth/discord/login")
 			}
 
 			session := sm.GetSession(cookie.Value)
 			if session == nil {
-				return c.Redirect(http.StatusTemporaryRedirect, "/auth/discord/login")
+				return c.Redirect(http.StatusFound, "/auth/discord/login")
 			}
 
 			c.Set("session", session)
@@ -34,11 +34,11 @@ func GuildMemberMiddleware() echo.MiddlewareFunc {
 		return func(c echo.Context) error {
 			session, ok := c.Get("session").(*Session)
 			if !ok {
-				return c.Redirect(http.StatusTemporaryRedirect, "/auth/discord/login")
+				return c.Redirect(http.StatusFound, "/auth/discord/login")
 			}
 
 			if !session.GuildMemberVerified {
-				return c.Redirect(http.StatusTemporaryRedirect, "/join-discord")
+				return c.Redirect(http.StatusFound, "/join-discord")
 			}
 
 			return next(c)
@@ -53,11 +53,11 @@ func InviteCodeMiddleware() echo.MiddlewareFunc {
 		return func(c echo.Context) error {
 			session, ok := c.Get("session").(*Session)
 			if !ok {
-				return c.Redirect(http.StatusTemporaryRedirect, "/auth/discord/login")
+				return c.Redirect(http.StatusFound, "/auth/discord/login")
 			}
 
 			if !session.InviteCodeVerified {
-				return c.Redirect(http.StatusTemporaryRedirect, "/invite")
+				return c.Redirect(http.StatusFound, "/invite")
 			}
 
 			return next(c)

@@ -63,16 +63,18 @@ type Session struct {
 
 // SessionManager manages in-memory sessions.
 type SessionManager struct {
-	mu       sync.RWMutex
-	sessions map[string]*Session
-	config   *Config
+	mu         sync.RWMutex
+	sessions   map[string]*Session
+	config     *Config
+	httpClient *http.Client
 }
 
 // NewSessionManager creates a new session manager.
 func NewSessionManager(config *Config) *SessionManager {
 	sm := &SessionManager{
-		sessions: make(map[string]*Session),
-		config:   config,
+		sessions:   make(map[string]*Session),
+		config:     config,
+		httpClient: &http.Client{Timeout: 10 * time.Second},
 	}
 	// Start cleanup goroutine.
 	go sm.cleanupLoop()
@@ -216,7 +218,13 @@ func (sm *SessionManager) HandleCallback(c echo.Context) error {
 		Secure:   isSecure(sm.config.RedirectURI),
 	})
 
-	return c.Redirect(http.StatusTemporaryRedirect, "/mayor")
+	// Redirect directly to the correct page to avoid redirect chains
+	// that confuse Discord's OAuth app. Use 303 (See Other) — the standard
+	// for post-OAuth redirects — instead of 307 which preserves the method.
+	if !guildVerified {
+		return c.Redirect(http.StatusSeeOther, "/join-discord")
+	}
+	return c.Redirect(http.StatusSeeOther, "/invite")
 }
 
 // HandleLogout clears the session cookie and deletes the session.
@@ -259,7 +267,7 @@ func (sm *SessionManager) exchangeCode(c echo.Context, code string) (string, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := sm.httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("token exchange request: %w", err)
 	}
@@ -301,7 +309,7 @@ func (sm *SessionManager) fetchDiscordUser(c echo.Context, accessToken string) (
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := sm.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("discord API request: %w", err)
 	}
@@ -335,13 +343,13 @@ func (sm *SessionManager) CheckGuildMembership(c echo.Context, userID string) bo
 	}
 	req.Header.Set("Authorization", "Bot "+sm.config.BotToken)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := sm.httpClient.Do(req)
 	if err != nil {
 		c.Logger().Errorf("guild member check request failed: %v", err)
 		return false
 	}
 	defer func() { _ = resp.Body.Close() }()
-	_, _ = io.ReadAll(resp.Body)
+	_, _ = io.Copy(io.Discard, resp.Body)
 
 	return resp.StatusCode == http.StatusOK
 }

@@ -134,16 +134,23 @@ func main() {
 			Title:       "Join Discord - Creative Mode",
 			CurrentPath: c.Request().URL.Path,
 		}
-		return p.JoinDiscordPage(rootArgs).Render(c.Request().Context(), c.Response().Writer)
+		return p.JoinDiscordPage(rootArgs, "").Render(c.Request().Context(), c.Response().Writer)
 	})
 
 	sessionGroup.POST("/join-discord", func(c echo.Context) error {
-		session := c.Get("session").(*auth.Session)
+		session, ok := c.Get("session").(*auth.Session)
+		if !ok {
+			return c.Redirect(http.StatusFound, "/auth/discord/login")
+		}
 		if sessionMgr.CheckGuildMembership(c, session.DiscordID) {
 			sessionMgr.SetGuildVerified(session.ID)
 			return c.Redirect(http.StatusSeeOther, "/mayor")
 		}
-		return c.Redirect(http.StatusSeeOther, "/join-discord")
+		rootArgs := l.RootArgs{
+			Title:       "Join Discord - Creative Mode",
+			CurrentPath: c.Request().URL.Path,
+		}
+		return p.JoinDiscordPage(rootArgs, "We couldn't find you in the server yet — make sure you've joined and try again.").Render(c.Request().Context(), c.Response().Writer)
 	})
 
 	// --- Mayor page (requires session + guild membership + invite code) ---

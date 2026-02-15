@@ -2,7 +2,7 @@ package pages
 
 import l "github.com/coreycole/creative-mode/site/layouts"
 
-templ JoinDiscordPage(rootArgs l.RootArgs) {
+templ JoinDiscordPage(rootArgs l.RootArgs, errorMsg string) {
 	@l.Root(rootArgs) {
 		<section class="py-20 md:py-32">
 			<div class="mx-auto max-w-md px-4 sm:px-6 lg:px-8">
@@ -20,7 +20,10 @@ templ JoinDiscordPage(rootArgs l.RootArgs) {
 						>
 							Join Discord Server
 						</a>
-						<form method="POST" action="/join-discord">
+						<form method="POST" action="/join-discord" class="space-y-3">
+							if errorMsg != "" {
+								<p class="text-sm text-destructive">{ errorMsg }</p>
+							}
 							<button
 								type="submit"
 								class="w-full inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4"

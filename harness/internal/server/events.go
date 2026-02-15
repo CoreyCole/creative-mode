@@ -284,10 +284,21 @@ func (s *Server) handleWorldEvent(
 
 		serverPort, _ := e["serverPort"].(int)
 		if serverPort > 0 {
+			// 3D: reload with server_port.
 			script := fmt.Sprintf(
 				"var f=document.getElementById('game-frame');"+
 					"if(f){f.src='/wasm/%s/%s/index.html?server_port=%d';}",
 				worldID, cpID, serverPort,
+			)
+			if err := sse.ExecuteScript(script); err != nil {
+				return err
+			}
+		} else {
+			// 2D: reload without server_port.
+			script := fmt.Sprintf(
+				"var f=document.getElementById('game-frame');"+
+					"if(f){f.src='/wasm/%s/%s/index.html';}",
+				worldID, cpID,
 			)
 			if err := sse.ExecuteScript(script); err != nil {
 				return err

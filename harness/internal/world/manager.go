@@ -450,7 +450,10 @@ func (m *Manager) createTemplateWorldDev(
 		return "", fmt.Errorf("committing transaction: %w", err)
 	}
 
-	// Start dev servers.
+	// Symlink dist/ into wasm-builds so handleWASMArtifacts can serve it.
+	m.symlinkTemplateDist(ctx, worldID, cpID, templateType, templateDir)
+
+	// Start dev servers (game server only, no trunk serve).
 	startErr := m.startTemplateDevServers(
 		ctx, worldID, cpID, templateType, templateDir,
 	)
@@ -493,7 +496,10 @@ func (m *Manager) ensureTemplateDevReady(
 		}
 	}
 
-	// Start dev servers (idempotent — reuses existing sessions).
+	// Ensure dist/ symlink exists for static WASM serving.
+	m.symlinkTemplateDist(ctx, worldID, cp.ID, templateType, templateDir)
+
+	// Start dev servers (game server only, no trunk serve).
 	startErr := m.startTemplateDevServers(
 		ctx, worldID, cp.ID, templateType, templateDir,
 	)
@@ -504,15 +510,60 @@ func (m *Manager) ensureTemplateDevReady(
 	return worldID, nil
 }
 
+// symlinkTemplateDist creates a symlink from data/wasm-builds/{worldID}/{cpID}/
+// to the template's dist/ directory so handleWASMArtifacts can serve static WASM.
+// Also sets WasmPath on the checkpoint.
+func (m *Manager) symlinkTemplateDist(
+	ctx context.Context, worldID, cpID, templateType, templateDir string,
+) {
+	distDir := filepath.Join(templateDir, "dist")
+	if templateType == "3d" {
+		distDir = filepath.Join(templateDir, "client", "dist")
+	}
+
+	if _, err := os.Stat(distDir); err != nil {
+		m.logger.Warn("template dist/ not found, skipping symlink",
+			"distDir", distDir, "error", err)
+		return
+	}
+
+	wasmDir := filepath.Join(m.dataDir, "wasm-builds", worldID, cpID)
+
+	// If the symlink already exists and points to the right place, skip.
+	if target, err := os.Readlink(wasmDir); err == nil && target == distDir {
+		return
+	}
+
+	// Remove any stale entry (old symlink or directory).
+	_ = os.Remove(wasmDir)
+
+	if err := os.MkdirAll(filepath.Dir(wasmDir), 0o750); err != nil {
+		m.logger.Error("failed to create wasm-builds parent dir", "error", err)
+		return
+	}
+
+	if err := os.Symlink(distDir, wasmDir); err != nil {
+		m.logger.Error("failed to symlink template dist",
+			"distDir", distDir, "wasmDir", wasmDir, "error", err)
+		return
+	}
+
+	// Update checkpoint WasmPath so the iframe loads static WASM.
+	_ = m.db.UpdateCheckpointWasmPath(ctx, sqlc.UpdateCheckpointWasmPathParams{
+		WasmPath: sql.NullString{String: wasmDir, Valid: true},
+		ID:       cpID,
+	})
+
+	m.logger.Info("symlinked template dist for static WASM",
+		"worldID", worldID, "cpID", cpID, "distDir", distDir)
+}
+
 // startTemplateDevServers starts dev servers for a template world.
-// 3D: cargo watch (game server) + trunk serve.
-// 2D: trunk serve only (no game server).
-// Both are idempotent — they reuse existing tmux sessions if alive.
+// 3D: cargo watch (game server) only. Trunk serve is on-demand.
+// 2D: no servers needed (client-only).
 func (m *Manager) startTemplateDevServers(
 	ctx context.Context, worldID, cpID, templateType, templateDir string,
 ) error {
-	gamePort := 0
-
 	// 3D worlds need a game server (cargo watch).
 	if templateType == "3d" {
 		srv, err := m.GameServers.ConnectDev(worldID, cpID, templateDir)
@@ -520,28 +571,20 @@ func (m *Manager) startTemplateDevServers(
 			return fmt.Errorf("starting dev game server: %w", err)
 		}
 
-		gamePort = srv.Port
-
 		// Sync server port to DB.
 		_, _ = m.db.UpdateCheckpointServerPort(ctx, sqlc.UpdateCheckpointServerPortParams{
 			ServerPort: sql.NullInt64{Int64: int64(srv.Port), Valid: true},
 			ID:         cpID,
 		})
+
+		m.logger.Info("template dev servers running",
+			"templateType", templateType,
+			"worldID", worldID, "cpID", cpID,
+			"gamePort", srv.Port)
 	}
 
-	// All template types get trunk serve.
-	trunkPort, err := m.GameServers.StartTrunkServe(
-		worldID, cpID, templateDir,
-	)
-	if err != nil {
-		return fmt.Errorf("starting trunk serve: %w", err)
-	}
-
-	m.logger.Info("template dev servers running",
-		"templateType", templateType,
-		"worldID", worldID, "cpID", cpID,
-		"gamePort", gamePort, "trunkPort", trunkPort)
-
+	// No trunk serve on boot — template worlds use static dist/ builds.
+	// Trunk serve is started on-demand via StartLiveReload (Phase 2).
 	return nil
 }
 

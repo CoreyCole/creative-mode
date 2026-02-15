@@ -9,6 +9,9 @@ template-target/
 context/
 .DS_Store
 
+# Built harness binary (VPS)
+harness/harness
+
 # Tailwind CSS build output
 harness/static/css/out*
 

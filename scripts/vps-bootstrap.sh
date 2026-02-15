@@ -23,14 +23,18 @@ set -euo pipefail
 #   10. Locks down SSH (Tailscale-only, non-standard port, no passwords)
 #   11. Adds deploy user to docker group
 #   12. Sets up daily SQLite backup cron job
-#   13. Creates systemd service for auto-start on reboot
+#   13. Creates systemd service for auto-start on reboot (native binary)
 #   14. Installs Nix (daemon mode)
 #   15. Enables Nix flakes
 #   16. Installs direnv
+#   16b. Installs Rust toolchain (system-wide)
+#   16c. Installs cargo tools (trunk, cargo-watch, wasm-bindgen-cli)
+#   16d. Installs Go tools (templ)
 #   17. Installs oh-my-zsh + configures zsh as login shell
 #   18. Activates dev environment (direnv allow)
 #   19. Creates .env file (interactive prompts for secrets)
 #   20. Sets up Tailscale Serve (HTTPS)
+#   20b. Installs Claude Code CLI
 #   21. Starts the server via systemd
 #   22. Prints summary
 #
@@ -615,42 +619,39 @@ fi
 # systemd is Linux's service manager. This service definition tells Linux to:
 #   - Start the game server automatically when the machine boots
 #   - Run it as the 'deploy' user (not root)
-#   - Start only after Docker is ready
+#   - Restart on failure with a 5-second delay
 #   - Allow stopping the server cleanly with 'systemctl stop creative-mode'
 #
-# Note: docker compose 'restart: on-failure' handles crash recovery. This
-# systemd unit only handles the initial start on boot.
+# The harness runs as a native binary (not Docker). The harness-run.sh
+# wrapper sets up PATH (Nix, Cargo, Go tools, Claude CLI) and starts tmux.
 # ============================================================================
 section "Step 13: systemd service"
 
 SERVICE_FILE="/etc/systemd/system/creative-mode.service"
 
-if [ -f "$SERVICE_FILE" ]; then
-    skip "Systemd service file already exists"
+# Always overwrite — the service definition may have changed (e.g., Docker → native)
+if $DRY_RUN; then
+    info "Would create $SERVICE_FILE"
+    info "Would enable creative-mode.service"
 else
-    if $DRY_RUN; then
-        info "Would create $SERVICE_FILE"
-        info "Would enable creative-mode.service"
-    else
-        cat > "$SERVICE_FILE" << EOF
+    cat > "$SERVICE_FILE" << EOF
 [Unit]
 Description=Creative Mode Harness
-After=docker.service
-Requires=docker.service
+After=network.target
 
 [Service]
-Type=oneshot
-RemainAfterExit=yes
+Type=simple
 User=deploy
 WorkingDirectory=$CREATIVE_MODE_DIR/harness
-ExecStart=/usr/bin/docker compose up -d
-ExecStop=/usr/bin/docker compose down
+ExecStart=$CREATIVE_MODE_DIR/scripts/harness-run.sh
+Restart=on-failure
+RestartSec=5
+EnvironmentFile=$CREATIVE_MODE_DIR/harness/.env
 
 [Install]
 WantedBy=multi-user.target
 EOF
-        ok "Created $SERVICE_FILE"
-    fi
+    ok "Created $SERVICE_FILE"
 fi
 
 # Ensure service is registered and enabled (both commands are idempotent)
@@ -720,6 +721,89 @@ else
     else
         sudo -u deploy bash -lc 'nix profile install nixpkgs#direnv'
         ok "Installed direnv for deploy user"
+    fi
+fi
+
+# ============================================================================
+# Step 16b: Install Rust toolchain
+# ============================================================================
+# Rust is needed for building Bevy game servers and WASM clients. We install
+# system-wide to /usr/local so tmux sessions (spawned by the harness for game
+# servers and Claude Code) inherit Rust on PATH automatically.
+# ============================================================================
+section "Step 16b: Install Rust toolchain"
+
+if [ -f /usr/local/cargo/bin/rustup ]; then
+    skip "Rust toolchain already installed"
+else
+    if $DRY_RUN; then
+        info "Would install Rust toolchain to /usr/local/cargo"
+    else
+        RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo \
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+            sh -s -- -y --default-toolchain stable --profile minimal
+        ok "Installed Rust toolchain"
+    fi
+fi
+
+# Add wasm32 target for Bevy client builds
+if /usr/local/cargo/bin/rustup target list --installed 2>/dev/null | grep -q wasm32-unknown-unknown; then
+    skip "wasm32-unknown-unknown target already installed"
+else
+    if $DRY_RUN; then
+        info "Would add wasm32-unknown-unknown target"
+    else
+        RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo \
+            /usr/local/cargo/bin/rustup target add wasm32-unknown-unknown
+        ok "Added wasm32-unknown-unknown target"
+    fi
+fi
+
+# ============================================================================
+# Step 16c: Install cargo tools
+# ============================================================================
+# trunk: WASM bundler for Bevy client
+# cargo-watch: auto-rebuild during Claude dev sessions
+# wasm-bindgen-cli: WASM bindings (pinned version must match Cargo.lock)
+# ============================================================================
+section "Step 16c: Install cargo tools"
+
+export RUSTUP_HOME=/usr/local/rustup
+export CARGO_HOME=/usr/local/cargo
+export PATH="/usr/local/cargo/bin:$PATH"
+
+if command -v trunk &>/dev/null && command -v cargo-watch &>/dev/null; then
+    skip "trunk and cargo-watch already installed"
+else
+    if $DRY_RUN; then
+        info "Would install trunk, cargo-watch, wasm-bindgen-cli"
+    else
+        cargo install trunk cargo-watch
+        cargo install wasm-bindgen-cli --version 0.2.108
+        ok "Installed trunk, cargo-watch, wasm-bindgen-cli"
+    fi
+fi
+
+# ============================================================================
+# Step 16d: Install Go tools (templ)
+# ============================================================================
+# templ is a Go HTML templating engine. It compiles .templ files to Go code.
+# Needs Go on PATH from Nix first.
+# ============================================================================
+section "Step 16d: Install Go tools (templ)"
+
+# Source Nix + direnv to get Go on PATH
+source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh 2>/dev/null || true
+eval "$(sudo -u deploy bash -c 'cd '"$CREATIVE_MODE_DIR"' && direnv export bash 2>/dev/null')" 2>/dev/null || true
+
+if command -v templ &>/dev/null; then
+    skip "templ already installed"
+else
+    if $DRY_RUN; then
+        info "Would install templ via go install"
+    else
+        sudo -u deploy bash -lc 'cd '"$CREATIVE_MODE_DIR"' && eval "$(direnv export bash 2>/dev/null)" && go install github.com/a-h/templ/cmd/templ@v0.3.977'
+        ok "Installed templ"
     fi
 fi
 
@@ -898,11 +982,30 @@ else
 fi
 
 # ============================================================================
+# Step 20b: Install Claude Code CLI
+# ============================================================================
+# Claude Code CLI is used by the harness to run Claude sessions in tmux.
+# Installed as the deploy user to ~/.local/bin.
+# ============================================================================
+section "Step 20b: Install Claude Code CLI"
+
+if sudo -u deploy bash -lc 'command -v claude' &>/dev/null; then
+    skip "Claude Code CLI already installed"
+else
+    if $DRY_RUN; then
+        info "Would install Claude Code CLI for deploy user"
+    else
+        sudo -u deploy bash -lc 'curl -fsSL https://claude.ai/install.sh | bash'
+        ok "Installed Claude Code CLI"
+    fi
+fi
+
+# ============================================================================
 # Step 21: Start the server
 # ============================================================================
-# Start the harness via the systemd service created in Step 13. This runs
-# docker compose up -d as the deploy user. The first build takes a while
-# because Docker needs to pull images and compile the WASM client.
+# Start the harness via the systemd service created in Step 13. The harness
+# runs as a native binary via harness-run.sh. The first build must be done
+# manually with 'just vps-build' before starting.
 # ============================================================================
 section "Step 21: Start the server"
 
@@ -914,7 +1017,7 @@ else
     else
         systemctl start creative-mode
         ok "Started creative-mode service"
-        info "First build takes a while — Docker is pulling images and compiling"
+        info "Make sure 'just vps-build' was run first (harness binary must exist)"
         info "Check progress: journalctl -u creative-mode -f"
     fi
 fi

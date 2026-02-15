@@ -15,9 +15,24 @@ Multiplayer creative sandbox — Go harness server + Bevy/WASM game client.
 
 ## Running the Server
 
-**IMPORTANT: Always run the harness in Docker, never directly on the host.**
+### VPS (production) — Nix + systemd
 
-Running `go run .` on the host skips `DEV_MODE=true` and killing it can destroy tmux sessions that manage game servers. Use Docker:
+The harness runs as a native binary under systemd. Nix provides build/runtime deps, Rust is installed system-wide via rustup.
+
+| Command | Purpose |
+|---------|---------|
+| `just vps-build` | Build harness binary (templ + tailwind + go build) |
+| `just vps-deploy` | Pull + build + restart systemd service |
+| `just vps-logs` | Stream service logs (journalctl) |
+| `just vps-status` | Check service status |
+
+All commands run from `harness/`.
+
+### macOS (local dev) — Docker
+
+**On macOS, always run the harness in Docker, never directly on the host.**
+
+Running `go run .` on the host skips `DEV_MODE=true` and killing it can destroy tmux sessions that manage game servers. The Docker container bind-mounts the project root, so host-side cargo/go builds corrupt incremental builds. Use Docker:
 
 | Command | Purpose |
 |---------|---------|
@@ -71,12 +86,14 @@ playwright-cli run-code "async page => { await page.evaluate(async () => { await
 
 ## Build & Check
 
-**NEVER run `cargo build/clippy/check`, `go build`, `templ generate`, or `just generate` directly on the host.** The Docker container bind-mounts the project root, so host-side cargo writes to the same `target/` directories that trunk uses inside Docker, corrupting incremental builds and crashing the WASM server. These commands are denied in `.claude/settings.json`.
+**macOS only: NEVER run `cargo build/clippy/check`, `go build`, `templ generate`, or `just generate` directly on the host.** The Docker container bind-mounts the project root, so host-side cargo writes to the same `target/` directories that trunk uses inside Docker, corrupting incremental builds and crashing the WASM server. These commands are denied in `.claude/settings.json`.
 
-**Always use `just check` from the project root:**
+**On VPS**, building directly is the intended workflow — use `just vps-build` from `harness/`.
+
+**Always use `just check` from the project root** (uses isolated `CARGO_TARGET_DIR` to avoid conflicts on macOS):
 
 ```bash
-just check          # verify Go + Rust + WASM all compile (uses isolated CARGO_TARGET_DIR)
+just check          # verify Go + Rust + WASM all compile
 just fmt            # format all code
 just setup          # run setup (includes playwright-cli)
 ```

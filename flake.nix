@@ -25,6 +25,19 @@
             jq
             sqlite
 
+            # Build tools (Go harness compilation)
+            go_1_24
+            gcc
+            pkg-config
+
+            # Runtime (game server tmux sessions, tailwind)
+            tmux
+            nodejs_22
+            pnpm
+
+            # Code generation
+            sqlc
+
             # Docker (CLI only — Docker Engine installed by bootstrap script)
             docker
             docker-compose

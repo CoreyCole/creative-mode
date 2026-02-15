@@ -102,15 +102,34 @@ shell:
 logs:
     docker compose logs -f harness
 
-# --- VPS Helpers ---
+# --- VPS (Nix + systemd) ---
 
-# Redeploy (pull latest + rebuild)
-redeploy:
+# Build harness binary for VPS
+vps-build:
+    templ generate
+    just build-tailwind
+    CGO_ENABLED=1 go build -o harness .
+
+# Deploy: pull, build, restart service
+vps-deploy:
     git pull
-    just up
+    just vps-build
+    sudo systemctl restart creative-mode
 
-# Status check (container + Tailscale)
+# Service logs
+vps-logs:
+    journalctl -u creative-mode -f
+
+# Service status
+vps-status:
+    systemctl status creative-mode
+
+# Redeploy (pull latest + rebuild + restart)
+redeploy:
+    just vps-deploy
+
+# Status check (service + Tailscale)
 status:
-    @docker compose ps
+    @systemctl status creative-mode --no-pager 2>/dev/null || echo "creative-mode service: not found"
     @echo ""
     @tailscale status --peers=false 2>/dev/null || echo "Tailscale: not installed (local dev)"

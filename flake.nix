@@ -30,23 +30,10 @@
             docker-compose
           ];
 
-          shellHook = ''
-            # Set up oh-my-zsh if not already configured
-            export ZSH="${pkgs.oh-my-zsh}/share/oh-my-zsh"
-            export ZSH_THEME="robbyrussell"
-            export plugins=(git fzf docker docker-compose)
-
-            # Source oh-my-zsh
-            if [ -f "$ZSH/oh-my-zsh.sh" ]; then
-              source "$ZSH/oh-my-zsh.sh"
-            fi
-
-            # Enable fzf keybindings and completion
-            if [ -n "$(command -v fzf)" ]; then
-              source "${pkgs.fzf}/share/fzf/key-bindings.zsh" 2>/dev/null
-              source "${pkgs.fzf}/share/fzf/completion.zsh" 2>/dev/null
-            fi
-          '';
+          # oh-my-zsh is configured in the login shell (.zshrc) — not here.
+          # direnv evaluates shellHook inside bash, so sourcing oh-my-zsh
+          # fails. The flake still provides fzf/zsh as packages for PATH.
+          shellHook = "";
         };
       }
     );

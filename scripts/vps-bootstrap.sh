@@ -9,7 +9,7 @@ set -euo pipefail
 # running the Creative Mode harness. Pipable from curl on a fresh instance.
 #
 # What this script does:
-#   0.  Installs prerequisites (git, curl, sqlite3, jq, openssl, zsh)
+#   0.  Installs prerequisites (git, curl, sqlite3, jq, openssl, zsh, fzf)
 #   1.  Creates a 'deploy' user with sudo access
 #   1b. Clones the repository to ~deploy/creative-mode
 #   2.  Installs Tailscale (private networking)
@@ -111,15 +111,15 @@ info "Install path: $CREATIVE_MODE_DIR"
 # ============================================================================
 section "Step 0: Install prerequisites"
 
-if command -v git &>/dev/null && command -v curl &>/dev/null && command -v sqlite3 &>/dev/null && command -v jq &>/dev/null && command -v openssl &>/dev/null && command -v zsh &>/dev/null; then
-    skip "Prerequisites already installed (git, curl, sqlite3, jq, openssl, zsh)"
+if command -v git &>/dev/null && command -v curl &>/dev/null && command -v sqlite3 &>/dev/null && command -v jq &>/dev/null && command -v openssl &>/dev/null && command -v zsh &>/dev/null && command -v fzf &>/dev/null; then
+    skip "Prerequisites already installed (git, curl, sqlite3, jq, openssl, zsh, fzf)"
 else
     if $DRY_RUN; then
-        info "Would apt-get update and install git, curl, sqlite3, jq, openssl, zsh"
+        info "Would apt-get update and install git, curl, sqlite3, jq, openssl, zsh, fzf"
     else
         apt-get update
-        apt-get install -y git curl sqlite3 jq openssl zsh
-        ok "Installed prerequisites (git, curl, sqlite3, jq, openssl, zsh)"
+        apt-get install -y git curl sqlite3 jq openssl zsh fzf
+        ok "Installed prerequisites (git, curl, sqlite3, jq, openssl, zsh, fzf)"
     fi
 fi
 

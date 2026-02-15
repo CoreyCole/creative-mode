@@ -754,7 +754,7 @@ else
     if $DRY_RUN; then
         info "Would install oh-my-zsh for deploy user"
     else
-        sudo -u deploy sh -c 'RUNZSH=no KEEP_ZSHRC=yes sh <(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)'
+        sudo -u deploy sh -c 'curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh | RUNZSH=no KEEP_ZSHRC=yes sh'
         ok "Installed oh-my-zsh for deploy user"
     fi
 fi

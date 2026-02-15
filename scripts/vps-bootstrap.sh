@@ -447,46 +447,57 @@ fi
 section "Step 10: Lock down SSH"
 
 SSHD_CONFIG="/etc/ssh/sshd_config"
+SSHD_DROP_IN="/etc/ssh/sshd_config.d/99-creative-mode.conf"
 
-if grep -q "^Port 2222" "$SSHD_CONFIG" 2>/dev/null; then
-    skip "SSH config already locked down (Port 2222 in sshd_config)"
+# Get this machine's Tailscale IPv4 address
+TS_IP=$(tailscale ip -4 2>/dev/null || true)
+if [ -z "$TS_IP" ]; then
+    fail "Cannot get Tailscale IP — is Tailscale connected?"
+    exit 1
+fi
+
+# Migration: remove old append-style config from sshd_config if present
+# (Previous versions of this script appended directly to sshd_config, which
+# caused duplicate/conflicting directives on re-run.)
+if grep -q "# Creative Mode: SSH lockdown" "$SSHD_CONFIG" 2>/dev/null; then
+    if $DRY_RUN; then
+        info "Would remove old SSH lockdown block from $SSHD_CONFIG"
+    else
+        cp "$SSHD_CONFIG" "${SSHD_CONFIG}.bak.$(date +%Y%m%d)"
+        sed -i '/^# Creative Mode: SSH lockdown/,/^PasswordAuthentication no$/d' "$SSHD_CONFIG"
+        ok "Removed old SSH lockdown block from $SSHD_CONFIG"
+    fi
+fi
+
+# Write the drop-in config (always overwrite to pick up Tailscale IP changes)
+if [ -f "$SSHD_DROP_IN" ] && grep -q "ListenAddress $TS_IP" "$SSHD_DROP_IN" 2>/dev/null; then
+    skip "SSH drop-in already correct (ListenAddress $TS_IP, Port 2222)"
 else
     if $DRY_RUN; then
-        TS_IP=$(tailscale ip -4 2>/dev/null || echo "<tailscale-ip>")
-        info "Would lock down sshd:"
+        info "Would write $SSHD_DROP_IN:"
         info "  ListenAddress $TS_IP"
         info "  Port 2222"
         info "  PermitRootLogin no"
         info "  PasswordAuthentication no"
     else
-        # Get this machine's Tailscale IPv4 address
-        TS_IP=$(tailscale ip -4)
-        if [ -z "$TS_IP" ]; then
-            fail "Cannot get Tailscale IP — is Tailscale connected?"
-            exit 1
-        fi
-
-        # Back up the original sshd_config
-        cp "$SSHD_CONFIG" "${SSHD_CONFIG}.bak.$(date +%Y%m%d)"
-
-        # Write the locked-down config
-        # We append to the end — later directives override earlier ones in sshd
-        cat >> "$SSHD_CONFIG" << EOF
-
+        mkdir -p /etc/ssh/sshd_config.d
+        cat > "$SSHD_DROP_IN" << EOF
 # Creative Mode: SSH lockdown — only accessible via Tailscale
 ListenAddress $TS_IP
 Port 2222
 PermitRootLogin no
 PasswordAuthentication no
 EOF
-        ok "SSH config written"
+        ok "Wrote SSH drop-in config ($SSHD_DROP_IN)"
     fi
 fi
 
-# Ensure SSH is actually running with the locked-down config
-if ! $DRY_RUN && grep -q "^Port 2222" "$SSHD_CONFIG" 2>/dev/null; then
-    if ss -tlnp | grep -q ':2222'; then
-        ok "SSH listening on port 2222"
+# Validate config and restart SSH if needed
+if ! $DRY_RUN && [ -f "$SSHD_DROP_IN" ]; then
+    if ! sshd -t 2>&1; then
+        fail "SSH config validation failed (see above). Fix and run: systemctl restart ssh"
+    elif ss -tlnp | grep -q ':2222'; then
+        ok "SSH already listening on port 2222"
     else
         systemctl restart ssh
         ok "Restarted SSH — now listening on port 2222"

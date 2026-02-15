@@ -9,7 +9,7 @@ set -euo pipefail
 # running the Creative Mode harness. Pipable from curl on a fresh instance.
 #
 # What this script does:
-#   0.  Installs prerequisites (git, curl, sqlite3, jq, openssl)
+#   0.  Installs prerequisites (git, curl, sqlite3, jq, openssl, zsh)
 #   1.  Creates a 'deploy' user with sudo access
 #   1b. Clones the repository to ~deploy/creative-mode
 #   2.  Installs Tailscale (private networking)
@@ -26,12 +26,13 @@ set -euo pipefail
 #   13. Creates systemd service for auto-start on reboot
 #   14. Installs Nix (daemon mode)
 #   15. Enables Nix flakes
-#   16. Installs direnv + configures bash hook
-#   17. Activates dev environment (direnv allow)
-#   18. Creates .env file (interactive prompts for secrets)
-#   19. Sets up Tailscale Serve (HTTPS)
-#   20. Starts the server via systemd
-#   21. Prints summary
+#   16. Installs direnv
+#   17. Installs oh-my-zsh + configures zsh as login shell
+#   18. Activates dev environment (direnv allow)
+#   19. Creates .env file (interactive prompts for secrets)
+#   20. Sets up Tailscale Serve (HTTPS)
+#   21. Starts the server via systemd
+#   22. Prints summary
 #
 # Usage:
 #   curl -fsSL <raw-url>/scripts/vps-bootstrap.sh | sudo bash
@@ -105,20 +106,20 @@ info "Install path: $CREATIVE_MODE_DIR"
 # A fresh Ubuntu 24.04 minimal image may not have git or curl. Install them
 # now so the rest of the script can clone the repo and fetch install scripts.
 # sqlite3 is needed for the daily backup cron job (Step 12).
-# jq is needed for parsing Tailscale DNS name (Step 18).
-# openssl is needed for generating CM_HOOK_SECRET (Step 18).
+# jq is needed for parsing Tailscale DNS name (Step 19).
+# openssl is needed for generating CM_HOOK_SECRET (Step 19).
 # ============================================================================
 section "Step 0: Install prerequisites"
 
-if command -v git &>/dev/null && command -v curl &>/dev/null && command -v sqlite3 &>/dev/null && command -v jq &>/dev/null && command -v openssl &>/dev/null; then
-    skip "Prerequisites already installed (git, curl, sqlite3, jq, openssl)"
+if command -v git &>/dev/null && command -v curl &>/dev/null && command -v sqlite3 &>/dev/null && command -v jq &>/dev/null && command -v openssl &>/dev/null && command -v zsh &>/dev/null; then
+    skip "Prerequisites already installed (git, curl, sqlite3, jq, openssl, zsh)"
 else
     if $DRY_RUN; then
-        info "Would apt-get update and install git, curl, sqlite3, jq, openssl"
+        info "Would apt-get update and install git, curl, sqlite3, jq, openssl, zsh"
     else
         apt-get update
-        apt-get install -y git curl sqlite3 jq openssl
-        ok "Installed prerequisites (git, curl, sqlite3, jq, openssl)"
+        apt-get install -y git curl sqlite3 jq openssl zsh
+        ok "Installed prerequisites (git, curl, sqlite3, jq, openssl, zsh)"
     fi
 fi
 
@@ -702,10 +703,11 @@ else
 fi
 
 # ============================================================================
-# Step 16: Install direnv + configure bash hook
+# Step 16: Install direnv
 # ============================================================================
 # direnv automatically activates the Nix dev environment when you cd into
-# the project directory. We install it via Nix and add the bash hook.
+# the project directory. We install it via Nix. The shell hook is added in
+# the .zshrc created in Step 17.
 # ============================================================================
 section "Step 16: Install direnv"
 
@@ -720,25 +722,76 @@ else
     fi
 fi
 
-DEPLOY_BASHRC="$DEPLOY_HOME/.bashrc"
-if grep -q 'direnv hook bash' "$DEPLOY_BASHRC" 2>/dev/null; then
-    skip "direnv bash hook already in $DEPLOY_BASHRC"
+# ============================================================================
+# Step 17: Install oh-my-zsh + configure zsh as login shell
+# ============================================================================
+# Sets zsh as deploy's login shell, installs oh-my-zsh for a nice prompt and
+# plugin ecosystem, and writes a .zshrc that hooks direnv (so the Nix flake
+# dev environment activates automatically on cd into the project).
+#
+# Note: The flake.nix shellHook sources oh-my-zsh, but direnv only captures
+# environment variable diffs — it can't source scripts in the parent shell.
+# So oh-my-zsh must be installed independently for the login shell.
+# ============================================================================
+section "Step 17: Install oh-my-zsh + configure zsh"
+
+# Set zsh as deploy's login shell
+if getent passwd deploy | grep -q '/bin/zsh'; then
+    skip "zsh already set as deploy's login shell"
 else
     if $DRY_RUN; then
-        info "Would add direnv hook to $DEPLOY_BASHRC"
+        info "Would set zsh as deploy's login shell"
     else
-        echo 'eval "$(direnv hook bash)"' >> "$DEPLOY_BASHRC"
-        ok "Added direnv bash hook to $DEPLOY_BASHRC"
+        chsh -s /usr/bin/zsh deploy
+        ok "Set zsh as deploy's login shell"
+    fi
+fi
+
+# Install oh-my-zsh for deploy user
+if [ -d "$DEPLOY_HOME/.oh-my-zsh" ]; then
+    skip "oh-my-zsh already installed"
+else
+    if $DRY_RUN; then
+        info "Would install oh-my-zsh for deploy user"
+    else
+        sudo -u deploy sh -c 'RUNZSH=no KEEP_ZSHRC=yes sh <(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)'
+        ok "Installed oh-my-zsh for deploy user"
+    fi
+fi
+
+# Create .zshrc for deploy user
+DEPLOY_ZSHRC="$DEPLOY_HOME/.zshrc"
+if grep -q 'source.*oh-my-zsh.sh' "$DEPLOY_ZSHRC" 2>/dev/null; then
+    skip ".zshrc already configured with oh-my-zsh"
+else
+    if $DRY_RUN; then
+        info "Would create $DEPLOY_ZSHRC with oh-my-zsh + direnv hook"
+    else
+        cat > "$DEPLOY_ZSHRC" << 'ZSHRCEOF'
+# oh-my-zsh configuration
+export ZSH="$HOME/.oh-my-zsh"
+ZSH_THEME="robbyrussell"
+plugins=(git fzf docker docker-compose)
+source $ZSH/oh-my-zsh.sh
+
+# direnv hook — activates Nix flake dev environment on cd
+eval "$(direnv hook zsh)"
+
+# Auto-cd to project directory (triggers direnv)
+cd ~/creative-mode
+ZSHRCEOF
+        chown deploy:deploy "$DEPLOY_ZSHRC"
+        ok "Created $DEPLOY_ZSHRC with oh-my-zsh + direnv hook"
     fi
 fi
 
 # ============================================================================
-# Step 17: Activate dev environment
+# Step 18: Activate dev environment
 # ============================================================================
 # direnv allow tells direnv to trust the .envrc in the project directory.
 # This triggers the Nix flake to build the dev environment on first use.
 # ============================================================================
-section "Step 17: Activate dev environment"
+section "Step 18: Activate dev environment"
 
 if [ -f "$CREATIVE_MODE_DIR/.direnv/flake-profile/bin/just" ]; then
     skip "Dev environment already activated"
@@ -753,13 +806,13 @@ else
 fi
 
 # ============================================================================
-# Step 18: Create .env file
+# Step 19: Create .env file
 # ============================================================================
 # The harness needs secrets for GitHub OAuth, AI APIs, etc. This step
 # prompts interactively for each secret and auto-computes what it can
 # (HARNESS_URL from Tailscale DNS, CM_HOOK_SECRET via openssl).
 # ============================================================================
-section "Step 18: Create .env file"
+section "Step 19: Create .env file"
 
 ENV_FILE="$CREATIVE_MODE_DIR/harness/.env"
 if [ -f "$ENV_FILE" ]; then
@@ -818,13 +871,13 @@ EOF
 fi
 
 # ============================================================================
-# Step 19: Set up Tailscale Serve
+# Step 20: Set up Tailscale Serve
 # ============================================================================
 # Tailscale Serve provides HTTPS with automatic TLS certificates, proxying
 # traffic from https://{machine}.{tailnet}.ts.net to localhost:8080.
 # This is how the harness is accessed over the Tailscale network.
 # ============================================================================
-section "Step 19: Tailscale Serve"
+section "Step 20: Tailscale Serve"
 
 if tailscale serve status 2>/dev/null | grep -q 'https'; then
     skip "Tailscale Serve already configured"
@@ -838,13 +891,13 @@ else
 fi
 
 # ============================================================================
-# Step 20: Start the server
+# Step 21: Start the server
 # ============================================================================
 # Start the harness via the systemd service created in Step 13. This runs
 # docker compose up -d as the deploy user. The first build takes a while
 # because Docker needs to pull images and compile the WASM client.
 # ============================================================================
-section "Step 20: Start the server"
+section "Step 21: Start the server"
 
 if systemctl is-active --quiet creative-mode; then
     skip "creative-mode service is already running"
@@ -860,7 +913,7 @@ else
 fi
 
 # ============================================================================
-# Step 21: Summary
+# Step 22: Summary
 # ============================================================================
 section "Bootstrap Complete"
 

@@ -7,7 +7,9 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/coreycole/creative-mode/pkg/worldchannel"
@@ -23,7 +25,16 @@ import (
 	p "github.com/coreycole/creative-mode/site/pages"
 )
 
+func gitCommit() string {
+	out, err := exec.Command("git", "rev-parse", "--short", "HEAD").Output()
+	if err != nil {
+		return "dev"
+	}
+	return strings.TrimSpace(string(out))
+}
+
 func main() {
+	commit := gitCommit()
 	logger := slog.Default()
 
 	// Graceful shutdown context.
@@ -89,6 +100,7 @@ func main() {
 		rootArgs := l.RootArgs{
 			Title:       "Creative Mode",
 			CurrentPath: c.Request().URL.Path,
+			Commit:      commit,
 		}
 		return p.HomePage(rootArgs).Render(c.Request().Context(), c.Response().Writer)
 	})
@@ -108,6 +120,7 @@ func main() {
 		rootArgs := l.RootArgs{
 			Title:       "Invite Code - Creative Mode",
 			CurrentPath: c.Request().URL.Path,
+			Commit:      commit,
 		}
 		return p.InvitePage(rootArgs, "").Render(c.Request().Context(), c.Response().Writer)
 	})
@@ -120,6 +133,7 @@ func main() {
 			rootArgs := l.RootArgs{
 				Title:       "Invite Code - Creative Mode",
 				CurrentPath: c.Request().URL.Path,
+				Commit:      commit,
 			}
 			return p.InvitePage(rootArgs, "Invalid invite code. Please try again.").Render(c.Request().Context(), c.Response().Writer)
 		}
@@ -133,6 +147,7 @@ func main() {
 		rootArgs := l.RootArgs{
 			Title:       "Join Discord - Creative Mode",
 			CurrentPath: c.Request().URL.Path,
+			Commit:      commit,
 		}
 		return p.JoinDiscordPage(rootArgs, "").Render(c.Request().Context(), c.Response().Writer)
 	})
@@ -149,6 +164,7 @@ func main() {
 		rootArgs := l.RootArgs{
 			Title:       "Join Discord - Creative Mode",
 			CurrentPath: c.Request().URL.Path,
+			Commit:      commit,
 		}
 		return p.JoinDiscordPage(rootArgs, "We couldn't find you in the server yet — make sure you've joined and try again.").Render(c.Request().Context(), c.Response().Writer)
 	})
@@ -163,6 +179,7 @@ func main() {
 			rootArgs := l.RootArgs{
 				Title:       "Coming Soon - Creative Mode",
 				CurrentPath: c.Request().URL.Path,
+				Commit:      commit,
 			}
 			return p.ComingSoonPage(rootArgs).Render(c.Request().Context(), c.Response().Writer)
 		}
@@ -196,6 +213,7 @@ func main() {
 		rootArgs := l.RootArgs{
 			Title:       "Creative Mode - Meet the Mayor",
 			CurrentPath: c.Request().URL.Path,
+			Commit:      commit,
 		}
 		return p.MayorPage(rootArgs, greetingHTML, greetingMsgID).Render(c.Request().Context(), c.Response().Writer)
 	})

@@ -5,6 +5,7 @@ go 1.24.3
 replace github.com/coreycole/creative-mode/pkg/worldchannel => ../pkg/worldchannel
 
 require (
+	github.com/Oudwins/tailwind-merge-go v0.2.1
 	github.com/a-h/templ v0.3.977
 	github.com/alecthomas/chroma/v2 v2.23.1
 	github.com/anthropics/anthropic-sdk-go v1.22.1

@@ -19,7 +19,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"creative-mode/harness/internal/build"
+	"creative-mode/harness/internal/builder"
 	"creative-mode/harness/internal/db"
 	"creative-mode/harness/internal/db/sqlc"
 )
@@ -30,7 +30,7 @@ type Manager struct {
 	logger       *slog.Logger
 	dataDir      string            // absolute path to data/
 	templateDirs map[string]string // template type → absolute path
-	Builder      *build.Builder
+	Builder      *builder.Builder
 	GameServers  *GameServerManager
 	rateLimiter  *RateLimiter
 }
@@ -47,7 +47,7 @@ func NewManager(
 		logger:       logger,
 		dataDir:      dataDir,
 		templateDirs: templateDirs,
-		Builder: build.NewBuilder(
+		Builder: builder.NewBuilder(
 			database,
 			logger,
 			filepath.Join(dataDir, "wasm-builds"),

@@ -11,7 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"creative-mode/harness/internal/build"
+	"creative-mode/harness/internal/builder"
 	"creative-mode/harness/internal/db"
 	"creative-mode/harness/internal/db/sqlc"
 	"creative-mode/harness/internal/events"
@@ -39,7 +39,7 @@ type Orchestrator struct {
 	db              *db.DB
 	logger          *slog.Logger
 	worldManager    *world.Manager
-	builder         *build.Builder
+	bld             *builder.Builder
 	eventBus        *events.EventBus
 	logsDir         string
 	harnessURL      string
@@ -51,7 +51,7 @@ func NewOrchestrator(
 	database *db.DB,
 	logger *slog.Logger,
 	worldManager *world.Manager,
-	builder *build.Builder,
+	bld *builder.Builder,
 	eventBus *events.EventBus,
 	logsDir string,
 	harnessURL string,
@@ -60,7 +60,7 @@ func NewOrchestrator(
 		db:           database,
 		logger:       logger,
 		worldManager: worldManager,
-		builder:      builder,
+		bld:          bld,
 		eventBus:     eventBus,
 		logsDir:      logsDir,
 		harnessURL:   harnessURL,
@@ -169,7 +169,7 @@ func (o *Orchestrator) BuildCheckpoint(worldID, cpID string) {
 
 	// Build (server binary + WASM client).
 	isInitial := !cp.ParentCheckpointID.Valid
-	if buildErr := o.builder.Build(&cp, isInitial, templateType); buildErr != nil {
+	if buildErr := o.bld.Build(&cp, isInitial, templateType); buildErr != nil {
 		o.logger.Error("build failed", "cpID", cpID, "error", buildErr)
 		_, _ = o.db.UpdateCheckpointStatus(ctx, sqlc.UpdateCheckpointStatusParams{
 			Status:   "failed",
@@ -195,7 +195,7 @@ func (o *Orchestrator) BuildCheckpoint(worldID, cpID string) {
 	}
 
 	// Post-build: extract work summary and files changed.
-	o.builder.PostBuild(&cp)
+	o.bld.PostBuild(&cp)
 
 	// Update status to ready.
 	_, _ = o.db.UpdateCheckpointStatus(ctx, sqlc.UpdateCheckpointStatusParams{

@@ -747,22 +747,11 @@ else
     fi
 fi
 
-# Install oh-my-zsh for deploy user
-if [ -d "$DEPLOY_HOME/.oh-my-zsh" ]; then
-    skip "oh-my-zsh already installed"
-else
-    if $DRY_RUN; then
-        info "Would install oh-my-zsh for deploy user"
-    else
-        sudo -u deploy sh -c 'curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh | RUNZSH=no KEEP_ZSHRC=yes sh'
-        ok "Installed oh-my-zsh for deploy user"
-    fi
-fi
-
-# Create .zshrc for deploy user
+# Create .zshrc for deploy user (BEFORE oh-my-zsh install so the installer
+# sees an existing .zshrc and KEEP_ZSHRC=yes prevents overwriting it)
 DEPLOY_ZSHRC="$DEPLOY_HOME/.zshrc"
-if grep -q 'source.*oh-my-zsh.sh' "$DEPLOY_ZSHRC" 2>/dev/null; then
-    skip ".zshrc already configured with oh-my-zsh"
+if grep -q 'cd ~/creative-mode' "$DEPLOY_ZSHRC" 2>/dev/null; then
+    skip ".zshrc already configured"
 else
     if $DRY_RUN; then
         info "Would create $DEPLOY_ZSHRC with oh-my-zsh + direnv hook"
@@ -782,6 +771,18 @@ cd ~/creative-mode
 ZSHRCEOF
         chown deploy:deploy "$DEPLOY_ZSHRC"
         ok "Created $DEPLOY_ZSHRC with oh-my-zsh + direnv hook"
+    fi
+fi
+
+# Install oh-my-zsh for deploy user
+if [ -d "$DEPLOY_HOME/.oh-my-zsh" ]; then
+    skip "oh-my-zsh already installed"
+else
+    if $DRY_RUN; then
+        info "Would install oh-my-zsh for deploy user"
+    else
+        sudo -u deploy sh -c 'curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh | RUNZSH=no KEEP_ZSHRC=yes sh'
+        ok "Installed oh-my-zsh for deploy user"
     fi
 fi
 

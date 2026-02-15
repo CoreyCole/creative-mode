@@ -30,6 +30,7 @@ set -euo pipefail
 #   16b. Installs Rust toolchain (system-wide)
 #   16c. Installs cargo tools (trunk, cargo-watch, wasm-bindgen-cli)
 #   16d. Installs Go tools (templ)
+#   16e. Installs Tailwind CSS standalone binary
 #   17. Installs oh-my-zsh + configures zsh as login shell
 #   18. Activates dev environment (direnv allow)
 #   19. Creates .env file (interactive prompts for secrets)
@@ -785,25 +786,53 @@ else
 fi
 
 # ============================================================================
-# Step 16d: Install Go tools (templ)
+# Step 16d: Install Go tools (templ, air)
 # ============================================================================
-# templ is a Go HTML templating engine. It compiles .templ files to Go code.
+# templ: Go HTML templating engine — compiles .templ files to Go code.
+# air: live-reload — watches files and rebuilds/restarts the harness.
 # Needs Go on PATH from Nix first.
 # ============================================================================
-section "Step 16d: Install Go tools (templ)"
+section "Step 16d: Install Go tools (templ, air)"
 
 # Source Nix + direnv to get Go on PATH
 source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh 2>/dev/null || true
 eval "$(sudo -u deploy bash -c 'cd '"$CREATIVE_MODE_DIR"' && direnv export bash 2>/dev/null')" 2>/dev/null || true
 
-if command -v templ &>/dev/null; then
-    skip "templ already installed"
+if command -v templ &>/dev/null && command -v air &>/dev/null; then
+    skip "templ and air already installed"
 else
     if $DRY_RUN; then
-        info "Would install templ via go install"
+        info "Would install templ and air via go install"
     else
-        sudo -u deploy bash -lc 'cd '"$CREATIVE_MODE_DIR"' && eval "$(direnv export bash 2>/dev/null)" && go install github.com/a-h/templ/cmd/templ@v0.3.977'
-        ok "Installed templ"
+        sudo -u deploy bash -lc 'cd '"$CREATIVE_MODE_DIR"' && eval "$(direnv export bash 2>/dev/null)" && go install github.com/a-h/templ/cmd/templ@v0.3.977 && go install github.com/air-verse/air@latest'
+        ok "Installed templ and air"
+    fi
+fi
+
+# ============================================================================
+# Step 16e: Install Tailwind CSS standalone binary
+# ============================================================================
+# Standalone binary — no Node.js/npm/pnpm required at runtime.
+# Detects architecture (arm64 or x64) automatically.
+# ============================================================================
+section "Step 16e: Install Tailwind CSS"
+
+if command -v tailwindcss &>/dev/null; then
+    skip "tailwindcss already installed"
+else
+    if $DRY_RUN; then
+        info "Would install tailwindcss standalone binary to /usr/local/bin"
+    else
+        ARCH=$(uname -m)
+        case "$ARCH" in
+            aarch64|arm64) TW_ARCH="linux-arm64" ;;
+            x86_64)        TW_ARCH="linux-x64" ;;
+            *)             fail "Unsupported architecture: $ARCH"; exit 1 ;;
+        esac
+        curl -sLo /usr/local/bin/tailwindcss \
+            "https://github.com/tailwindlabs/tailwindcss/releases/latest/download/tailwindcss-${TW_ARCH}"
+        chmod +x /usr/local/bin/tailwindcss
+        ok "Installed tailwindcss standalone ($TW_ARCH)"
     fi
 fi
 

@@ -1,82 +1,18 @@
 # Server Setup Guide
 
-This guide walks you through setting up Creative Mode's two-server deployment. You don't need to be a developer to follow it — every step is explained in plain English.
+This guide walks you through setting up the Creative Mode harness on a VPS. You don't need to be a developer to follow it — every step is explained in plain English.
 
 ## Architecture overview
 
-Creative Mode runs on two servers connected by a Tailscale private network (tailnet):
+The harness runs as a native Go binary under systemd, with live-reload via air. Game servers run in tmux sessions managed by the harness. All traffic is routed through Tailscale — nothing is exposed to the public internet.
 
-| Server | Role | Software |
-|--------|------|----------|
-| **EC2 instance** (on tailnet) | Marketing site (`creative-mode.ai`) | Docker |
-| **Harness VPS** (on tailnet) | Game server (`https://<hostname>.ts.net`) | Nix, direnv, Docker |
-
-### How traffic flows
-
-**Marketing site** (`creative-mode.ai`):
-```
-Browser → Route 53 → API Gateway (TLS) → EC2 port 80 → Docker site container
-```
-
-**Game app** (harness):
 ```
 Browser → Tailscale Serve (HTTPS) → localhost:8080 (harness)
 ```
 
 The harness is only accessible to tailnet members via its Tailscale Serve URL (`https://<hostname>.<tailnet>.ts.net`). No public DNS, no port opening, no reverse proxy — Tailscale handles TLS and access control.
 
-### Onboarding flow
-
-1. User visits `creative-mode.ai` (marketing site on EC2)
-2. Clicks "Meet the Mayor" — Discord OAuth login
-3. Enters an invite code
-4. Chats with the mayor (Claude) to design their world
-5. World hatches — user is redirected to the harness Tailscale Serve URL
-
-## EC2 setup (marketing site)
-
-### Step 1: Launch EC2 instance
-
-Launch an Ubuntu 24.04 instance. The bootstrap script handles the rest.
-
-### Step 2: Clone the repo and run the bootstrap script
-
-```bash
-sudo apt update && sudo apt install -y git
-git clone https://github.com/CoreyCole/creative-mode.git /home/ubuntu/creative-mode
-cd /home/ubuntu/creative-mode
-sudo bash scripts/marketing-site-bootstrap.sh
-```
-
-The script installs and configures:
-- Tailscale (private networking)
-- Docker Engine (runs the marketing site container on port 80)
-- UFW firewall (deny all incoming except port 80 + tailnet)
-- DOCKER-USER iptables rules (prevents Docker from bypassing UFW)
-- Fail2Ban (blocks brute-force attempts)
-- SSH lockdown (Tailscale-only, port 2222, no passwords)
-- systemd service (auto-starts Docker site on boot)
-
-Preview what the script does without changing anything:
-
-```bash
-sudo bash scripts/marketing-site-bootstrap.sh --check
-```
-
-### Step 3: Start the marketing site
-
-```bash
-sudo systemctl start creative-mode-site
-```
-
-Verify:
-
-```bash
-systemctl status creative-mode-site
-curl http://localhost
-```
-
-## Harness VPS setup (game server)
+## VPS setup
 
 ### Step 1: Create the virtual machine
 
@@ -89,118 +25,85 @@ curl http://localhost
 
 **If using a cloud VPS**, skip to Step 2.
 
-### Step 2: Run the VPS bootstrap script
+### Step 2: Run the bootstrap script
 
 ```bash
 sudo apt update && sudo apt install -y curl && curl -fsSL https://raw.githubusercontent.com/CoreyCole/creative-mode/main/scripts/vps-bootstrap.sh | sudo bash
 ```
 
-This secures the VM: Tailscale, firewall (blocks all public traffic), Docker, SSH lockdown, Fail2Ban.
+The script is interactive (Tailscale auth, .env secrets) and idempotent (safe to re-run). It installs and configures:
 
-### Step 3: Switch to the deploy user
+- deploy user with passwordless sudo
+- Tailscale (private networking + SSH)
+- Docker Engine (for macOS local dev compatibility)
+- UFW firewall (blocks all public traffic, allows tailnet)
+- DOCKER-USER iptables rules (prevents Docker from bypassing UFW)
+- Fail2Ban (blocks brute-force attempts)
+- SSH lockdown (Tailscale-only, port 2222, no passwords)
+- Nix + direnv (dev environment: Go, gcc, tmux, just, etc.)
+- Rust toolchain + cargo tools (trunk, cargo-watch, wasm-bindgen-cli)
+- Go tools (templ, air)
+- Tailwind CSS standalone binary
+- Claude Code CLI
+- systemd service (auto-starts harness on boot with live-reload)
+- Tailscale Serve (HTTPS → localhost:8080)
+- SQLite backup cron (daily, 7-day rotation)
+
+Preview what the script does without changing anything:
+
+```bash
+sudo bash scripts/vps-bootstrap.sh --check
+```
+
+### Step 3: Build and start the harness
 
 ```bash
 su - deploy
-```
-
-### Step 4: Install Nix
-
-```bash
-sh <(curl -L https://nixos.org/nix/install) --daemon
-```
-
-Log out and back in, then verify:
-
-```bash
-exit
-su - deploy
-nix --version
-```
-
-### Step 5: Enable Flakes
-
-```bash
-echo "experimental-features = nix-command flakes" | sudo tee -a /etc/nix/nix.conf
-sudo systemctl restart nix-daemon
-```
-
-### Step 6: Install direnv
-
-```bash
-nix profile install nixpkgs#direnv
-echo 'eval "$(direnv hook bash)"' >> ~/.bashrc
-source ~/.bashrc
-```
-
-### Step 7: Activate the dev environment
-
-```bash
-cd ~/creative-mode
-direnv allow
+cd ~/creative-mode/harness
+just vps-build
+sudo systemctl start creative-mode
 ```
 
 Verify:
 
 ```bash
-which just && which jq && which sqlite3
+just vps-status
+curl http://localhost:8080
 ```
 
-### Step 8: Create the .env file
+### Step 4: Verify HTTPS access
 
-```bash
-cp harness/.env.example harness/.env
-nano harness/.env
-```
+Open `https://<hostname>.<tailnet>.ts.net` in your browser (on a device that's on your Tailscale network). You should see the Creative Mode login page.
 
-Fill in:
+Sign in with GitHub. If the login works, everything is configured correctly.
 
-- **`DISCORD_CLIENT_ID`** and **`DISCORD_CLIENT_SECRET`** — from your Discord application (Discord Developer Portal > Applications > OAuth2)
-- **`ANTHROPIC_API_KEY`** — from [console.anthropic.com](https://console.anthropic.com)
-- **`HARNESS_URL`** — your Tailscale Serve URL, e.g., `https://your-machine.tailnet-name.ts.net`
-- **`CM_HOOK_SECRET`** — generate with: `openssl rand -hex 32`
+## Day-to-day operations
 
-Set your Discord OAuth2 redirect URL to:
-
-```
-https://your-machine.tailnet-name.ts.net/auth/discord/callback
-```
-
-Replace `your-machine.tailnet-name.ts.net` with your actual Tailscale machine URL. Find it with `tailscale status`.
-
-### Step 9: Start the harness
+### Updating
 
 ```bash
 cd ~/creative-mode/harness
-just up
+just vps-deploy  # git pull + build + restart
 ```
 
-Verify:
+Or equivalently: `just redeploy`
+
+### Logs
 
 ```bash
-docker compose ps
+just vps-logs  # journalctl -u creative-mode -f
 ```
 
-### Step 10: Set up Tailscale Serve for HTTPS
+### Live-reload
 
-Tailscale Serve gives the harness a real HTTPS URL with a valid certificate — no configuration needed:
+The harness runs under air — editing `.go`, `.templ`, or `.css` files triggers an automatic rebuild and restart. No manual steps needed during development.
+
+### Status
 
 ```bash
-sudo tailscale serve --bg 8080
+just vps-status  # systemd service status
+just status      # service + Tailscale status
 ```
-
-This tells Tailscale to forward HTTPS traffic to the harness on port 8080. The URL will be:
-
-```
-https://your-machine.tailnet-name.ts.net
-```
-
-Only people on your tailnet can reach it. TLS certificates are managed automatically by Tailscale. This setting persists across reboots — you only need to run it once.
-
-### Step 11: Verify everything works
-
-Open the Tailscale URL in your browser (on a device that's on your Tailscale network). You should see the Creative Mode login page.
-
-Sign in with Discord. If the login works, everything is configured correctly.
 
 ## How the security layers work
 
@@ -210,15 +113,11 @@ Tailscale creates an encrypted WireGuard tunnel between your devices. Only peopl
 
 ### Tailscale Serve (HTTPS)
 
-Tailscale Serve provides automatic HTTPS with valid TLS certificates for your harness. No Let's Encrypt, no cert management, no port opening — it just works for anyone on the tailnet.
+Tailscale Serve provides automatic HTTPS with valid TLS certificates for the harness. No Let's Encrypt, no cert management, no port opening — it just works for anyone on the tailnet.
 
 ### Firewall (UFW)
 
-Blocks all incoming traffic by default. On the EC2, port 80 is open for the marketing site. On the harness VPS, nothing is open to the public internet — all traffic comes through Tailscale.
-
-### Docker isolation
-
-The game runs inside Docker containers — sandboxed from the host system. DOCKER-USER iptables rules prevent Docker from bypassing UFW.
+Blocks all incoming traffic by default. Nothing is open to the public internet — all traffic comes through Tailscale.
 
 ### SSH lockdown
 
@@ -227,30 +126,6 @@ SSH is moved to port 2222, bound to the Tailscale IP only, and requires keys (no
 ### Fail2Ban
 
 Watches for repeated failed login attempts and auto-blocks offending IPs.
-
-## DNS setup (Route 53)
-
-| Record | Type | Value | Notes |
-|--------|------|-------|-------|
-| `creative-mode.ai` | A | API Gateway IP | Public — routes through API GW for TLS |
-
-The harness doesn't need a public DNS record. Tailscale Serve provides its own `*.ts.net` hostname with automatic TLS.
-
-## Updating
-
-### EC2 (marketing site)
-
-```bash
-cd ~/creative-mode && git pull
-sudo systemctl restart creative-mode-site
-```
-
-### Harness VPS
-
-```bash
-cd ~/creative-mode/harness
-just redeploy
-```
 
 ## Backups
 
@@ -275,39 +150,20 @@ System Settings > General > Time Machine > Options > Exclude:
 
 ## Troubleshooting
 
-### "Permission denied" when running Docker commands
-
-Log out and back in after being added to the docker group:
-
-```bash
-exit
-su - deploy
-```
-
-### Marketing site not loading
-
-Check the Docker service on EC2:
-
-```bash
-systemctl status creative-mode-site
-curl http://localhost
-```
-
 ### Harness not loading
 
-Check Tailscale Serve and Docker on the harness VPS:
-
 ```bash
+just vps-status
+just vps-logs
 tailscale serve status
-docker compose ps
 ```
 
-### Discord login fails
+### GitHub login fails
 
-Make sure your Discord OAuth2 redirect URL matches your Tailscale Serve URL exactly:
+Make sure your GitHub OAuth App callback URL matches your Tailscale Serve URL exactly:
 
 ```
-https://your-machine.tailnet-name.ts.net/auth/discord/callback
+https://your-machine.tailnet-name.ts.net/auth/github/callback
 ```
 
 Also check that `HARNESS_URL` in `harness/.env` matches the same URL (without the callback path).
@@ -324,13 +180,12 @@ If empty, your network isn't configured. On a UTM VM, make sure the network adap
 
 ### Build takes too long or runs out of memory
 
-The first build compiles the entire Rust/Go toolchain inside Docker. This can take 10-30 minutes. Make sure the VM has at least 16 GB of RAM.
+The first build compiles Rust toolchains and Go dependencies. Make sure the VM has at least 16 GB of RAM.
 
 ### Server doesn't start after reboot
 
 ```bash
-sudo systemctl status creative-mode      # harness VPS
-sudo systemctl status creative-mode-site  # EC2
+sudo systemctl status creative-mode
 sudo journalctl -u creative-mode -n 50
 ```
 
@@ -339,8 +194,7 @@ sudo journalctl -u creative-mode -n 50
 After bootstrap, SSH is Tailscale-only. Use Tailscale SSH:
 
 ```bash
-ssh deploy@your-machine  # harness VPS
-ssh ubuntu@your-machine  # EC2
+ssh deploy@your-machine
 ```
 
 ---

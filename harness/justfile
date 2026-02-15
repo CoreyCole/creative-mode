@@ -30,7 +30,7 @@ lint:
 build-tailwind:
     #!/usr/bin/env bash
     echo "Building Tailwind CSS..."
-    pnpm exec tailwindcss -i static/css/index.css -o static/css/out.css \
+    tailwindcss -i static/css/index.css -o static/css/out.css \
         --content "./views/**/*"
     if [ -f static/css/out.css ]; then
         HASH=$(shasum -a 256 static/css/out.css | cut -d' ' -f1 | head -c8)
@@ -41,7 +41,7 @@ build-tailwind:
 
 # Watch mode for Tailwind (dev, no hashing)
 tailwind-watch:
-    pnpm exec tailwindcss -i static/css/index.css -o static/css/out.css \
+    tailwindcss -i static/css/index.css -o static/css/out.css \
         --content "./views/**/*" --watch
 
 # --- Development (Docker + Host Watcher) ---

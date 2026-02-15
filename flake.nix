@@ -30,10 +30,8 @@
             gcc
             pkg-config
 
-            # Runtime (game server tmux sessions, tailwind)
+            # Runtime (game server tmux sessions)
             tmux
-            nodejs_22
-            pnpm
 
             # Code generation
             sqlc

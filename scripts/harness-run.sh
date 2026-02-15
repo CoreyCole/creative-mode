@@ -32,4 +32,4 @@ export CGO_ENABLED=1
 tmux start-server
 
 cd /home/deploy/creative-mode/harness
-exec ./harness
+exec air

@@ -2,14 +2,13 @@ root = "."
 tmp_dir = "/tmp/air"
 
 [build]
-cmd = "templ generate && go build -o /tmp/harness ."
+cmd = "templ generate && just build-tailwind && CGO_ENABLED=1 go build -o /tmp/harness ."
 bin = "/tmp/harness"
-include_ext = ["go", "templ"]
-exclude_regex = ["_templ\\.go$", "_test\\.go$"]
-exclude_dir = ["data", "node_modules", "static", "scripts"]
+include_ext = ["go", "templ", "css"]
+exclude_regex = ["_templ\\.go$", "_test\\.go$", "out\\..*\\.css$", "out\\.css$"]
+exclude_dir = ["data", "node_modules", "scripts"]
 delay = 1000
-poll = true
-poll_interval = 1000
+poll = false
 stop_on_error = false
 send_interrupt = true
 kill_delay = "3s"

@@ -58,4 +58,48 @@ The chat uses Datastar's SSE protocol:
 
 ## Running
 
-This site is part of the Docker compose setup. See the root CLAUDE.md for `just live` / `just up` / `just down`. Never run `go run .` directly.
+### Local dev (Docker)
+
+```bash
+cd site
+just up    # Docker compose with hot-reload via air
+just down  # stop
+just logs  # container logs
+```
+
+### EC2 production deployment
+
+The marketing site runs on an EC2 instance as a native Go binary under systemd (not Docker).
+
+**Server**: Ubuntu 24.04, connected to the same Tailscale tailnet as the harness VPS.
+
+**Traffic flow**:
+```
+Browser → Route 53 → API Gateway (TLS) → EC2 port 80 → site binary
+```
+
+**Setup** (on a fresh EC2 instance):
+1. Install Tailscale, UFW, Fail2Ban, SSH lockdown (same pattern as `scripts/vps-bootstrap.sh`)
+2. Install Go and build tools
+3. Copy `site.env.example` to `~/.config/creative-mode/site.env` and fill in secrets
+4. Copy `creative-mode-site.service` to `/etc/systemd/system/`
+5. Build and start:
+   ```bash
+   cd ~/creative-mode/site
+   just install && just build
+   cp site-linux /tmp/creative-mode-site
+   sudo systemctl enable --now creative-mode-site
+   ```
+
+**Updating**:
+```bash
+cd ~/creative-mode/site && git pull && just build && cp site-linux /tmp/creative-mode-site && sudo systemctl restart creative-mode-site
+```
+
+**Logs**: `just deploy-logs` or `journalctl -u creative-mode-site -f`
+
+**DNS**: `creative-mode.ai` → Route 53 A record → API Gateway → EC2 port 80
+
+**Key files**:
+- `creative-mode-site.service` — systemd unit (runs as `ubuntu` user, binds port 80 via `CAP_NET_BIND_SERVICE`)
+- `site.env.example` — env var template (Discord OAuth, bot token, Anthropic key, invite codes)

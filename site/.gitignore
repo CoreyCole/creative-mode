@@ -12,3 +12,6 @@ node_modules/
 
 # Air tmp
 .tmp/
+
+# SQLite data
+data/

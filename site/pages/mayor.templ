@@ -5,26 +5,44 @@ import (
 	"github.com/starfederation/datastar-go/datastar"
 )
 
-templ MayorPage(rootArgs l.RootArgs, greetingHTML string, greetingMsgID string) {
+templ MayorPage(rootArgs l.RootArgs, messages []ChatMessage) {
 	@l.Root(rootArgs) {
-		<section class="py-10 md:py-16">
-			<div class="mx-auto max-w-2xl px-4 sm:px-6 lg:px-8">
-				<h1 class="text-2xl font-bold text-center">Meet the Mayor</h1>
-				<p class="mt-2 text-sm text-muted-foreground text-center">
-					Tell the Mayor about your dream world. When it's ready, we'll create it for you.
-				</p>
-				<!-- Chat messages -->
-				<div id="chat-messages" class="mt-8 space-y-4 max-h-[60vh] overflow-y-auto">
-					@MayorMessageComplete(greetingMsgID, greetingHTML)
+		<div class="flex flex-col h-[calc(100dvh-3.5rem)]">
+			<!-- Compact header bar -->
+			<div class="shrink-0 border-b border-border/40 px-4 py-3">
+				<div class="mx-auto max-w-2xl">
+					<h1 class="text-lg font-semibold">Meet the Mayor</h1>
+					<p class="text-sm text-muted-foreground">
+						Tell the Mayor about your dream world. When it's ready, we'll create it for you.
+					</p>
 				</div>
-				<!-- World hatched card placeholder -->
-				<div id="mayor-signup"></div>
-				<!-- Rate limit error placeholder -->
-				<div id="rate-limit-error"></div>
-				<!-- Input form -->
-				<div class="mt-6">
+			</div>
+			<!-- Chat messages -->
+			<div id="chat-messages" class="flex-1 min-h-0 overflow-y-auto space-y-3 px-4 py-4">
+				for _, msg := range messages {
+					if msg.Role == "assistant" {
+						@MayorMessageComplete(msg.ID, msg.HTMLContent)
+					} else {
+						@UserMessage(msg.ID, msg.Content, msg.AvatarURL)
+					}
+				}
+			</div>
+			<script>
+				// Scroll to bottom on page load to show latest messages.
+				requestAnimationFrame(function() {
+					var el = document.getElementById('chat-messages');
+					if (el) { el.scrollTop = el.scrollHeight; }
+				});
+			</script>
+			<!-- World hatched card placeholder -->
+			<div id="mayor-signup"></div>
+			<!-- Input area -->
+			<div class="shrink-0 border-t border-border/40 px-4 py-3 relative">
+				<div class="mx-auto max-w-2xl">
+					<!-- Rate limit error -->
+					<div id="rate-limit-error"></div>
 					<div
-						data-signals='{"mayor_input": ""}'
+						data-signals='{"mayor_input": "", "create_world": false}'
 						class="flex gap-2"
 					>
 						<input
@@ -43,7 +61,13 @@ templ MayorPage(rootArgs l.RootArgs, greetingHTML string, greetingMsgID string) 
 						</button>
 					</div>
 				</div>
+				<button
+					data-on:click={ `$create_world = true; ` + string(datastar.PostSSE("/mayor/chat")) }
+					class="absolute right-4 bottom-3 inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors border border-border bg-background text-foreground hover:bg-muted h-9 px-4"
+				>
+					Create World
+				</button>
 			</div>
-		</section>
+		</div>
 	}
 }

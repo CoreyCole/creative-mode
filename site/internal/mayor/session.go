@@ -1,6 +1,7 @@
 package mayor
 
 import (
+	"database/sql"
 	"fmt"
 	"sync"
 	"time"
@@ -12,25 +13,27 @@ type Message struct {
 	Content string
 }
 
-// Conversation holds the message history for a user.
-type Conversation struct {
-	Messages    []Message
+// transientState holds per-user state that intentionally resets on restart.
+type transientState struct {
 	LastMessage time.Time
-	Scripted    bool // API unavailable, using scripted fallback flow
+	Scripted    bool
 }
 
-// ConversationManager manages per-user conversation state with rate limiting.
+// ConversationManager manages per-user conversation state.
+// Messages are persisted in SQLite; rate limits and scripted flags are in-memory.
 type ConversationManager struct {
-	mu            sync.RWMutex
-	conversations map[string]*Conversation // keyed by Discord user ID
-	rateLimit     time.Duration
+	db        *sql.DB
+	mu        sync.RWMutex
+	transient map[string]*transientState // keyed by Discord user ID
+	rateLimit time.Duration
 }
 
 // NewConversationManager creates a new conversation manager.
-func NewConversationManager() *ConversationManager {
+func NewConversationManager(db *sql.DB) *ConversationManager {
 	cm := &ConversationManager{
-		conversations: make(map[string]*Conversation),
-		rateLimit:     2 * time.Second,
+		db:        db,
+		transient: make(map[string]*transientState),
+		rateLimit: 2 * time.Second,
 	}
 	go cm.cleanupLoop()
 	return cm
@@ -38,32 +41,40 @@ func NewConversationManager() *ConversationManager {
 
 // AddMessage adds a message to a user's conversation.
 func (cm *ConversationManager) AddMessage(userID, role, content string) {
+	_, _ = cm.db.Exec(
+		`INSERT INTO conversation_messages (discord_id, role, content) VALUES (?, ?, ?)`,
+		userID, role, content,
+	)
+
 	cm.mu.Lock()
-	defer cm.mu.Unlock()
-
-	conv, ok := cm.conversations[userID]
+	ts, ok := cm.transient[userID]
 	if !ok {
-		conv = &Conversation{}
-		cm.conversations[userID] = conv
+		ts = &transientState{}
+		cm.transient[userID] = ts
 	}
-
-	conv.Messages = append(conv.Messages, Message{Role: role, Content: content})
-	conv.LastMessage = time.Now()
+	ts.LastMessage = time.Now()
+	cm.mu.Unlock()
 }
 
 // GetMessages returns the conversation history for a user.
 func (cm *ConversationManager) GetMessages(userID string) []Message {
-	cm.mu.RLock()
-	defer cm.mu.RUnlock()
-
-	conv, ok := cm.conversations[userID]
-	if !ok {
+	rows, err := cm.db.Query(
+		`SELECT role, content FROM conversation_messages WHERE discord_id = ? ORDER BY id ASC`,
+		userID,
+	)
+	if err != nil {
 		return nil
 	}
+	defer func() { _ = rows.Close() }()
 
-	// Return a copy to avoid data races.
-	msgs := make([]Message, len(conv.Messages))
-	copy(msgs, conv.Messages)
+	var msgs []Message
+	for rows.Next() {
+		var m Message
+		if err := rows.Scan(&m.Role, &m.Content); err != nil {
+			continue
+		}
+		msgs = append(msgs, m)
+	}
 	return msgs
 }
 
@@ -72,12 +83,12 @@ func (cm *ConversationManager) SetScripted(userID string, val bool) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 
-	conv, ok := cm.conversations[userID]
+	ts, ok := cm.transient[userID]
 	if !ok {
-		conv = &Conversation{}
-		cm.conversations[userID] = conv
+		ts = &transientState{}
+		cm.transient[userID] = ts
 	}
-	conv.Scripted = val
+	ts.Scripted = val
 }
 
 // IsScripted returns whether the user's conversation is in scripted mode.
@@ -85,11 +96,11 @@ func (cm *ConversationManager) IsScripted(userID string) bool {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
 
-	conv, ok := cm.conversations[userID]
+	ts, ok := cm.transient[userID]
 	if !ok {
 		return false
 	}
-	return conv.Scripted
+	return ts.Scripted
 }
 
 // CheckRateLimit returns an error if the user is sending messages too fast.
@@ -97,27 +108,29 @@ func (cm *ConversationManager) CheckRateLimit(userID string) error {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
 
-	conv, ok := cm.conversations[userID]
+	ts, ok := cm.transient[userID]
 	if !ok {
 		return nil
 	}
 
-	if time.Since(conv.LastMessage) < cm.rateLimit {
+	if time.Since(ts.LastMessage) < cm.rateLimit {
 		return fmt.Errorf("please wait a moment before sending another message")
 	}
 
 	return nil
 }
 
-// cleanupLoop removes stale conversations (older than 24 hours).
+// cleanupLoop removes stale conversations (older than 24 hours) and transient state.
 func (cm *ConversationManager) cleanupLoop() {
 	ticker := time.NewTicker(1 * time.Hour)
 	defer ticker.Stop()
 	for range ticker.C {
+		_, _ = cm.db.Exec(`DELETE FROM conversation_messages WHERE created_at < datetime('now', '-24 hours')`)
+
 		cm.mu.Lock()
-		for id, conv := range cm.conversations {
-			if time.Since(conv.LastMessage) > 24*time.Hour {
-				delete(cm.conversations, id)
+		for id, ts := range cm.transient {
+			if time.Since(ts.LastMessage) > 24*time.Hour {
+				delete(cm.transient, id)
 			}
 		}
 		cm.mu.Unlock()

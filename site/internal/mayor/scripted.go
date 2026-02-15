@@ -75,6 +75,50 @@ func (h *Handler) handleScriptedResponse(c echo.Context, sse *datastar.ServerSen
 	return nil
 }
 
+// handleScriptedForceCreate handles the "Create World" button in scripted mode.
+// If the conversation has enough data (stage >= 3), it skips to hatching.
+// Otherwise it falls through to normal scripted handling since more info is needed.
+func (h *Handler) handleScriptedForceCreate(c echo.Context, sse *datastar.ServerSentEventGenerator, session *auth.Session, assistantMsgID string) error {
+	messages := h.convMgr.GetMessages(session.DiscordID)
+	userMsgCount := countUserMessages(messages)
+	stage := userMsgCount - 1
+
+	if stage < 3 {
+		// Not enough info yet — fall through to normal scripted flow.
+		return h.handleScriptedResponse(c, sse, session, assistantMsgID)
+	}
+
+	// We have enough data — generate the final response and hatch.
+	mayorName := lastUserMessage(messages)
+	worldName := nthUserMessage(messages, 2)
+	worldSummary := truncate(nthUserMessage(messages, 0), 100)
+
+	responseMD := fmt.Sprintf("**%s**, mayor of **%s**. I like the sound of that. Let's get this place built.", mayorName, worldName)
+
+	htmlContent := h.mdRenderer.MarkdownBytesToHTML([]byte(responseMD))
+	if err := sse.PatchElementTempl(p.MayorMessageComplete(assistantMsgID, htmlContent)); err != nil {
+		return err
+	}
+
+	h.convMgr.AddMessage(session.DiscordID, "assistant", responseMD)
+
+	if err := sse.ExecuteScript("document.getElementById('chat-messages').scrollTop = document.getElementById('chat-messages').scrollHeight"); err != nil {
+		c.Logger().Errorf("Failed to scroll: %v", err)
+	}
+
+	if mayorName != "" && worldName != "" {
+		if h.wcClient != nil {
+			h.hatchWorld(c, sse, session, mayorName, worldName, worldSummary)
+		} else {
+			if err := sse.PatchElementTempl(p.WorldSummaryCard(worldName, mayorName, worldSummary)); err != nil {
+				c.Logger().Errorf("Failed to patch summary card: %v", err)
+			}
+		}
+	}
+
+	return nil
+}
+
 // scriptedResponseForStage returns the pre-written response for the given stage,
 // substituting names from conversation history where needed.
 func scriptedResponseForStage(stage int, messages []Message) string {

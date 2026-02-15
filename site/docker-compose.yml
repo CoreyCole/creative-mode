@@ -20,5 +20,7 @@ services:
       - DISCORD_WORLDS_CATEGORY_ID=${DISCORD_WORLDS_CATEGORY_ID}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - INVITE_CODES=${INVITE_CODES}
+      - SITE_DB_PATH=data/site.db
+      - DEV_MODE=true
     working_dir: /app
     command: sh -c "just watch"

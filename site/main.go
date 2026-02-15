@@ -18,6 +18,7 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 
 	"github.com/coreycole/creative-mode/site/internal/auth"
+	"github.com/coreycole/creative-mode/site/internal/db"
 	"github.com/coreycole/creative-mode/site/internal/markdown"
 	"github.com/coreycole/creative-mode/site/internal/mayor"
 	"github.com/coreycole/creative-mode/site/internal/webhook"
@@ -41,6 +42,17 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// --- Database setup ---
+	dbPath := os.Getenv("SITE_DB_PATH")
+	if dbPath == "" {
+		dbPath = "data/site.db"
+	}
+	database, err := db.New(dbPath)
+	if err != nil {
+		log.Fatalf("Failed to open database: %v", err)
+	}
+	defer func() { _ = database.Close() }()
+
 	e := echo.New()
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
@@ -54,20 +66,20 @@ func main() {
 		BotToken:     os.Getenv("DISCORD_BOT_TOKEN"),
 		GuildID:      os.Getenv("DISCORD_GUILD_ID"),
 	}
-	sessionMgr := auth.NewSessionManager(authConfig)
+	sessionMgr := auth.NewSessionManager(authConfig, database)
 	inviteCodes := auth.NewInviteCodeManager(os.Getenv("INVITE_CODES"))
 
 	// --- World channel client (optional) ---
 	var wcClient *worldchannel.Client
 	if botToken := os.Getenv("DISCORD_BOT_TOKEN"); botToken != "" {
-		var err error
-		wcClient, err = worldchannel.NewClient(worldchannel.Config{
+		var wcErr error
+		wcClient, wcErr = worldchannel.NewClient(worldchannel.Config{
 			BotToken:         botToken,
 			GuildID:          os.Getenv("DISCORD_GUILD_ID"),
 			WorldsCategoryID: os.Getenv("DISCORD_WORLDS_CATEGORY_ID"),
 		}, logger)
-		if err != nil {
-			log.Printf("WARNING: Failed to init Discord bot client: %v (channel creation disabled)", err)
+		if wcErr != nil {
+			log.Printf("WARNING: Failed to init Discord bot client: %v (channel creation disabled)", wcErr)
 		} else {
 			defer func() { _ = wcClient.Close() }()
 		}
@@ -85,7 +97,7 @@ func main() {
 	var convMgr *mayor.ConversationManager
 	if apiKey != "" {
 		client := mayor.NewClient(apiKey)
-		convMgr = mayor.NewConversationManager()
+		convMgr = mayor.NewConversationManager(database)
 		mayorHandler = mayor.NewHandler(client, convMgr, mdRenderer, wcClient)
 		mayorHandler.HarnessURL = os.Getenv("HARNESS_URL")
 	}
@@ -95,6 +107,13 @@ func main() {
 	e.GET("/health", wh.HandleHealth)
 	e.POST("/webhook/github", wh.HandleGitHub)
 
+	devMode := os.Getenv("DEV_MODE") == "true"
+
+	// --- Dev auth route (only in dev mode) ---
+	if devMode {
+		e.POST("/dev/auth/login", sessionMgr.HandleDevLogin)
+	}
+
 	// --- Public routes ---
 	e.GET("/", func(c echo.Context) error {
 		rootArgs := l.RootArgs{
@@ -102,7 +121,7 @@ func main() {
 			CurrentPath: c.Request().URL.Path,
 			Commit:      commit,
 		}
-		return p.HomePage(rootArgs).Render(c.Request().Context(), c.Response().Writer)
+		return p.HomePage(rootArgs, devMode).Render(c.Request().Context(), c.Response().Writer)
 	})
 
 	// Serve static files.
@@ -198,16 +217,28 @@ func main() {
 		systemPrompt := mayor.BuildSystemPrompt(session.DiscordUsername, takenNames)
 		sessionMgr.SetSystemPrompt(session.ID, systemPrompt)
 
-		// Build greeting and seed it into conversation (only on first visit).
-		greetingMD := fmt.Sprintf("Hey %s. I'm the Mayor — though I don't have a real name yet. "+
-			"I just came online and this world is... empty. Which is actually kind of exciting.\n\n"+
-			"So. What are we building?", session.DiscordUsername)
-		greetingHTML := mdRenderer.MarkdownBytesToHTML([]byte(greetingMD))
-		greetingMsgID := uuid.New().String()
-
-		// Seed greeting into conversation manager only if conversation is empty.
+		// Seed greeting into conversation only if conversation is empty.
 		if len(convMgr.GetMessages(session.DiscordID)) == 0 {
+			greetingMD := fmt.Sprintf("Hey %s. I'm the Mayor — though I don't have a real name yet. "+
+				"I just came online and this world is... empty. Which is actually kind of exciting.\n\n"+
+				"So. What are we building?", session.DiscordUsername)
 			convMgr.AddMessage(session.DiscordID, "assistant", greetingMD)
+		}
+
+		// Build chat messages from full conversation history.
+		messages := convMgr.GetMessages(session.DiscordID)
+		chatMessages := make([]p.ChatMessage, len(messages))
+		for i, msg := range messages {
+			chatMessages[i] = p.ChatMessage{
+				ID:   uuid.New().String(),
+				Role: msg.Role,
+			}
+			if msg.Role == "assistant" {
+				chatMessages[i].HTMLContent = mdRenderer.MarkdownBytesToHTML([]byte(msg.Content))
+			} else {
+				chatMessages[i].Content = msg.Content
+				chatMessages[i].AvatarURL = session.DiscordAvatar
+			}
 		}
 
 		rootArgs := l.RootArgs{
@@ -215,7 +246,7 @@ func main() {
 			CurrentPath: c.Request().URL.Path,
 			Commit:      commit,
 		}
-		return p.MayorPage(rootArgs, greetingHTML, greetingMsgID).Render(c.Request().Context(), c.Response().Writer)
+		return p.MayorPage(rootArgs, chatMessages).Render(c.Request().Context(), c.Response().Writer)
 	})
 
 	mayorGroup.POST("/mayor/chat", func(c echo.Context) error {

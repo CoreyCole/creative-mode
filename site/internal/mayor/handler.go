@@ -24,7 +24,8 @@ import (
 
 // ChatSignals matches the client-side signals sent with @post.
 type ChatSignals struct {
-	MayorInput string `json:"mayor_input"`
+	MayorInput  string `json:"mayor_input"`
+	CreateWorld bool   `json:"create_world"`
 }
 
 // Handler handles the mayor chat SSE endpoint.
@@ -59,7 +60,11 @@ func (h *Handler) HandleChat(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "failed to read signals")
 	}
 
+	forceCreate := signals.CreateWorld
 	content := strings.TrimSpace(signals.MayorInput)
+	if forceCreate {
+		content = "I'm ready — let's create the world!"
+	}
 	if content == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "message content required")
 	}
@@ -87,14 +92,14 @@ func (h *Handler) HandleChat(c echo.Context) error {
 	// Start SSE stream.
 	sse := datastar.NewSSE(c.Response().Writer, c.Request())
 
-	// Clear input.
-	if err := sse.MarshalAndPatchSignals(map[string]any{"mayor_input": ""}); err != nil {
+	// Clear input and reset create_world signal.
+	if err := sse.MarshalAndPatchSignals(map[string]any{"mayor_input": "", "create_world": false}); err != nil {
 		c.Logger().Errorf("Failed to clear input: %v", err)
 	}
 
 	// Append user message to chat.
 	userMsgID := uuid.New().String()
-	if err := sse.PatchElementTempl(p.UserMessage(userMsgID, content),
+	if err := sse.PatchElementTempl(p.UserMessage(userMsgID, content, session.DiscordAvatar),
 		datastar.WithModeAppend(), datastar.WithSelectorID("chat-messages")); err != nil {
 		return err
 	}
@@ -118,6 +123,9 @@ func (h *Handler) HandleChat(c echo.Context) error {
 
 	// If conversation is already in scripted mode, skip API entirely.
 	if h.convMgr.IsScripted(session.DiscordID) {
+		if forceCreate {
+			return h.handleScriptedForceCreate(c, sse, session, assistantMsgID)
+		}
 		return h.handleScriptedResponse(c, sse, session, assistantMsgID)
 	}
 
@@ -125,6 +133,12 @@ func (h *Handler) HandleChat(c echo.Context) error {
 	systemPrompt := session.SystemPrompt
 	if systemPrompt == "" {
 		systemPrompt = BuildSystemPrompt(session.DiscordUsername, nil)
+	}
+
+	if forceCreate {
+		systemPrompt += "\n\nIMPORTANT: The user has clicked 'Create World'. Finalize NOW. " +
+			"Give a brief excited response about the world taking shape, then emit the WORLD_READY marker. " +
+			"Fill in any missing details (world name, mayor name, gameplay, setting) with your best creative judgment based on the conversation."
 	}
 
 	// Stream from Claude.

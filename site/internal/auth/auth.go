@@ -2,14 +2,15 @@ package auth
 
 import (
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -61,65 +62,82 @@ type Session struct {
 	SystemPrompt        string // Built once per page load with taken names
 }
 
-// SessionManager manages in-memory sessions.
+// SessionManager manages sessions in SQLite.
 type SessionManager struct {
-	mu         sync.RWMutex
-	sessions   map[string]*Session
+	db         *sql.DB
 	config     *Config
 	httpClient *http.Client
 }
 
-// NewSessionManager creates a new session manager.
-func NewSessionManager(config *Config) *SessionManager {
+// NewSessionManager creates a new session manager backed by SQLite.
+func NewSessionManager(config *Config, db *sql.DB) *SessionManager {
 	sm := &SessionManager{
-		sessions:   make(map[string]*Session),
+		db:         db,
 		config:     config,
 		httpClient: &http.Client{Timeout: 10 * time.Second},
 	}
-	// Start cleanup goroutine.
 	go sm.cleanupLoop()
 	return sm
 }
 
-// GetSession returns a session by cookie value.
+// GetSession returns a session by cookie value, or nil if expired/missing.
 func (sm *SessionManager) GetSession(sessionID string) *Session {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-	s, ok := sm.sessions[sessionID]
-	if !ok {
+	row := sm.db.QueryRow(
+		`SELECT id, discord_id, discord_username, discord_avatar,
+		        guild_member_verified, invite_code_verified, system_prompt, created_at
+		 FROM sessions WHERE id = ? AND expires_at > CURRENT_TIMESTAMP`,
+		sessionID,
+	)
+
+	var s Session
+	var guildVerified, inviteVerified int
+	var createdAt string
+	err := row.Scan(&s.ID, &s.DiscordID, &s.DiscordUsername, &s.DiscordAvatar,
+		&guildVerified, &inviteVerified, &s.SystemPrompt, &createdAt)
+	if err != nil {
 		return nil
 	}
-	if time.Since(s.CreatedAt) > sessionTTLDays*24*time.Hour {
-		return nil
+	s.GuildMemberVerified = guildVerified != 0
+	s.InviteCodeVerified = inviteVerified != 0
+	s.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
+	return &s
+}
+
+// createSession inserts a new session into the database.
+func (sm *SessionManager) createSession(s *Session) error {
+	expiresAt := s.CreatedAt.Add(sessionTTLDays * 24 * time.Hour)
+	var guildVerified, inviteVerified int
+	if s.GuildMemberVerified {
+		guildVerified = 1
 	}
-	return s
+	if s.InviteCodeVerified {
+		inviteVerified = 1
+	}
+	_, err := sm.db.Exec(
+		`INSERT INTO sessions (id, discord_id, discord_username, discord_avatar,
+		    guild_member_verified, invite_code_verified, system_prompt, created_at, expires_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		s.ID, s.DiscordID, s.DiscordUsername, s.DiscordAvatar,
+		guildVerified, inviteVerified, s.SystemPrompt,
+		s.CreatedAt.Format("2006-01-02 15:04:05"),
+		expiresAt.Format("2006-01-02 15:04:05"),
+	)
+	return err
 }
 
 // SetInviteVerified marks a session's invite code as verified.
 func (sm *SessionManager) SetInviteVerified(sessionID string) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	if s, ok := sm.sessions[sessionID]; ok {
-		s.InviteCodeVerified = true
-	}
+	_, _ = sm.db.Exec(`UPDATE sessions SET invite_code_verified = 1 WHERE id = ?`, sessionID)
 }
 
 // SetGuildVerified marks a session's guild membership as verified.
 func (sm *SessionManager) SetGuildVerified(sessionID string) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	if s, ok := sm.sessions[sessionID]; ok {
-		s.GuildMemberVerified = true
-	}
+	_, _ = sm.db.Exec(`UPDATE sessions SET guild_member_verified = 1 WHERE id = ?`, sessionID)
 }
 
 // SetSystemPrompt stores the system prompt on the session.
 func (sm *SessionManager) SetSystemPrompt(sessionID, prompt string) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	if s, ok := sm.sessions[sessionID]; ok {
-		s.SystemPrompt = prompt
-	}
+	_, _ = sm.db.Exec(`UPDATE sessions SET system_prompt = ? WHERE id = ?`, prompt, sessionID)
 }
 
 // HandleLogin redirects to Discord OAuth authorize URL.
@@ -204,9 +222,10 @@ func (sm *SessionManager) HandleCallback(c echo.Context) error {
 		CreatedAt:           time.Now(),
 	}
 
-	sm.mu.Lock()
-	sm.sessions[sessionID] = session
-	sm.mu.Unlock()
+	if err := sm.createSession(session); err != nil {
+		c.Logger().Errorf("failed to create session: %v", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create session")
+	}
 
 	c.SetCookie(&http.Cookie{
 		Name:     "session",
@@ -239,9 +258,7 @@ func (sm *SessionManager) HandleCallback(c echo.Context) error {
 func (sm *SessionManager) HandleLogout(c echo.Context) error {
 	cookie, err := c.Cookie("session")
 	if err == nil && cookie.Value != "" {
-		sm.mu.Lock()
-		delete(sm.sessions, cookie.Value)
-		sm.mu.Unlock()
+		_, _ = sm.db.Exec(`DELETE FROM sessions WHERE id = ?`, cookie.Value)
 	}
 
 	c.SetCookie(&http.Cookie{
@@ -252,6 +269,54 @@ func (sm *SessionManager) HandleLogout(c echo.Context) error {
 	})
 
 	return c.Redirect(http.StatusSeeOther, "/")
+}
+
+// HandleDevLogin creates a session without Discord OAuth (dev mode only).
+// The route should only be registered when DEV_MODE=true.
+func (sm *SessionManager) HandleDevLogin(c echo.Context) error {
+	username := strings.TrimSpace(c.FormValue("username"))
+	if username == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "username is required")
+	}
+
+	sessionID, err := randomHex(sessionBytes)
+	if err != nil {
+		return fmt.Errorf("generating session ID: %w", err)
+	}
+
+	session := &Session{
+		ID:                  sessionID,
+		DiscordID:           devDiscordID(username),
+		DiscordUsername:     username,
+		DiscordAvatar:       "",
+		GuildMemberVerified: true,
+		InviteCodeVerified:  true,
+		CreatedAt:           time.Now(),
+	}
+
+	if err := sm.createSession(session); err != nil {
+		c.Logger().Errorf("failed to create dev session: %v", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create session")
+	}
+
+	c.SetCookie(&http.Cookie{
+		Name:     "session",
+		Value:    sessionID,
+		Path:     "/",
+		MaxAge:   sessionMaxAgeSec,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   false,
+	})
+
+	return c.Redirect(http.StatusSeeOther, "/mayor")
+}
+
+// devDiscordID generates a deterministic fake Discord ID from a username.
+func devDiscordID(username string) string {
+	hasher := fnv.New32a()
+	_, _ = hasher.Write([]byte(username))
+	return fmt.Sprintf("dev-%d", hasher.Sum32())
 }
 
 // exchangeCode exchanges an OAuth code for a Discord access token.
@@ -367,13 +432,7 @@ func (sm *SessionManager) cleanupLoop() {
 	ticker := time.NewTicker(1 * time.Hour)
 	defer ticker.Stop()
 	for range ticker.C {
-		sm.mu.Lock()
-		for id, s := range sm.sessions {
-			if time.Since(s.CreatedAt) > sessionTTLDays*24*time.Hour {
-				delete(sm.sessions, id)
-			}
-		}
-		sm.mu.Unlock()
+		_, _ = sm.db.Exec(`DELETE FROM sessions WHERE expires_at <= CURRENT_TIMESTAMP`)
 	}
 }
 

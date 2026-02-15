@@ -2,7 +2,7 @@ package pages
 
 import l "github.com/coreycole/creative-mode/site/layouts"
 
-templ HomePage(rootArgs l.RootArgs) {
+templ HomePage(rootArgs l.RootArgs, devMode bool) {
 	@l.Root(rootArgs) {
 		<!-- Discord OAuth dialog -->
 		<div data-signals='{"discord_dialog_open": false}'>
@@ -38,6 +38,26 @@ templ HomePage(rootArgs l.RootArgs) {
 							Continue with Discord
 						</a>
 					</div>
+					if devMode {
+						<div class="border-t border-border/40 mt-6 pt-4">
+							<p class="text-xs text-muted-foreground text-center mb-3">Dev Login</p>
+							<form action="/dev/auth/login" method="POST" class="flex gap-2">
+								<input
+									type="text"
+									name="username"
+									placeholder="Username"
+									required
+									class="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+								/>
+								<button
+									type="submit"
+									class="inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors border border-border bg-background text-foreground hover:bg-muted h-10 px-4"
+								>
+									Dev Login
+								</button>
+							</form>
+						</div>
+					}
 				</div>
 			</div>
 		</div>

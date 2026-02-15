@@ -1,4 +1,4 @@
-package build //nolint:revive // intentional name; no conflict with stdlib "go/build"
+package build
 
 import (
 	"bufio"

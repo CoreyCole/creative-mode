@@ -122,14 +122,6 @@ func buildMDHTMLRenderer(highlightStyle *chroma.Style, htmlFormatter *html.Forma
 				attr.Classes = append(attr.Classes, []byte(headingClass))
 				heading.Attribute = attr
 			}
-			if p, ok := node.(*ast.Paragraph); ok && entering {
-				attr := p.Attribute
-				if attr == nil {
-					attr = &ast.Attribute{}
-				}
-				attr.Classes = append(attr.Classes, []byte("text-base"))
-				p.Attribute = attr
-			}
 			if _, ok := node.(*ast.Table); ok {
 				if entering {
 					_, _ = w.Write([]byte(`<div class="table-wrapper"><table>`))

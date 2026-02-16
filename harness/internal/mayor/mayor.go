@@ -190,6 +190,11 @@ func (m *Manager) ProvisionFromWebhook(
 	return nil
 }
 
+// WorldChannelClient returns the underlying worldchannel client (may be nil).
+func (m *Manager) WorldChannelClient() *worldchannel.Client {
+	return m.wcClient
+}
+
 // PostToDiscord sends a message to a Discord channel via the worldchannel client.
 func (m *Manager) PostToDiscord(channelID, content string) {
 	if m.wcClient == nil {

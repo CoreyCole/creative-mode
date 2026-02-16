@@ -6,14 +6,18 @@ replace github.com/coreycole/creative-mode/pkg/worldchannel => ../pkg/worldchann
 
 replace github.com/coreycole/creative-mode/pkg/imagegen => ../pkg/imagegen
 
+replace github.com/coreycole/creative-mode/pkg/mayorchat => ../pkg/mayorchat
+
+replace github.com/coreycole/creative-mode/pkg/markdown => ../pkg/markdown
+
 require (
 	github.com/Oudwins/tailwind-merge-go v0.2.1
 	github.com/a-h/templ v0.3.977
-	github.com/alecthomas/chroma/v2 v2.23.1
 	github.com/anthropics/anthropic-sdk-go v1.22.1
 	github.com/coreycole/creative-mode/pkg/imagegen v0.0.0-00010101000000-000000000000
+	github.com/coreycole/creative-mode/pkg/markdown v0.0.0-00010101000000-000000000000
+	github.com/coreycole/creative-mode/pkg/mayorchat v0.0.0-00010101000000-000000000000
 	github.com/coreycole/creative-mode/pkg/worldchannel v0.0.0-00010101000000-000000000000
-	github.com/gomarkdown/markdown v0.0.0-20250810172220-2e2c11897d1a
 	github.com/google/uuid v1.6.0
 	github.com/labstack/echo/v4 v4.13.3
 	github.com/starfederation/datastar-go v1.1.0
@@ -25,11 +29,13 @@ require (
 	cloud.google.com/go/auth v0.9.3 // indirect
 	cloud.google.com/go/compute/metadata v0.5.0 // indirect
 	github.com/CAFxX/httpcompression v0.0.9 // indirect
+	github.com/alecthomas/chroma/v2 v2.23.1 // indirect
 	github.com/andybalholm/brotli v1.2.0 // indirect
 	github.com/bwmarrin/discordgo v0.29.0 // indirect
 	github.com/dlclark/regexp2 v1.11.5 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
+	github.com/gomarkdown/markdown v0.0.0-20250810172220-2e2c11897d1a // indirect
 	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/google/s2a-go v0.1.8 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.4 // indirect

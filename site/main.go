@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/coreycole/creative-mode/pkg/imagegen"
+	"github.com/coreycole/creative-mode/pkg/markdown"
+	"github.com/coreycole/creative-mode/pkg/mayorchat"
 	"github.com/coreycole/creative-mode/pkg/worldchannel"
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -22,7 +24,6 @@ import (
 
 	"github.com/coreycole/creative-mode/site/internal/auth"
 	"github.com/coreycole/creative-mode/site/internal/db"
-	"github.com/coreycole/creative-mode/site/internal/markdown"
 	"github.com/coreycole/creative-mode/site/internal/mayor"
 	"github.com/coreycole/creative-mode/site/internal/webhook"
 	l "github.com/coreycole/creative-mode/site/layouts"
@@ -153,10 +154,11 @@ func main() {
 	// --- Claude client + mayor handler (optional) ---
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")
 	var mayorHandler *mayor.Handler
-	var convMgr *mayor.ConversationManager
+	var convMgr *mayorchat.ConversationManager
 	if apiKey != "" {
 		client := mayor.NewClient(apiKey)
-		convMgr = mayor.NewConversationManager(database)
+		store := mayor.NewSQLiteMessageStore(database)
+		convMgr = mayorchat.NewConversationManager(store)
 		mayorHandler = mayor.NewHandler(client, convMgr, mdRenderer, wcClient, imagegenClient, dataDir, logger)
 		mayorHandler.HarnessURL = os.Getenv("HARNESS_URL")
 	}

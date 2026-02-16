@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"html"
 	"log/slog"
@@ -15,13 +14,14 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/coreycole/creative-mode/pkg/imagegen"
+	"github.com/coreycole/creative-mode/pkg/markdown"
+	"github.com/coreycole/creative-mode/pkg/mayorchat"
 	"github.com/coreycole/creative-mode/pkg/worldchannel"
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/starfederation/datastar-go/datastar"
 
 	"github.com/coreycole/creative-mode/site/internal/auth"
-	"github.com/coreycole/creative-mode/site/internal/markdown"
 	p "github.com/coreycole/creative-mode/site/pages"
 )
 
@@ -37,7 +37,7 @@ type ChatSignals struct {
 // Handler handles the mayor chat SSE endpoint.
 type Handler struct {
 	client         anthropic.Client
-	convMgr        *ConversationManager
+	convMgr        *mayorchat.ConversationManager
 	mdRenderer     *markdown.Renderer
 	wcClient       *worldchannel.Client // nil if no bot token configured
 	imagegenClient *imagegen.Client     // nil if no Gemini API key configured
@@ -47,7 +47,7 @@ type Handler struct {
 }
 
 // NewHandler creates a new mayor chat handler.
-func NewHandler(client anthropic.Client, convMgr *ConversationManager, mdRenderer *markdown.Renderer, wcClient *worldchannel.Client, imagegenClient *imagegen.Client, dataDir string, logger *slog.Logger) *Handler {
+func NewHandler(client anthropic.Client, convMgr *mayorchat.ConversationManager, mdRenderer *markdown.Renderer, wcClient *worldchannel.Client, imagegenClient *imagegen.Client, dataDir string, logger *slog.Logger) *Handler {
 	return &Handler{
 		client:         client,
 		convMgr:        convMgr,
@@ -96,14 +96,7 @@ func (h *Handler) HandleChat(c echo.Context) error {
 
 	// Build Anthropic messages from conversation history.
 	messages := h.convMgr.GetMessages(session.DiscordID)
-	anthropicMessages := make([]anthropic.MessageParam, 0, len(messages))
-	for _, msg := range messages {
-		if msg.Role == "user" {
-			anthropicMessages = append(anthropicMessages, anthropic.NewUserMessage(anthropic.NewTextBlock(msg.Content)))
-		} else {
-			anthropicMessages = append(anthropicMessages, anthropic.NewAssistantMessage(anthropic.NewTextBlock(msg.Content)))
-		}
-	}
+	anthropicMessages := mayorchat.BuildAnthropicMessages(messages)
 
 	// Start SSE stream.
 	sse := datastar.NewSSE(c.Response().Writer, c.Request())
@@ -157,11 +150,7 @@ func (h *Handler) HandleChat(c echo.Context) error {
 	}
 
 	if forceCreate {
-		systemPrompt += "\n\nIMPORTANT: The user has clicked 'Create World'. " +
-			"If the user has NOT yet told you their preferred mayor name, you MUST ask for it now — " +
-			"do NOT invent a mayor name. Say something like: \"Almost there — but I still need a name. What should I go by?\" " +
-			"For all other missing details (world name, gameplay, setting), fill them in with your best creative judgment. " +
-			"Once you have the mayor name, give a brief response about the world taking shape, then emit the WORLD_READY marker."
+		systemPrompt += mayorchat.ForceCreatePromptSuffix
 	}
 
 	// Stream from Claude.
@@ -193,10 +182,7 @@ func (h *Handler) HandleChat(c echo.Context) error {
 				inCodeBlock = codeBlockCount%2 == 1
 
 				// Determine content to render — strip WORLD_READY marker.
-				renderContent := fullContent
-				if idx := strings.Index(renderContent, "WORLD_READY|"); idx != -1 {
-					renderContent = strings.TrimSpace(renderContent[:idx])
-				}
+				renderContent := mayorchat.StripWorldReadyMarker(fullContent)
 
 				// Decide whether to render markdown.
 				newContent := renderContent[min(lastRenderedLen, len(renderContent)):]
@@ -249,7 +235,7 @@ func (h *Handler) HandleChat(c echo.Context) error {
 
 	if stream.Err() != nil {
 		c.Logger().Errorf("Stream error: %v", stream.Err())
-		if isBillingOrOverloadError(stream.Err()) {
+		if mayorchat.IsBillingOrOverloadError(stream.Err()) {
 			// Mark conversation as scripted and fall back.
 			h.convMgr.SetScripted(session.DiscordID, true)
 			return h.handleScriptedResponse(c, sse, session, assistantMsgID)
@@ -262,29 +248,11 @@ func (h *Handler) HandleChat(c echo.Context) error {
 	}
 
 	// Save assistant response to conversation manager (without WORLD_READY marker).
-	displayContent := fullContent
-	if idx := strings.Index(fullContent, "WORLD_READY|"); idx != -1 {
-		displayContent = strings.TrimSpace(fullContent[:idx])
-	}
+	displayContent := mayorchat.StripWorldReadyMarker(fullContent)
 	h.convMgr.AddMessage(session.DiscordID, "assistant", displayContent)
 
 	// Parse WORLD_READY marker from full content.
-	var mayorName, worldName, worldSummary string
-	if idx := strings.Index(fullContent, "WORLD_READY|"); idx != -1 {
-		parts := strings.SplitN(fullContent[idx+len("WORLD_READY|"):], "|", 3)
-		switch len(parts) {
-		case 3:
-			mayorName = strings.TrimSpace(parts[0])
-			worldName = strings.TrimSpace(parts[1])
-			worldSummary = strings.TrimSpace(parts[2])
-		case 2:
-			mayorName = strings.TrimSpace(parts[0])
-			worldName = strings.TrimSpace(parts[1])
-			worldSummary = ""
-		default:
-			c.Logger().Errorf("Malformed WORLD_READY marker: %q", fullContent[idx:])
-		}
-	}
+	worldInfo := mayorchat.ParseWorldReady(fullContent)
 
 	// Final render (without marker).
 	finalHTML := h.mdRenderer.MarkdownBytesToHTML([]byte(displayContent))
@@ -298,8 +266,8 @@ func (h *Handler) HandleChat(c echo.Context) error {
 	}
 
 	// Create Discord channel if world is ready.
-	if mayorName != "" && worldName != "" {
-		h.prepareCoverArtAndHatch(c, sse, session, mayorName, worldName, worldSummary)
+	if worldInfo != nil {
+		h.prepareCoverArtAndHatch(c, sse, session, worldInfo.MayorName, worldInfo.WorldName, worldInfo.WorldSummary)
 	}
 
 	return nil
@@ -648,18 +616,4 @@ func (h *Handler) pinOnboardingConversation(c echo.Context, channelID string, se
 	}); err != nil {
 		c.Logger().Errorf("Failed to pin onboarding data: %v", err)
 	}
-}
-
-// isBillingOrOverloadError checks if an error is an Anthropic API error
-// with a status code indicating billing issues (402), rate limiting (429),
-// or overload (529).
-func isBillingOrOverloadError(err error) bool {
-	var apiErr *anthropic.Error
-	if errors.As(err, &apiErr) {
-		switch apiErr.StatusCode {
-		case 402, 429, 529:
-			return true
-		}
-	}
-	return false
 }

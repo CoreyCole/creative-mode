@@ -13,6 +13,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/coreycole/creative-mode/pkg/markdown"
+	"github.com/coreycole/creative-mode/pkg/mayorchat"
 	"github.com/coreycole/creative-mode/pkg/worldchannel"
 	"github.com/labstack/echo/v4"
 
@@ -239,6 +242,20 @@ func main() {
 		logger.Info("Gemini image generation enabled")
 	}
 
+	// Set up create-world chat page dependencies.
+	createStore := server.NewInMemoryMessageStore()
+	createConvMgr := mayorchat.NewConversationManager(createStore)
+	mdRenderer, mdErr := markdown.NewRenderer()
+	if mdErr != nil {
+		logger.Error("failed to create markdown renderer", "error", mdErr)
+	}
+	var createClaudeClient *anthropic.Client
+	if apiKey := os.Getenv("ANTHROPIC_API_KEY"); apiKey != "" {
+		client := mayorchat.NewClient(apiKey)
+		createClaudeClient = &client
+		logger.Info("Create-world Claude chat enabled")
+	}
+
 	// Set up mayor manager (optional — requires DISCORD_BOT_TOKEN).
 	mayorManager := initMayorManager(baseURL, dataDir, database, logger)
 
@@ -293,6 +310,9 @@ func main() {
 	srv.MayorManager = mayorManager
 	srv.PresidentManager = presidentManager
 	srv.DataDir = dataDir
+	srv.CreateConvMgr = createConvMgr
+	srv.CreateClaudeClient = createClaudeClient
+	srv.CreateMDRenderer = mdRenderer
 	srv.RegisterRoutes(e)
 
 	// Graceful shutdown on SIGINT/SIGTERM.

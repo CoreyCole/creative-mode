@@ -13,6 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/coreycole/creative-mode/pkg/markdown"
+	"github.com/coreycole/creative-mode/pkg/mayorchat"
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -53,6 +56,11 @@ type Server struct {
 	PresidentManager *president.Manager
 	DataDir          string
 	dev              *devState // nil when DEV_MODE is not set
+
+	// Create-world chat page dependencies.
+	CreateConvMgr      *mayorchat.ConversationManager
+	CreateClaudeClient *anthropic.Client
+	CreateMDRenderer   *markdown.Renderer
 }
 
 // New creates a new Server with the given database and logger.
@@ -177,6 +185,13 @@ func (s *Server) RegisterRoutes(e *echo.Echo) {
 
 	// WASM artifact serving (approved users).
 	approved.GET("/wasm/:worldID/:cpID/*", s.handleWASMArtifacts)
+
+	// Create world chat page (approved users).
+	approved.GET("/create", s.handleCreatePage)
+	approved.POST("/create/chat", s.handleCreateChat)
+	approved.GET("/create/cover-preview", s.handleCreateCoverPreview)
+	approved.POST("/create/generate-cover", s.handleCreateGenerateCover)
+	approved.POST("/create/hatch", s.handleCreateHatch)
 
 	// SSE event stream (approved users — lobby).
 	approved.GET("/events", s.handleGlobalSSE)

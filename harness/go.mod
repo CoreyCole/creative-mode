@@ -6,10 +6,17 @@ replace github.com/coreycole/creative-mode/pkg/worldchannel => ../pkg/worldchann
 
 replace github.com/coreycole/creative-mode/pkg/imagegen => ../pkg/imagegen
 
+replace github.com/coreycole/creative-mode/pkg/mayorchat => ../pkg/mayorchat
+
+replace github.com/coreycole/creative-mode/pkg/markdown => ../pkg/markdown
+
 require (
 	github.com/a-h/templ v0.3.977
+	github.com/anthropics/anthropic-sdk-go v1.22.1
 	github.com/bwmarrin/discordgo v0.28.1
 	github.com/coreycole/creative-mode/pkg/imagegen v0.0.0-00010101000000-000000000000
+	github.com/coreycole/creative-mode/pkg/markdown v0.0.0-00010101000000-000000000000
+	github.com/coreycole/creative-mode/pkg/mayorchat v0.0.0-00010101000000-000000000000
 	github.com/coreycole/creative-mode/pkg/worldchannel v0.0.0-20260215081125-686d34b3d948
 	github.com/coreycole/datastarui v0.0.0-20260131230526-8815ff5a1c48
 	github.com/google/uuid v1.6.0
@@ -27,8 +34,11 @@ require (
 	connectrpc.com/connect v1.19.1 // indirect
 	github.com/CAFxX/httpcompression v0.0.9 // indirect
 	github.com/Oudwins/tailwind-merge-go v0.2.0 // indirect
+	github.com/alecthomas/chroma/v2 v2.23.1 // indirect
 	github.com/andybalholm/brotli v1.2.0 // indirect
+	github.com/dlclark/regexp2 v1.11.5 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
+	github.com/gomarkdown/markdown v0.0.0-20250810172220-2e2c11897d1a // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/s2a-go v0.1.8 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.4 // indirect
@@ -37,6 +47,10 @@ require (
 	github.com/labstack/gommon v0.4.2 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/tidwall/gjson v1.18.0 // indirect
+	github.com/tidwall/match v1.1.1 // indirect
+	github.com/tidwall/pretty v1.2.1 // indirect
+	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasttemplate v1.2.2 // indirect
 	go.opencensus.io v0.24.0 // indirect

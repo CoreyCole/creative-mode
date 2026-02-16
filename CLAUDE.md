@@ -11,7 +11,7 @@ Multiplayer creative sandbox — Go harness server + Bevy/WASM game client.
 | `templates/2d/` | 2D Bevy room-based template — see `templates/2d/CLAUDE.md` |
 | `scripts/` | Build, format, and setup scripts |
 | `site/`    | Marketing site + onboarding (Echo + templ) — see `site/CLAUDE.md` |
-| `pkg/`     | Shared Go packages (`worldchannel` — Discord channel management) |
+| `pkg/`     | Shared Go packages: `worldchannel` (Discord channels), `mayorchat` (onboarding chat), `markdown` (renderer), `imagegen` (image generation) |
 | `context/` | Reference code (gitignored) |
 | `thoughts/` | Plans, reviews, and notes |
 
@@ -32,6 +32,37 @@ Every world gets a mayor — an OpenClaw agent with a personality, evolving memo
 ### President
 
 One president agent oversees all mayors and the repo. It can query all mayor statuses, run `just check`, spawn Claude Code sessions for template updates, and trigger deploys. Auto-provisions on startup when `PRESIDENT_SECRET` and `DISCORD_PRESIDENT_CHANNEL_ID` env vars are set (currently disabled in production).
+
+### Architecture: Agent Hierarchy
+
+```
+President (global, optional)
+├── Oversees all mayors and the repo
+├── Skills: mayor-status, repo-build, template-update, deploy
+├── Channel: DISCORD_PRESIDENT_CHANNEL_ID
+└── Auto-provisions on startup if env vars set
+
+Mayors (per-world)
+├── OpenClaw agent with personality from onboarding
+├── Workspace: {OPENCLAW_HOME}/workspaces/world-{worldID}/
+│   ├── SOUL.md, AGENTS.md, IDENTITY.md, USER.md, MEMORY.md
+│   └── skills/ (world-build, world-status, contribute-learning)
+├── Discord channel: one per world (private)
+└── Triggers Claude Code builds via POST /api/mayor/build
+
+Claude Code (per-build session)
+├── Runs in tmux: cm-{worldID}-{cpID}
+├── Guided by templates/*/CLAUDE.md + MEMORY.md
+├── Hook scripts POST events to /api/claude-event
+└── Pipeline: ForkCheckpoint → edit → BuildCheckpoint → deploy
+```
+
+### Single Bot Architecture
+
+The codebase uses ONE `DISCORD_BOT_TOKEN` for all Discord operations via separate `discordgo.Session` instances:
+- **REST** (`pkg/worldchannel.Client`): Channel creation, welcome messages, pinning onboarding data
+- **Gateway** (`internal/discord.Listener`): Real-time message mirroring from Discord → SQLite → EventBus → SSE
+- **Mayor init** (`internal/mayor.Manager`): Creates `worldchannel.Client` for Discord API operations
 
 ### Environment Variables (Agent System)
 
@@ -78,6 +109,17 @@ Running `go run .` on the host skips `DEV_MODE=true` and killing it can destroy 
 | `just down` | Stop Docker container |
 
 All commands run from `harness/`.
+
+### Deployment Topology: Site + Harness
+
+The system runs on two servers connected via Tailscale:
+
+| Server | Runs | Access |
+|--------|------|--------|
+| **EC2** (Ubuntu) | Marketing site (`site/`) — native Go binary under systemd | Public: `creative-mode.ai` → Route 53 → API Gateway → port 80 |
+| **VPS** (Nix) | Harness (`harness/`) — `air` hot-reload under systemd | Internal: `100.x.x.x:8080` via Tailscale |
+
+The site creates Discord channels during onboarding, then fires `POST /api/world-hatched` to the harness (via Tailscale) to provision the mayor agent. Both servers share `DISCORD_BOT_TOKEN` and `CM_HOOK_SECRET`.
 
 ## Skills
 

@@ -1,0 +1,85 @@
+package create
+
+import (
+	"creative-mode/harness/views/layout"
+	"github.com/starfederation/datastar-go/datastar"
+)
+
+templ Page(messages []ChatMessage) {
+	@layout.Base("Create World") {
+		<div class="flex flex-col h-screen">
+			<!-- Compact header bar -->
+			<div class="shrink-0 border-b border-border/40 px-4 py-3">
+				<div class="mx-auto max-w-2xl flex items-center gap-3">
+					<a href="/" class="text-muted-foreground hover:text-foreground text-sm">&larr; Lobby</a>
+					<div>
+						<h1 class="text-lg font-semibold">Meet the Mayor</h1>
+						<p class="text-sm text-muted-foreground">
+							Tell the Mayor about your dream world. When it's ready, we'll create it for you.
+						</p>
+					</div>
+				</div>
+			</div>
+			<!-- Chat messages -->
+			<div id="chat-messages" class="flex-1 min-h-0 overflow-y-auto space-y-3 px-4 py-4">
+				for _, msg := range messages {
+					if msg.Role == "assistant" {
+						@MayorMessageComplete(msg.ID, msg.HTMLContent)
+					} else {
+						@UserMessage(msg.ID, msg.Content, msg.AvatarURL)
+					}
+				}
+				<!-- World hatched card placeholder -->
+				<div id="mayor-signup"></div>
+			</div>
+			<script>
+				// Scroll to bottom on page load to show latest messages.
+				requestAnimationFrame(function() {
+					var el = document.getElementById('chat-messages');
+					if (el) { el.scrollTop = el.scrollHeight; }
+				});
+			</script>
+			<!-- Input area -->
+			<div class="shrink-0 border-t border-border/40 px-4 py-3 relative">
+				<div class="mx-auto max-w-2xl">
+					<!-- Rate limit error -->
+					<div id="rate-limit-error"></div>
+					<div
+						data-signals='{"mayor_input": "", "create_world": false}'
+						class="flex gap-2"
+					>
+						<input
+							type="text"
+							data-bind:mayor_input
+							data-on:keydown={ `evt.key === 'Enter' && !$_sending && $mayor_input.trim() !== '' && ` + string(datastar.PostSSE("/create/chat")) }
+							data-attr:disabled="$_sending"
+							placeholder="Type your message..."
+							class="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
+							autocomplete="off"
+						/>
+						<button
+							data-on:click={ `!$_sending && $mayor_input.trim() !== '' && ` + string(datastar.PostSSE("/create/chat")) }
+							data-indicator:_sending
+							data-attr:disabled="$_sending"
+							class="inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 disabled:opacity-50"
+						>
+							<span data-show="!$_sending">Send</span>
+							<span data-show="$_sending" class="flex items-center gap-1.5">
+								<span class="inline-block w-1.5 h-1.5 rounded-full bg-primary-foreground/70 animate-pulse"></span>
+								Sending
+							</span>
+						</button>
+					</div>
+				</div>
+				<button
+					data-on:click={ `$create_world = true; ` + string(datastar.PostSSE("/create/chat")) }
+					data-indicator:_sending
+					data-attr:disabled="$_sending"
+					class="absolute right-4 bottom-3 inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors border border-border bg-background text-foreground hover:bg-muted h-9 px-4 disabled:opacity-50"
+				>
+					Create World
+				</button>
+			</div>
+		</div>
+	}
+}

@@ -1,0 +1,189 @@
+package create
+
+import "github.com/starfederation/datastar-go/datastar"
+
+// MayorMessageComplete renders a completed assistant message with pre-rendered HTML.
+templ MayorMessageComplete(msgID string, htmlContent string) {
+	<div id={ "msg-" + msgID } class="max-w-2xl mx-auto flex items-end gap-2 justify-start">
+		<img src="/static/img/square-meme-bg.jpeg" alt="Mayor" class="w-8 h-8 rounded-full shrink-0 object-cover"/>
+		<div class="max-w-[85%]">
+			<div class="rounded-2xl rounded-bl-sm bg-muted px-4 py-3">
+				<div id={ "msg-content-" + msgID } class="chat-message-content">
+					@templ.Raw(htmlContent)
+				</div>
+			</div>
+		</div>
+	</div>
+}
+
+// MayorMessageStreaming renders an empty assistant message placeholder during streaming.
+templ MayorMessageStreaming(msgID string) {
+	<div id={ "msg-" + msgID } class="max-w-2xl mx-auto flex items-end gap-2 justify-start">
+		<img src="/static/img/square-meme-bg.jpeg" alt="Mayor" class="w-8 h-8 rounded-full shrink-0 object-cover"/>
+		<div class="max-w-[85%]">
+			<div class="rounded-2xl rounded-bl-sm bg-muted px-4 py-3">
+				<div id={ "msg-content-" + msgID } class="chat-message-content">
+					<span class="inline-block w-2 h-5 bg-foreground/50 rounded-sm animate-pulse"></span>
+				</div>
+			</div>
+		</div>
+	</div>
+}
+
+// MayorMessageDelta renders streaming text content (plain text, pre-markdown).
+templ MayorMessageDelta(msgID string, text string) {
+	<span class="whitespace-pre-wrap">{ text }</span>
+}
+
+// MayorMessageDeltaHTML renders streaming content with partially rendered markdown.
+templ MayorMessageDeltaHTML(msgID string, htmlContent string) {
+	@templ.Raw(htmlContent)
+}
+
+// UserMessage renders a user message with the user's Discord avatar.
+templ UserMessage(msgID string, content string, avatarURL string) {
+	<div id={ "msg-" + msgID } class="max-w-2xl mx-auto flex items-end gap-2 justify-end">
+		<div class="max-w-[85%] rounded-2xl rounded-br-sm bg-primary text-primary-foreground px-4 py-3">
+			<p class="text-sm whitespace-pre-wrap">{ content }</p>
+		</div>
+		if avatarURL != "" {
+			<img src={ avatarURL } alt="You" class="w-8 h-8 rounded-full shrink-0 object-cover"/>
+		} else {
+			<div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/20 text-primary text-xs font-bold">
+				U
+			</div>
+		}
+	</div>
+}
+
+// WorldHatched is shown after the world is created in the harness.
+templ WorldHatched(worldName, mayorName, worldID string) {
+	<div id="mayor-signup" class="mx-auto max-w-2xl my-6 rounded-lg border border-border/40 bg-card p-6 text-center">
+		<h2 class="text-xl font-bold">{ worldName } Has Been Born</h2>
+		<p class="mt-3 text-muted-foreground">
+			<strong>{ mayorName }</strong> is ready and waiting for you.
+		</p>
+		<div class="mt-6 flex flex-col items-center gap-3">
+			<a
+				href={ templ.SafeURL("/world/" + worldID) }
+				class="inline-flex items-center justify-center rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 h-11 px-8"
+			>
+				Enter Your World
+			</a>
+		</div>
+	</div>
+}
+
+// CoverArtGenerating shows a loading spinner while cover art is being generated.
+templ CoverArtGenerating(worldName, mayorName string) {
+	<div id="mayor-signup" class="mx-auto max-w-2xl my-6 rounded-lg border border-border/40 bg-card p-6 text-center">
+		<h2 class="text-xl font-bold">{ worldName } Is Taking Shape</h2>
+		<p class="mt-3 text-muted-foreground">
+			<strong>{ mayorName }</strong> is painting the cover art...
+		</p>
+		<div class="mt-6 flex justify-center">
+			<div class="flex items-center gap-2">
+				<span class="inline-block w-2 h-2 rounded-full bg-primary animate-pulse"></span>
+				<span class="inline-block w-2 h-2 rounded-full bg-primary animate-pulse" style="animation-delay: 0.2s"></span>
+				<span class="inline-block w-2 h-2 rounded-full bg-primary animate-pulse" style="animation-delay: 0.4s"></span>
+			</div>
+		</div>
+		<p class="mt-3 text-xs text-muted-foreground">
+			Generating cover art — this takes a few seconds
+		</p>
+	</div>
+}
+
+// CoverArtPreview shows the generated cover art with hatch and regenerate buttons.
+templ CoverArtPreview(previewURL, worldName, mayorName string) {
+	<div id="mayor-signup" class="mx-auto max-w-2xl my-6 rounded-lg border border-border/40 bg-card p-6 text-center">
+		<h2 class="text-xl font-bold">{ worldName } Is Ready</h2>
+		<p class="mt-3 text-muted-foreground">
+			<strong>{ mayorName }</strong> will be your guide.
+		</p>
+		<div class="mt-4">
+			<img
+				src={ previewURL }
+				alt={ worldName + " cover art" }
+				class="w-full max-w-md mx-auto rounded-lg border border-border/20"
+			/>
+		</div>
+		<div class="mt-6 flex flex-col items-center gap-3">
+			<button
+				data-on:click={ datastar.PostSSE("/create/hatch") }
+				data-indicator:_hatching
+				data-attr:disabled="$_hatching"
+				class="inline-flex items-center justify-center rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 h-11 px-8 disabled:opacity-50"
+			>
+				<span data-show="!$_hatching">Hatch World</span>
+				<span data-show="$_hatching" class="flex items-center gap-1.5">
+					<span class="inline-block w-1.5 h-1.5 rounded-full bg-primary-foreground/70 animate-pulse"></span>
+					Hatching...
+				</span>
+			</button>
+			<button
+				data-on:click={ datastar.PostSSE("/create/generate-cover") }
+				data-indicator:_regenerating
+				data-attr:disabled="$_regenerating || $_hatching"
+				class="inline-flex items-center justify-center rounded-md text-sm font-medium border border-border bg-background text-foreground hover:bg-muted h-9 px-4 disabled:opacity-50"
+			>
+				<span data-show="!$_regenerating">Regenerate Cover Art</span>
+				<span data-show="$_regenerating" class="flex items-center gap-1.5">
+					<span class="inline-block w-1.5 h-1.5 rounded-full bg-foreground/50 animate-pulse"></span>
+					Regenerating...
+				</span>
+			</button>
+		</div>
+	</div>
+}
+
+// CoverArtError shows an error with "Hatch Without Art" and "Try Again" buttons.
+templ CoverArtError(errMsg, worldName, mayorName string) {
+	<div id="mayor-signup" class="mx-auto max-w-2xl my-6 rounded-lg border border-border/40 bg-card p-6 text-center">
+		<h2 class="text-xl font-bold">{ worldName } Is Ready</h2>
+		<p class="mt-3 text-muted-foreground">
+			<strong>{ mayorName }</strong> will be your guide.
+		</p>
+		<p class="mt-3 text-sm text-destructive">
+			Cover art generation failed: { errMsg }
+		</p>
+		<div class="mt-6 flex flex-col items-center gap-3">
+			<button
+				data-on:click={ datastar.PostSSE("/create/hatch") }
+				data-indicator:_hatching
+				data-attr:disabled="$_hatching"
+				class="inline-flex items-center justify-center rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 h-11 px-8 disabled:opacity-50"
+			>
+				<span data-show="!$_hatching">Hatch Without Cover Art</span>
+				<span data-show="$_hatching" class="flex items-center gap-1.5">
+					<span class="inline-block w-1.5 h-1.5 rounded-full bg-primary-foreground/70 animate-pulse"></span>
+					Hatching...
+				</span>
+			</button>
+			<button
+				data-on:click={ datastar.PostSSE("/create/generate-cover") }
+				data-indicator:_regenerating
+				data-attr:disabled="$_regenerating || $_hatching"
+				class="inline-flex items-center justify-center rounded-md text-sm font-medium border border-border bg-background text-foreground hover:bg-muted h-9 px-4 disabled:opacity-50"
+			>
+				<span data-show="!$_regenerating">Try Again</span>
+				<span data-show="$_regenerating" class="flex items-center gap-1.5">
+					<span class="inline-block w-1.5 h-1.5 rounded-full bg-foreground/50 animate-pulse"></span>
+					Regenerating...
+				</span>
+			</button>
+		</div>
+	</div>
+}
+
+// RateLimitError shows a rate limit message to the user.
+templ RateLimitError() {
+	<div id="rate-limit-error" class="mt-2 text-sm text-destructive text-center">
+		Please wait a moment before sending another message.
+	</div>
+}
+
+// RateLimitClear clears any existing rate limit error.
+templ RateLimitClear() {
+	<div id="rate-limit-error"></div>
+}

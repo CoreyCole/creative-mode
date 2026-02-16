@@ -1,0 +1,85 @@
+/* Compact markdown styles for chat message bubbles */
+.chat-message-content {
+  @apply text-sm leading-relaxed text-foreground;
+}
+
+.chat-message-content > * + * {
+  @apply mt-2;
+}
+
+.chat-message-content p {
+  @apply mb-2;
+}
+
+.chat-message-content p:last-child {
+  @apply mb-0;
+}
+
+.chat-message-content h1,
+.chat-message-content h2,
+.chat-message-content h3 {
+  @apply font-bold mt-3 mb-2;
+}
+
+.chat-message-content h1:first-child,
+.chat-message-content h2:first-child,
+.chat-message-content h3:first-child {
+  @apply mt-0;
+}
+
+.chat-message-content h1 {
+  @apply text-lg;
+}
+
+.chat-message-content h2 {
+  @apply text-base;
+}
+
+.chat-message-content h3 {
+  @apply text-sm font-semibold;
+}
+
+.chat-message-content ul,
+.chat-message-content ol {
+  @apply mb-2 pl-4;
+}
+
+.chat-message-content ul {
+  @apply list-disc;
+}
+
+.chat-message-content ol {
+  @apply list-decimal;
+}
+
+.chat-message-content li {
+  @apply mb-1;
+}
+
+.chat-message-content li:last-child {
+  @apply mb-0;
+}
+
+.chat-message-content pre {
+  @apply my-2 rounded bg-background/50 p-2 text-xs overflow-x-auto;
+}
+
+.chat-message-content code:not(pre code) {
+  @apply rounded bg-background/50 px-1 py-0.5 text-xs font-mono;
+}
+
+.chat-message-content blockquote {
+  @apply my-2 border-l-2 border-border pl-3 italic text-muted-foreground;
+}
+
+.chat-message-content strong {
+  @apply font-bold;
+}
+
+.chat-message-content em {
+  @apply italic;
+}
+
+.chat-message-content hr {
+  @apply border-border my-3;
+}

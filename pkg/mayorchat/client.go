@@ -1,14 +1,14 @@
-package mayor
+package mayorchat
 
 import (
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/coreycole/creative-mode/pkg/mayorchat"
+	"github.com/anthropics/anthropic-sdk-go/option"
 )
 
 // NewClient creates a new Anthropic client.
 func NewClient(apiKey string) anthropic.Client {
-	return mayorchat.NewClient(apiKey)
+	return anthropic.NewClient(option.WithAPIKey(apiKey))
 }
 
 // Model is the Claude model used for the mayor conversation.
-var Model = mayorchat.Model
+var Model anthropic.Model = anthropic.ModelClaudeSonnet4_5_20250929

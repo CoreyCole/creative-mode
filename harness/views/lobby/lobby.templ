@@ -5,7 +5,6 @@ import (
 	"creative-mode/harness/views/chat"
 	"creative-mode/harness/views/layout"
 	"github.com/coreycole/datastarui/components/button"
-	"github.com/coreycole/datastarui/components/input"
 	"github.com/starfederation/datastar-go/datastar"
 )
 
@@ -67,24 +66,12 @@ templ Page(user *sqlc.User, worlds []sqlc.World) {
 							</a>
 						}
 					</div>
-					<form class="flex gap-2 items-center">
-						@input.Input(input.InputArgs{Name: "name", Placeholder: "World name", Required: true})
-						@input.Input(input.InputArgs{Name: "description", Placeholder: "Description (optional)"})
-						<select name="template_type" class="h-9 rounded-md border border-input bg-background px-3 text-sm">
-							<option value="3d">3D World</option>
-							<option value="2d">2D Room World</option>
-							<option value="boardgame">Board Game</option>
-						</select>
-						@button.Button(button.ButtonArgs{
-							Attributes: templ.Attributes{
-								"data-on:click__prevent":  "@post('/world/create', {contentType: 'form'})",
-								"data-indicator-fetching": true,
-								"data-attr-disabled":      "$fetching",
-							},
-						}) {
-							Create World
-						}
-					</form>
+					<a
+						href="/create"
+						class="inline-flex items-center justify-center rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-6"
+					>
+						Create World
+					</a>
 				</div>
 				<div
 					class="w-80 flex flex-col border-l border-border bg-[#111]"

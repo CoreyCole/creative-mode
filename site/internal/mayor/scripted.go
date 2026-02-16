@@ -103,6 +103,10 @@ func (h *Handler) handleScriptedForceCreate(c echo.Context, sse *datastar.Server
 	stage := mayorchat.ScriptedStage(messages)
 
 	if stage < 2 {
+		// Not enough info to create — re-enable the button.
+		if err := sse.MarshalAndPatchSignals(map[string]any{"world_creating": false}); err != nil {
+			c.Logger().Errorf("Failed to patch world_creating signal: %v", err)
+		}
 		return h.handleScriptedResponse(c, sse, session, assistantMsgID)
 	}
 
@@ -117,6 +121,10 @@ func (h *Handler) handleScriptedForceCreate(c echo.Context, sse *datastar.Server
 		h.convMgr.AddMessage(session.DiscordID, "assistant", responseMD)
 		if err := sse.ExecuteScript(scrollChatJS); err != nil {
 			c.Logger().Errorf("Failed to scroll: %v", err)
+		}
+		// Not ready yet — re-enable the button.
+		if err := sse.MarshalAndPatchSignals(map[string]any{"world_creating": false}); err != nil {
+			c.Logger().Errorf("Failed to patch world_creating signal: %v", err)
 		}
 		return nil
 	}

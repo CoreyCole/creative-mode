@@ -44,22 +44,22 @@ templ MayorPage(rootArgs l.RootArgs, messages []ChatMessage) {
 					<!-- Rate limit error -->
 					<div id="rate-limit-error"></div>
 					<div
-						data-signals='{"mayor_input": "", "create_world": false}'
+						data-signals='{"mayor_input": "", "create_world": false, "world_creating": false}'
 						class="flex gap-2"
 					>
 						<input
 							type="text"
 							data-bind:mayor_input
-							data-on:keydown={ `evt.key === 'Enter' && !$_sending && $mayor_input.trim() !== '' && ` + string(datastar.PostSSE("/mayor/chat")) }
-							data-attr:disabled="$_sending"
+							data-on:keydown={ `evt.key === 'Enter' && !$_sending && !$world_creating && $mayor_input.trim() !== '' && ` + string(datastar.PostSSE("/mayor/chat")) }
+							data-attr:disabled="$_sending || $world_creating"
 							placeholder="Type your message..."
 							class="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
 							autocomplete="off"
 						/>
 						<button
-							data-on:click={ `!$_sending && $mayor_input.trim() !== '' && ` + string(datastar.PostSSE("/mayor/chat")) }
+							data-on:click={ `!$_sending && !$world_creating && $mayor_input.trim() !== '' && ` + string(datastar.PostSSE("/mayor/chat")) }
 							data-indicator:_sending
-							data-attr:disabled="$_sending"
+							data-attr:disabled="$_sending || $world_creating"
 							class="inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 disabled:opacity-50"
 						>
 							<span data-show="!$_sending">Send</span>
@@ -71,9 +71,9 @@ templ MayorPage(rootArgs l.RootArgs, messages []ChatMessage) {
 					</div>
 				</div>
 				<button
-					data-on:click={ `$create_world = true; ` + string(datastar.PostSSE("/mayor/chat")) }
+					data-on:click={ `$world_creating = true; $create_world = true; ` + string(datastar.PostSSE("/mayor/chat")) }
 					data-indicator:_sending
-					data-attr:disabled="$_sending"
+					data-attr:disabled="$_sending || $world_creating"
 					class="absolute right-4 bottom-3 inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors border border-border bg-background text-foreground hover:bg-muted h-9 px-4 disabled:opacity-50"
 				>
 					Create World

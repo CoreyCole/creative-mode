@@ -267,7 +267,16 @@ func (h *Handler) HandleChat(c echo.Context) error {
 
 	// Create Discord channel if world is ready.
 	if worldInfo != nil {
+		// Keep button disabled — world hatching is in progress.
+		if err := sse.MarshalAndPatchSignals(map[string]any{"world_creating": true}); err != nil {
+			c.Logger().Errorf("Failed to patch world_creating signal: %v", err)
+		}
 		h.prepareCoverArtAndHatch(c, sse, session, worldInfo.MayorName, worldInfo.WorldName, worldInfo.WorldSummary)
+	} else if forceCreate {
+		// Claude didn't emit WORLD_READY despite force-create — re-enable the button.
+		if err := sse.MarshalAndPatchSignals(map[string]any{"world_creating": false}); err != nil {
+			c.Logger().Errorf("Failed to patch world_creating signal: %v", err)
+		}
 	}
 
 	return nil

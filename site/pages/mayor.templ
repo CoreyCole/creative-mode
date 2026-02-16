@@ -5,13 +5,22 @@ import (
 	"github.com/starfederation/datastar-go/datastar"
 )
 
-templ MayorPage(rootArgs l.RootArgs, messages []ChatMessage) {
+templ MayorPage(rootArgs l.RootArgs, messages []ChatMessage, devMode bool) {
 	@l.Root(rootArgs) {
 		<div class="flex flex-col h-[calc(100dvh-3.5rem)]">
 			<!-- Compact header bar -->
 			<div class="shrink-0 border-b border-border/40 px-4 py-3">
 				<div class="mx-auto max-w-2xl">
-					<h1 class="text-lg font-semibold">Meet the Mayor</h1>
+					<div class="flex items-center justify-between">
+						<h1 class="text-lg font-semibold">Meet the Mayor</h1>
+						if devMode {
+							<form action="/dev/reset-conversation" method="POST">
+								<button type="submit" class="text-xs text-muted-foreground hover:text-foreground underline">
+									Start Over (dev)
+								</button>
+							</form>
+						}
+					</div>
 					<p class="text-sm text-muted-foreground">
 						Tell the Mayor about your dream world. When it's ready, we'll create it for you.
 					</p>

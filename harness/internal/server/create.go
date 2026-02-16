@@ -78,6 +78,13 @@ func (s *InMemoryMessageStore) DeleteOlderThan(_ time.Duration) error {
 	return nil // no-op for in-memory store
 }
 
+func (s *InMemoryMessageStore) DeleteUserMessages(userID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.messages, userID)
+	return nil
+}
+
 // handleCreatePage renders the create world chat page.
 func (s *Server) handleCreatePage(c echo.Context) error {
 	user, err := requireUser(c)

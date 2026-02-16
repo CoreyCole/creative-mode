@@ -12,6 +12,7 @@ type MessageStore interface {
 	AddMessage(userID, role, content string) error
 	GetMessages(userID string) ([]Message, error)
 	DeleteOlderThan(d time.Duration) error
+	DeleteUserMessages(userID string) error
 }
 
 // transientState holds per-user state that intentionally resets on restart.
@@ -168,6 +169,22 @@ func (cm *ConversationManager) SetHatched(userID string) bool {
 	}
 	ts.Hatched = true
 	return true
+}
+
+// ResetConversation clears both DB messages and in-memory transient state for a user.
+func (cm *ConversationManager) ResetConversation(userID string) error {
+	if err := cm.store.DeleteUserMessages(userID); err != nil {
+		return err
+	}
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	if ts, ok := cm.transient[userID]; ok {
+		if ts.CoverArtPath != "" {
+			_ = os.Remove(ts.CoverArtPath)
+		}
+		delete(cm.transient, userID)
+	}
+	return nil
 }
 
 // ClearWorldReady clears the world-ready state and removes any pending cover art file.

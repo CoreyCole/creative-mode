@@ -277,6 +277,17 @@ func main() {
 		return p.JoinDiscordPage(rootArgs, "We couldn't find you in the server yet — make sure you've joined and try again.").Render(c.Request().Context(), c.Response().Writer)
 	})
 
+	// --- Dev-only reset conversation (requires session) ---
+	if devMode {
+		sessionGroup.POST("/dev/reset-conversation", func(c echo.Context) error {
+			session := c.Get("session").(*auth.Session)
+			if err := convMgr.ResetConversation(session.DiscordID); err != nil {
+				return echo.NewHTTPError(http.StatusInternalServerError, "failed to reset conversation")
+			}
+			return c.Redirect(http.StatusSeeOther, "/mayor")
+		})
+	}
+
 	// --- Mayor page (requires session + guild membership + invite code) ---
 	guildGroup := sessionGroup.Group("", auth.GuildMemberMiddleware())
 	mayorGroup := guildGroup.Group("", auth.InviteCodeMiddleware())
@@ -335,7 +346,7 @@ func main() {
 			CurrentPath: c.Request().URL.Path,
 			Commit:      commit,
 		}
-		return p.MayorPage(rootArgs, chatMessages).Render(c.Request().Context(), c.Response().Writer)
+		return p.MayorPage(rootArgs, chatMessages, devMode).Render(c.Request().Context(), c.Response().Writer)
 	})
 
 	mayorGroup.POST("/mayor/chat", func(c echo.Context) error {

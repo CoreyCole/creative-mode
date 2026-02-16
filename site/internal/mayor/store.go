@@ -53,3 +53,9 @@ func (s *SQLiteMessageStore) DeleteOlderThan(_ time.Duration) error {
 	_, err := s.db.Exec(`DELETE FROM conversation_messages WHERE created_at < datetime('now', '-24 hours')`)
 	return err
 }
+
+// DeleteUserMessages removes all conversation messages for a given user.
+func (s *SQLiteMessageStore) DeleteUserMessages(userID string) error {
+	_, err := s.db.Exec(`DELETE FROM conversation_messages WHERE discord_id = ?`, userID)
+	return err
+}

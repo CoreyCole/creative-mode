@@ -63,6 +63,7 @@ type Querier interface {
 	UpdateLastSeen(ctx context.Context, id string) error
 	UpdateMayorBuildStatus(ctx context.Context, arg UpdateMayorBuildStatusParams) error
 	UpdateUserRole(ctx context.Context, arg UpdateUserRoleParams) (sql.Result, error)
+	UpdateWorldCoverImage(ctx context.Context, arg UpdateWorldCoverImageParams) error
 	UpdateWorldMayor(ctx context.Context, arg UpdateWorldMayorParams) error
 	UpsertMayorSession(ctx context.Context, arg UpsertMayorSessionParams) error
 	UpsertUser(ctx context.Context, arg UpsertUserParams) error

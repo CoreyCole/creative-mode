@@ -3,6 +3,7 @@ package mayor
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 )
@@ -15,8 +16,14 @@ type Message struct {
 
 // transientState holds per-user state that intentionally resets on restart.
 type transientState struct {
-	LastMessage time.Time
-	Scripted    bool
+	LastMessage  time.Time
+	Scripted     bool
+	WorldReady   bool
+	MayorName    string
+	WorldName    string
+	WorldSummary string
+	CoverArtPath string // disk path to pending cover art (NOT image bytes)
+	CoverArtMIME string
 }
 
 // ConversationManager manages per-user conversation state.
@@ -120,6 +127,80 @@ func (cm *ConversationManager) CheckRateLimit(userID string) error {
 	return nil
 }
 
+// SetWorldReady stores the world-ready info for later hatching.
+func (cm *ConversationManager) SetWorldReady(userID, mayorName, worldName, worldSummary string) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+
+	ts, ok := cm.transient[userID]
+	if !ok {
+		ts = &transientState{}
+		cm.transient[userID] = ts
+	}
+	ts.WorldReady = true
+	ts.MayorName = mayorName
+	ts.WorldName = worldName
+	ts.WorldSummary = worldSummary
+}
+
+// GetWorldReady returns the stored world-ready info.
+func (cm *ConversationManager) GetWorldReady(userID string) (mayorName, worldName, worldSummary string, ok bool) {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+
+	ts, exists := cm.transient[userID]
+	if !exists || !ts.WorldReady {
+		return "", "", "", false
+	}
+	return ts.MayorName, ts.WorldName, ts.WorldSummary, true
+}
+
+// SetCoverArtPath stores the disk path to the pending cover art.
+func (cm *ConversationManager) SetCoverArtPath(userID, path, mimeType string) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+
+	ts, ok := cm.transient[userID]
+	if !ok {
+		ts = &transientState{}
+		cm.transient[userID] = ts
+	}
+	ts.CoverArtPath = path
+	ts.CoverArtMIME = mimeType
+}
+
+// GetCoverArtPath returns the disk path and MIME type of the pending cover art.
+func (cm *ConversationManager) GetCoverArtPath(userID string) (path, mimeType string, ok bool) {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+
+	ts, exists := cm.transient[userID]
+	if !exists || ts.CoverArtPath == "" {
+		return "", "", false
+	}
+	return ts.CoverArtPath, ts.CoverArtMIME, true
+}
+
+// ClearWorldReady clears the world-ready state and removes any pending cover art file.
+func (cm *ConversationManager) ClearWorldReady(userID string) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+
+	ts, ok := cm.transient[userID]
+	if !ok {
+		return
+	}
+	if ts.CoverArtPath != "" {
+		_ = os.Remove(ts.CoverArtPath)
+	}
+	ts.WorldReady = false
+	ts.MayorName = ""
+	ts.WorldName = ""
+	ts.WorldSummary = ""
+	ts.CoverArtPath = ""
+	ts.CoverArtMIME = ""
+}
+
 // cleanupLoop removes stale conversations (older than 24 hours) and transient state.
 func (cm *ConversationManager) cleanupLoop() {
 	ticker := time.NewTicker(1 * time.Hour)
@@ -130,6 +211,10 @@ func (cm *ConversationManager) cleanupLoop() {
 		cm.mu.Lock()
 		for id, ts := range cm.transient {
 			if time.Since(ts.LastMessage) > 24*time.Hour {
+				// Clean up any pending cover art files.
+				if ts.CoverArtPath != "" {
+					_ = os.Remove(ts.CoverArtPath)
+				}
 				delete(cm.transient, id)
 			}
 		}

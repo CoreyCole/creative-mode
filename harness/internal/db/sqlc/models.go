@@ -123,6 +123,7 @@ type World struct {
 	MayorSecret      sql.NullString
 	DiscordChannelID sql.NullString
 	OpenClawAgentID  sql.NullString
+	CoverImagePath   sql.NullString
 }
 
 type WorldInvite struct {

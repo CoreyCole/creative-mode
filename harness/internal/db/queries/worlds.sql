@@ -4,12 +4,14 @@ VALUES (?, ?, ?, ?, ?);
 
 -- name: GetWorld :one
 SELECT id, name, description, created_by, created_at, template_type,
-       mayor_name, mayor_personality, mayor_secret, discord_channel_id, openclaw_agent_id
+       mayor_name, mayor_personality, mayor_secret, discord_channel_id, openclaw_agent_id,
+       cover_image_path
 FROM worlds WHERE id = ?;
 
 -- name: ListWorlds :many
 SELECT id, name, description, created_by, created_at, template_type,
-       mayor_name, mayor_personality, mayor_secret, discord_channel_id, openclaw_agent_id
+       mayor_name, mayor_personality, mayor_secret, discord_channel_id, openclaw_agent_id,
+       cover_image_path
 FROM worlds ORDER BY created_at ASC;
 
 -- name: UpdateWorldMayor :exec
@@ -19,15 +21,21 @@ WHERE id = ?;
 
 -- name: GetWorldByDiscordChannel :one
 SELECT id, name, description, created_by, created_at, template_type,
-       mayor_name, mayor_personality, mayor_secret, discord_channel_id, openclaw_agent_id
+       mayor_name, mayor_personality, mayor_secret, discord_channel_id, openclaw_agent_id,
+       cover_image_path
 FROM worlds WHERE discord_channel_id = ?;
 
 -- name: GetWorldByMayorSecret :one
 SELECT id, name, description, created_by, created_at, template_type,
-       mayor_name, mayor_personality, mayor_secret, discord_channel_id, openclaw_agent_id
+       mayor_name, mayor_personality, mayor_secret, discord_channel_id, openclaw_agent_id,
+       cover_image_path
 FROM worlds WHERE mayor_secret = ?;
 
 -- name: GetWorldsWithDiscordChannels :many
 SELECT id, name, description, created_by, created_at, template_type,
-       mayor_name, mayor_personality, mayor_secret, discord_channel_id, openclaw_agent_id
+       mayor_name, mayor_personality, mayor_secret, discord_channel_id, openclaw_agent_id,
+       cover_image_path
 FROM worlds WHERE discord_channel_id IS NOT NULL ORDER BY created_at ASC;
+
+-- name: UpdateWorldCoverImage :exec
+UPDATE worlds SET cover_image_path = ? WHERE id = ?;

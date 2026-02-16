@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/coreycole/creative-mode/pkg/imagegen"
 	"github.com/coreycole/creative-mode/pkg/worldchannel"
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -91,6 +92,22 @@ func main() {
 		log.Fatalf("Failed to create markdown renderer: %v", err)
 	}
 
+	// --- Image generation client (optional) ---
+	var imagegenClient *imagegen.Client
+	if geminiKey := os.Getenv("GEMINI_API_KEY"); geminiKey != "" {
+		var igErr error
+		imagegenClient, igErr = imagegen.NewClient(ctx, geminiKey, logger)
+		if igErr != nil {
+			log.Printf("WARNING: Failed to init Gemini client: %v (cover art generation disabled)", igErr)
+		}
+	}
+
+	// --- Data directory for pending cover art ---
+	dataDir := os.Getenv("SITE_DATA_DIR")
+	if dataDir == "" {
+		dataDir = "data"
+	}
+
 	// --- Claude client + mayor handler (optional) ---
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")
 	var mayorHandler *mayor.Handler
@@ -98,7 +115,7 @@ func main() {
 	if apiKey != "" {
 		client := mayor.NewClient(apiKey)
 		convMgr = mayor.NewConversationManager(database)
-		mayorHandler = mayor.NewHandler(client, convMgr, mdRenderer, wcClient)
+		mayorHandler = mayor.NewHandler(client, convMgr, mdRenderer, wcClient, imagegenClient, dataDir, logger)
 		mayorHandler.HarnessURL = os.Getenv("HARNESS_URL")
 	}
 
@@ -254,6 +271,27 @@ func main() {
 			return echo.NewHTTPError(http.StatusServiceUnavailable, "mayor not available")
 		}
 		return mayorHandler.HandleChat(c)
+	})
+
+	mayorGroup.GET("/mayor/cover-preview", func(c echo.Context) error {
+		if mayorHandler == nil {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "mayor not available")
+		}
+		return mayorHandler.HandleCoverPreview(c)
+	})
+
+	mayorGroup.POST("/mayor/generate-cover", func(c echo.Context) error {
+		if mayorHandler == nil {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "mayor not available")
+		}
+		return mayorHandler.HandleGenerateCover(c)
+	})
+
+	mayorGroup.POST("/mayor/hatch", func(c echo.Context) error {
+		if mayorHandler == nil {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "mayor not available")
+		}
+		return mayorHandler.HandleHatch(c)
 	})
 
 	// Graceful shutdown on SIGINT/SIGTERM.

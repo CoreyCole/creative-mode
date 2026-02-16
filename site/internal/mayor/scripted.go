@@ -62,13 +62,7 @@ func (h *Handler) handleScriptedResponse(c echo.Context, sse *datastar.ServerSen
 		worldSummary := truncate(nthUserMessage(updatedMessages, 0), 100)
 
 		if mayorName != "" && worldName != "" {
-			if h.wcClient != nil {
-				h.hatchWorld(c, sse, session, mayorName, worldName, worldSummary)
-			} else {
-				if err := sse.PatchElementTempl(p.WorldSummaryCard(worldName, mayorName, worldSummary)); err != nil {
-					c.Logger().Errorf("Failed to patch summary card: %v", err)
-				}
-			}
+			h.prepareCoverArtAndHatch(c, sse, session, mayorName, worldName, worldSummary)
 		}
 	}
 
@@ -107,13 +101,7 @@ func (h *Handler) handleScriptedForceCreate(c echo.Context, sse *datastar.Server
 	}
 
 	if mayorName != "" && worldName != "" {
-		if h.wcClient != nil {
-			h.hatchWorld(c, sse, session, mayorName, worldName, worldSummary)
-		} else {
-			if err := sse.PatchElementTempl(p.WorldSummaryCard(worldName, mayorName, worldSummary)); err != nil {
-				c.Logger().Errorf("Failed to patch summary card: %v", err)
-			}
-		}
+		h.prepareCoverArtAndHatch(c, sse, session, mayorName, worldName, worldSummary)
 	}
 
 	return nil

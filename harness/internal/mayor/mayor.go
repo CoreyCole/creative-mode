@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 
 	"github.com/coreycole/creative-mode/pkg/worldchannel"
 	"github.com/google/uuid"
@@ -21,6 +23,7 @@ type Manager struct {
 	openclawHome string
 	openclawBin  string // path to openclaw CLI binary
 	harnessURL   string
+	dataDir      string // data directory for cover images etc.
 	wcClient     *worldchannel.Client
 	db           *db.DB
 	logger       *slog.Logger
@@ -28,7 +31,7 @@ type Manager struct {
 
 // NewManager creates a new mayor Manager.
 func NewManager(
-	openclawHome, openclawBin, harnessURL string,
+	openclawHome, openclawBin, harnessURL, dataDir string,
 	wcClient *worldchannel.Client,
 	database *db.DB,
 	logger *slog.Logger,
@@ -37,6 +40,7 @@ func NewManager(
 		openclawHome: openclawHome,
 		openclawBin:  openclawBin,
 		harnessURL:   harnessURL,
+		dataDir:      dataDir,
 		wcClient:     wcClient,
 		db:           database,
 		logger:       logger,
@@ -46,8 +50,10 @@ func NewManager(
 // ProvisionFromWebhook handles the full provisioning flow triggered by the
 // world-hatched webhook. It reads onboarding data from Discord, creates a
 // world in the harness DB, generates workspace files, and registers the agent.
+// Cover art data (if provided) is saved to disk after world creation.
 func (m *Manager) ProvisionFromWebhook(
 	discordChannelID, worldName, mayorName, creatorDiscordID, creatorUsername string,
+	coverImageData []byte, coverImageMIME string,
 ) error {
 	ctx := context.Background()
 
@@ -95,6 +101,34 @@ func (m *Manager) ProvisionFromWebhook(
 		TemplateType: "2d", // Default to 2D for mayor-managed worlds
 	}); err != nil {
 		return fmt.Errorf("creating world: %w", err)
+	}
+
+	// Save cover art to disk and update DB (if provided).
+	if len(coverImageData) > 0 {
+		ext := mimeToExt(coverImageMIME)
+		coverDir := filepath.Join(m.dataDir, "cover-images")
+		if mkdirErr := os.MkdirAll(coverDir, 0o750); mkdirErr != nil {
+			m.logger.Warn("failed to create cover-images dir", "error", mkdirErr)
+		} else {
+			coverPath := filepath.Join(coverDir, worldID+ext)
+			if writeErr := os.WriteFile(
+				coverPath,
+				coverImageData,
+				0o600,
+			); writeErr != nil {
+				m.logger.Warn("failed to write cover art", "error", writeErr)
+			} else if dbErr := m.db.UpdateWorldCoverImage(
+				ctx,
+				sqlc.UpdateWorldCoverImageParams{
+					CoverImagePath: sql.NullString{String: coverPath, Valid: true},
+					ID:             worldID,
+				},
+			); dbErr != nil {
+				m.logger.Warn("failed to update cover image path in DB", "error", dbErr)
+			} else {
+				m.logger.Info("saved cover art", "world_id", worldID, "path", coverPath)
+			}
+		}
 	}
 
 	// Generate mayor secret.
@@ -172,4 +206,16 @@ func (m *Manager) PostToDiscord(channelID, content string) {
 // IsGatewayHealthy checks if the OpenClaw gateway is responsive.
 func (m *Manager) IsGatewayHealthy() bool {
 	return checkGatewayHealth()
+}
+
+// mimeToExt returns a file extension for the given MIME type.
+func mimeToExt(mime string) string {
+	switch mime {
+	case "image/jpeg":
+		return ".jpg"
+	case "image/webp":
+		return ".webp"
+	default:
+		return ".png"
+	}
 }

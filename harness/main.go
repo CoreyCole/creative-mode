@@ -358,7 +358,7 @@ func initMayorManager(
 
 	openclawHome, openclawBin := resolveOpenclawPaths(dataDir)
 	mgr := mayor.NewManager(
-		openclawHome, openclawBin, baseURL,
+		openclawHome, openclawBin, baseURL, dataDir,
 		wcClient, database, logger,
 	)
 	logger.Info("Mayor manager enabled",

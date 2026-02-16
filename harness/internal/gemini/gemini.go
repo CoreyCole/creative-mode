@@ -3,7 +3,6 @@ package gemini
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -15,14 +14,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/coreycole/creative-mode/pkg/imagegen"
 	"github.com/google/uuid"
-	"google.golang.org/genai"
 )
 
 const (
 	cacheTTL      = 30 * time.Minute
 	cacheMaxItems = 50
-	modelName     = "gemini-2.5-flash-image"
 
 	// chromakeySuffix is appended to every prompt to get a removable background.
 	chromakeySuffix = " on a solid, flat, uniform chromakey green background. " +
@@ -59,9 +57,9 @@ type GeneratedImage struct {
 	CreatedAt time.Time
 }
 
-// Client wraps the Google Gen AI SDK for image generation.
+// Client wraps the shared imagegen.Client with caching and chromakey support.
 type Client struct {
-	client *genai.Client
+	core   *imagegen.Client
 	logger *slog.Logger
 	mu     sync.RWMutex
 	cache  map[string]*GeneratedImage
@@ -69,20 +67,16 @@ type Client struct {
 
 // NewClient creates a Gemini client. Returns nil, nil if apiKey is empty (feature disabled).
 func NewClient(ctx context.Context, apiKey string, logger *slog.Logger) (*Client, error) {
-	if apiKey == "" {
+	core, err := imagegen.NewClient(ctx, apiKey, logger)
+	if err != nil {
+		return nil, err
+	}
+	if core == nil {
 		return nil, nil //nolint:nilnil // nil client means feature disabled
 	}
 
-	client, err := genai.NewClient(ctx, &genai.ClientConfig{
-		APIKey:  apiKey,
-		Backend: genai.BackendGeminiAPI,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("create genai client: %w", err)
-	}
-
 	return &Client{
-		client: client,
+		core:   core,
 		logger: logger,
 		cache:  make(map[string]*GeneratedImage),
 	}, nil
@@ -99,93 +93,53 @@ func (c *Client) Generate(
 ) (*GeneratedImage, error) {
 	c.evictExpired()
 
-	config := &genai.GenerateContentConfig{
-		ResponseModalities: []string{"TEXT", "IMAGE"},
+	opts := imagegen.GenerateOptions{
+		AspectRatio: aspectRatio,
 	}
-
-	if aspectRatio != "" {
-		config.ImageConfig = &genai.ImageConfig{
-			AspectRatio: aspectRatio,
-		}
-	}
-
-	fullPrompt := prompt
 	if transparentBG {
-		fullPrompt += chromakeySuffix
+		opts.PromptSuffix = chromakeySuffix
 	}
 
-	result, err := c.client.Models.GenerateContent(
-		ctx, modelName, genai.Text(fullPrompt), config,
-	)
+	raw, err := c.core.Generate(ctx, prompt, opts)
 	if err != nil {
-		return nil, fmt.Errorf("generate content: %w", err)
+		return nil, err
 	}
 
-	// Extract image from response parts.
-	for _, candidate := range result.Candidates {
-		if candidate.Content == nil {
-			continue
-		}
+	imgData := raw.Data
+	mimeType := raw.MIMEType
 
-		for _, part := range candidate.Content.Parts {
-			if part.InlineData == nil || part.InlineData.Data == nil {
-				continue
-			}
-
-			rawData := part.InlineData.Data
-			imgData := rawData
-			mimeType := detectMIMEType(rawData)
-
-			if transparentBG {
-				pngData, chromaErr := removeGreenBackground(rawData)
-				if chromaErr != nil {
-					c.logger.Warn("chromakey removal failed, using raw image",
-						"error", chromaErr)
-				} else {
-					imgData = pngData
-					mimeType = "image/png"
-				}
-			}
-
-			img := &GeneratedImage{
-				ID:        uuid.New().String()[:8],
-				Data:      imgData,
-				MIMEType:  mimeType,
-				Prompt:    prompt,
-				CreatedAt: time.Now(),
-			}
-
-			c.mu.Lock()
-			c.cache[img.ID] = img
-			c.mu.Unlock()
-
-			c.logger.Info("generated image",
-				"id", img.ID,
-				"size", len(imgData),
-				"mimeType", mimeType,
-				"transparentBG", transparentBG,
-				"prompt", prompt,
-			)
-
-			return img, nil
+	if transparentBG {
+		pngData, chromaErr := removeGreenBackground(raw.Data)
+		if chromaErr != nil {
+			c.logger.Warn("chromakey removal failed, using raw image",
+				"error", chromaErr)
+		} else {
+			imgData = pngData
+			mimeType = "image/png"
 		}
 	}
 
-	return nil, errors.New("no image in response")
-}
-
-// detectMIMEType returns the MIME type based on magic bytes.
-func detectMIMEType(data []byte) string {
-	if len(data) >= 2 && data[0] == 0xFF && data[1] == 0xD8 {
-		return "image/jpeg"
+	img := &GeneratedImage{
+		ID:        uuid.New().String()[:8],
+		Data:      imgData,
+		MIMEType:  mimeType,
+		Prompt:    prompt,
+		CreatedAt: time.Now(),
 	}
 
-	if len(data) >= 4 && data[0] == 0x52 && data[1] == 0x49 && data[2] == 0x46 &&
-		data[3] == 0x46 {
-		return "image/webp"
-	}
+	c.mu.Lock()
+	c.cache[img.ID] = img
+	c.mu.Unlock()
 
-	return "image/png"
+	c.logger.Info("generated image",
+		"id", img.ID,
+		"size", len(imgData),
+		"mimeType", mimeType,
+		"transparentBG", transparentBG,
+		"prompt", prompt,
+	)
+
+	return img, nil
 }
 
 // GetCached returns a cached generated image by ID, or nil if not found/expired.

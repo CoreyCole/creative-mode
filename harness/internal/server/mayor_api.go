@@ -2,6 +2,7 @@ package server
 
 import (
 	"database/sql"
+	"encoding/base64"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -20,6 +21,8 @@ func (s *Server) handleWorldHatched(c echo.Context) error {
 		MayorName        string `json:"mayor_name"`
 		CreatorDiscordID string `json:"creator_discord_id"`
 		CreatorUsername  string `json:"creator_username"`
+		CoverImageBase64 string `json:"cover_image_base64"`
+		CoverImageMIME   string `json:"cover_image_mime"`
 	}
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
@@ -31,11 +34,25 @@ func (s *Server) handleWorldHatched(c echo.Context) error {
 		)
 	}
 
+	// Decode cover art if present (graceful — log warning on failure, continue without).
+	var coverImageData []byte
+	coverImageMIME := req.CoverImageMIME
+	if req.CoverImageBase64 != "" {
+		var decodeErr error
+		coverImageData, decodeErr = base64.StdEncoding.DecodeString(req.CoverImageBase64)
+		if decodeErr != nil {
+			s.Logger.Warn("failed to decode cover art base64, continuing without",
+				"error", decodeErr)
+			coverImageData = nil
+		}
+	}
+
 	s.Logger.Info("world-hatched webhook received",
 		"world_name", req.WorldName,
 		"mayor_name", req.MayorName,
 		"discord_channel_id", req.DiscordChannelID,
 		"creator", req.CreatorUsername,
+		"has_cover_art", len(coverImageData) > 0,
 	)
 
 	// Provision mayor agent asynchronously if MayorManager is available.
@@ -47,6 +64,8 @@ func (s *Server) handleWorldHatched(c echo.Context) error {
 				req.MayorName,
 				req.CreatorDiscordID,
 				req.CreatorUsername,
+				coverImageData,
+				coverImageMIME,
 			); err != nil {
 				s.Logger.Error("failed to provision mayor agent",
 					"world_name", req.WorldName,

@@ -187,6 +187,9 @@ func (s *Server) RegisterRoutes(e *echo.Echo) {
 	// Asset upload (approved users).
 	approved.POST("/api/assets/upload", s.handleAssetUpload)
 
+	// Cover art (approved users).
+	approved.GET("/api/worlds/:worldID/cover", s.handleWorldCover)
+
 	// Image generation (approved users).
 	approved.POST("/api/images/generate", s.handleImageGenerate)
 	approved.GET("/api/images/preview/:genID", s.handleImagePreview)

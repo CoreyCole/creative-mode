@@ -36,7 +36,8 @@ func (q *Queries) CreateWorld(ctx context.Context, arg CreateWorldParams) error 
 
 const getWorld = `-- name: GetWorld :one
 SELECT id, name, description, created_by, created_at, template_type,
-       mayor_name, mayor_personality, mayor_secret, discord_channel_id, openclaw_agent_id
+       mayor_name, mayor_personality, mayor_secret, discord_channel_id, openclaw_agent_id,
+       cover_image_path
 FROM worlds WHERE id = ?
 `
 
@@ -55,13 +56,15 @@ func (q *Queries) GetWorld(ctx context.Context, id string) (World, error) {
 		&i.MayorSecret,
 		&i.DiscordChannelID,
 		&i.OpenClawAgentID,
+		&i.CoverImagePath,
 	)
 	return i, err
 }
 
 const getWorldByDiscordChannel = `-- name: GetWorldByDiscordChannel :one
 SELECT id, name, description, created_by, created_at, template_type,
-       mayor_name, mayor_personality, mayor_secret, discord_channel_id, openclaw_agent_id
+       mayor_name, mayor_personality, mayor_secret, discord_channel_id, openclaw_agent_id,
+       cover_image_path
 FROM worlds WHERE discord_channel_id = ?
 `
 
@@ -80,13 +83,15 @@ func (q *Queries) GetWorldByDiscordChannel(ctx context.Context, discordChannelID
 		&i.MayorSecret,
 		&i.DiscordChannelID,
 		&i.OpenClawAgentID,
+		&i.CoverImagePath,
 	)
 	return i, err
 }
 
 const getWorldByMayorSecret = `-- name: GetWorldByMayorSecret :one
 SELECT id, name, description, created_by, created_at, template_type,
-       mayor_name, mayor_personality, mayor_secret, discord_channel_id, openclaw_agent_id
+       mayor_name, mayor_personality, mayor_secret, discord_channel_id, openclaw_agent_id,
+       cover_image_path
 FROM worlds WHERE mayor_secret = ?
 `
 
@@ -105,13 +110,15 @@ func (q *Queries) GetWorldByMayorSecret(ctx context.Context, mayorSecret sql.Nul
 		&i.MayorSecret,
 		&i.DiscordChannelID,
 		&i.OpenClawAgentID,
+		&i.CoverImagePath,
 	)
 	return i, err
 }
 
 const getWorldsWithDiscordChannels = `-- name: GetWorldsWithDiscordChannels :many
 SELECT id, name, description, created_by, created_at, template_type,
-       mayor_name, mayor_personality, mayor_secret, discord_channel_id, openclaw_agent_id
+       mayor_name, mayor_personality, mayor_secret, discord_channel_id, openclaw_agent_id,
+       cover_image_path
 FROM worlds WHERE discord_channel_id IS NOT NULL ORDER BY created_at ASC
 `
 
@@ -136,6 +143,7 @@ func (q *Queries) GetWorldsWithDiscordChannels(ctx context.Context) ([]World, er
 			&i.MayorSecret,
 			&i.DiscordChannelID,
 			&i.OpenClawAgentID,
+			&i.CoverImagePath,
 		); err != nil {
 			return nil, err
 		}
@@ -152,7 +160,8 @@ func (q *Queries) GetWorldsWithDiscordChannels(ctx context.Context) ([]World, er
 
 const listWorlds = `-- name: ListWorlds :many
 SELECT id, name, description, created_by, created_at, template_type,
-       mayor_name, mayor_personality, mayor_secret, discord_channel_id, openclaw_agent_id
+       mayor_name, mayor_personality, mayor_secret, discord_channel_id, openclaw_agent_id,
+       cover_image_path
 FROM worlds ORDER BY created_at ASC
 `
 
@@ -177,6 +186,7 @@ func (q *Queries) ListWorlds(ctx context.Context) ([]World, error) {
 			&i.MayorSecret,
 			&i.DiscordChannelID,
 			&i.OpenClawAgentID,
+			&i.CoverImagePath,
 		); err != nil {
 			return nil, err
 		}
@@ -189,6 +199,20 @@ func (q *Queries) ListWorlds(ctx context.Context) ([]World, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateWorldCoverImage = `-- name: UpdateWorldCoverImage :exec
+UPDATE worlds SET cover_image_path = ? WHERE id = ?
+`
+
+type UpdateWorldCoverImageParams struct {
+	CoverImagePath sql.NullString
+	ID             string
+}
+
+func (q *Queries) UpdateWorldCoverImage(ctx context.Context, arg UpdateWorldCoverImageParams) error {
+	_, err := q.db.ExecContext(ctx, updateWorldCoverImage, arg.CoverImagePath, arg.ID)
+	return err
 }
 
 const updateWorldMayor = `-- name: UpdateWorldMayor :exec

@@ -95,6 +95,7 @@ func (d *DB) runMigrations(ctx context.Context) error {
 		"migrations/002_cascades_indexes.sql",
 		"migrations/003_template_type.sql",
 		"migrations/004_mayor_and_instrumentation.sql",
+		"migrations/005_cover_image.sql",
 	}
 	for _, file := range migrationFiles {
 		// Check if already applied.
@@ -170,6 +171,17 @@ func (d *DB) bootstrapExistingMigrations(ctx context.Context) {
 		_, _ = d.db.ExecContext(ctx,
 			"INSERT OR IGNORE INTO _migrations (name) VALUES (?)",
 			"migrations/004_mayor_and_instrumentation.sql")
+	}
+
+	// 005: adds cover_image_path column to worlds.
+	var hasCoverCol int
+	_ = d.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM pragma_table_info('worlds') WHERE name='cover_image_path'",
+	).Scan(&hasCoverCol)
+	if hasCoverCol > 0 {
+		_, _ = d.db.ExecContext(ctx,
+			"INSERT OR IGNORE INTO _migrations (name) VALUES (?)",
+			"migrations/005_cover_image.sql")
 	}
 }
 

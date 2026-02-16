@@ -44,12 +44,26 @@ templ Page(user *sqlc.User, worlds []sqlc.World) {
 						for _, w := range worlds {
 							<a
 								href={ templ.SafeURL("/world/" + w.ID) }
-								class="block p-4 border border-border rounded-lg bg-card hover:border-muted-foreground/40 transition-colors no-underline text-inherit"
+								class="block border border-border rounded-lg bg-card hover:border-muted-foreground/40 transition-colors no-underline text-inherit overflow-hidden"
 							>
-								<h3 class="text-base mb-1">{ w.Name }</h3>
-								if w.Description.Valid {
-									<p class="text-muted-foreground text-[13px]">{ w.Description.String }</p>
+								if w.CoverImagePath.Valid {
+									<img
+										src={ "/api/worlds/" + w.ID + "/cover" }
+										alt={ w.Name + " cover art" }
+										class="w-full h-32 object-cover"
+										loading="lazy"
+									/>
+								} else {
+									<div class="w-full h-32 bg-muted/30 flex items-center justify-center">
+										<span class="text-muted-foreground/40 text-2xl">&#127758;</span>
+									</div>
 								}
+								<div class="p-4">
+									<h3 class="text-base mb-1">{ w.Name }</h3>
+									if w.Description.Valid {
+										<p class="text-muted-foreground text-[13px]">{ w.Description.String }</p>
+									}
+								</div>
 							</a>
 						}
 					</div>

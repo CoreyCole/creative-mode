@@ -2,16 +2,19 @@ package mayor
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/coreycole/creative-mode/pkg/imagegen"
 	"github.com/coreycole/creative-mode/pkg/worldchannel"
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -30,20 +33,26 @@ type ChatSignals struct {
 
 // Handler handles the mayor chat SSE endpoint.
 type Handler struct {
-	client     anthropic.Client
-	convMgr    *ConversationManager
-	mdRenderer *markdown.Renderer
-	wcClient   *worldchannel.Client // nil if no bot token configured
-	HarnessURL string               // optional — shown on world hatch card
+	client         anthropic.Client
+	convMgr        *ConversationManager
+	mdRenderer     *markdown.Renderer
+	wcClient       *worldchannel.Client // nil if no bot token configured
+	imagegenClient *imagegen.Client     // nil if no Gemini API key configured
+	dataDir        string               // data directory for pending cover art
+	logger         *slog.Logger
+	HarnessURL     string // optional — shown on world hatch card
 }
 
 // NewHandler creates a new mayor chat handler.
-func NewHandler(client anthropic.Client, convMgr *ConversationManager, mdRenderer *markdown.Renderer, wcClient *worldchannel.Client) *Handler {
+func NewHandler(client anthropic.Client, convMgr *ConversationManager, mdRenderer *markdown.Renderer, wcClient *worldchannel.Client, imagegenClient *imagegen.Client, dataDir string, logger *slog.Logger) *Handler {
 	return &Handler{
-		client:     client,
-		convMgr:    convMgr,
-		mdRenderer: mdRenderer,
-		wcClient:   wcClient,
+		client:         client,
+		convMgr:        convMgr,
+		mdRenderer:     mdRenderer,
+		wcClient:       wcClient,
+		imagegenClient: imagegenClient,
+		dataDir:        dataDir,
+		logger:         logger,
 	}
 }
 
@@ -274,21 +283,74 @@ func (h *Handler) HandleChat(c echo.Context) error {
 
 	// Create Discord channel if world is ready.
 	if mayorName != "" && worldName != "" {
-		if h.wcClient != nil {
-			h.hatchWorld(c, sse, session, mayorName, worldName, worldSummary)
-		} else {
-			// No bot token — show summary card without Discord link.
-			if err := sse.PatchElementTempl(p.WorldSummaryCard(worldName, mayorName, worldSummary)); err != nil {
-				c.Logger().Errorf("Failed to patch summary card: %v", err)
-			}
-		}
+		h.prepareCoverArtAndHatch(c, sse, session, mayorName, worldName, worldSummary)
 	}
 
 	return nil
 }
 
-// hatchWorld creates the Discord channel and sends the welcome message.
-func (h *Handler) hatchWorld(c echo.Context, sse *datastar.ServerSentEventGenerator, session *auth.Session, mayorName, worldName, worldSummary string) {
+// prepareCoverArtAndHatch is the unified entry point for ALL code paths that
+// reach WORLD_READY. It handles cover art generation (if Gemini is available)
+// and then either hatches immediately or shows the cover art preview UI.
+func (h *Handler) prepareCoverArtAndHatch(c echo.Context, sse *datastar.ServerSentEventGenerator, session *auth.Session, mayorName, worldName, worldSummary string) {
+	// Store world-ready state for later use by HandleHatch/HandleGenerateCover.
+	h.convMgr.SetWorldReady(session.DiscordID, mayorName, worldName, worldSummary)
+
+	if h.wcClient == nil {
+		// No Discord bot — show summary card only.
+		if err := sse.PatchElementTempl(p.WorldSummaryCard(worldName, mayorName, worldSummary)); err != nil {
+			c.Logger().Errorf("Failed to patch summary card: %v", err)
+		}
+		return
+	}
+
+	if h.imagegenClient == nil {
+		// No Gemini — hatch immediately (current behavior, zero regression).
+		h.hatchWorldWithCover(c, sse, session, mayorName, worldName, worldSummary, nil, "")
+		return
+	}
+
+	// Show loading spinner while generating cover art.
+	if err := sse.PatchElementTempl(p.CoverArtGenerating(worldName, mayorName)); err != nil {
+		c.Logger().Errorf("Failed to patch cover art loading: %v", err)
+		// Fall back to immediate hatch.
+		h.hatchWorldWithCover(c, sse, session, mayorName, worldName, worldSummary, nil, "")
+		return
+	}
+
+	// Generate cover art (3-10s).
+	prompt := buildCoverArtPrompt(worldName, worldSummary)
+	result, err := h.imagegenClient.Generate(c.Request().Context(), prompt, imagegen.GenerateOptions{
+		AspectRatio: "16:9",
+	})
+	if err != nil {
+		c.Logger().Errorf("Cover art generation failed: %v", err)
+		if patchErr := sse.PatchElementTempl(p.CoverArtError(err.Error(), worldName, mayorName)); patchErr != nil {
+			c.Logger().Errorf("Failed to patch cover art error: %v", patchErr)
+		}
+		return
+	}
+
+	// Save to disk.
+	artPath, saveErr := savePendingCoverArt(h.dataDir, session.DiscordID, result.Data, result.MIMEType)
+	if saveErr != nil {
+		c.Logger().Errorf("Failed to save cover art to disk: %v", saveErr)
+		if patchErr := sse.PatchElementTempl(p.CoverArtError(saveErr.Error(), worldName, mayorName)); patchErr != nil {
+			c.Logger().Errorf("Failed to patch cover art error: %v", patchErr)
+		}
+		return
+	}
+	h.convMgr.SetCoverArtPath(session.DiscordID, artPath, result.MIMEType)
+
+	// Show preview with Hatch/Regenerate buttons.
+	if err := sse.PatchElementTempl(p.CoverArtPreview("/mayor/cover-preview", worldName, mayorName)); err != nil {
+		c.Logger().Errorf("Failed to patch cover art preview: %v", err)
+	}
+}
+
+// hatchWorldWithCover creates the Discord channel and optionally includes cover art
+// in the harness webhook.
+func (h *Handler) hatchWorldWithCover(c echo.Context, sse *datastar.ServerSentEventGenerator, session *auth.Session, mayorName, worldName, worldSummary string, coverArtData []byte, coverArtMIME string) {
 	// Silent race-condition safety net: if name was taken since page load,
 	// append a roman numeral suffix.
 	finalMayorName := mayorName
@@ -311,7 +373,6 @@ func (h *Handler) hatchWorld(c echo.Context, sse *datastar.ServerSentEventGenera
 	})
 	if err != nil {
 		c.Logger().Errorf("Channel creation failed: %v", err)
-		// Fall back to summary card without Discord link.
 		if patchErr := sse.PatchElementTempl(p.WorldSummaryCard(worldName, finalMayorName, worldSummary)); patchErr != nil {
 			c.Logger().Errorf("Failed to patch summary card: %v", patchErr)
 		}
@@ -330,8 +391,11 @@ func (h *Handler) hatchWorld(c echo.Context, sse *datastar.ServerSentEventGenera
 	// Persist onboarding conversation for future OpenClaw agent bootstrap.
 	h.pinOnboardingConversation(c, result.ChannelID, session, finalMayorName, worldName, worldSummary)
 
-	// Notify harness that a world was hatched (fire and forget).
-	go h.notifyHarnessWorldHatched(result.ChannelID, worldName, finalMayorName, session.DiscordID, session.DiscordUsername)
+	// Notify harness (with cover art if available).
+	go h.notifyHarnessWorldHatchedWithCover(result.ChannelID, worldName, finalMayorName, session.DiscordID, session.DiscordUsername, coverArtData, coverArtMIME)
+
+	// Clear world-ready state (also removes pending cover art file).
+	h.convMgr.ClearWorldReady(session.DiscordID)
 
 	// Show hatched card with Discord link and optional harness link.
 	channelURL := fmt.Sprintf("https://discord.com/channels/%s/%s",
@@ -342,6 +406,160 @@ func (h *Handler) hatchWorld(c echo.Context, sse *datastar.ServerSentEventGenera
 		h.HarnessURL,
 	)); err != nil {
 		c.Logger().Errorf("Failed to patch hatched card: %v", err)
+	}
+}
+
+// HandleCoverPreview serves the pending cover art image from disk.
+// GET /mayor/cover-preview
+func (h *Handler) HandleCoverPreview(c echo.Context) error {
+	session, ok := c.Get("session").(*auth.Session)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+
+	artPath, _, ok := h.convMgr.GetCoverArtPath(session.DiscordID)
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotFound, "no pending cover art")
+	}
+
+	return c.File(artPath)
+}
+
+// HandleGenerateCover regenerates cover art via SSE.
+// POST /mayor/generate-cover
+func (h *Handler) HandleGenerateCover(c echo.Context) error {
+	session, ok := c.Get("session").(*auth.Session)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+
+	mayorName, worldName, worldSummary, ready := h.convMgr.GetWorldReady(session.DiscordID)
+	if !ready {
+		return echo.NewHTTPError(http.StatusBadRequest, "no world ready for cover art generation")
+	}
+
+	sse := datastar.NewSSE(c.Response().Writer, c.Request())
+
+	if h.imagegenClient == nil {
+		// Shouldn't happen (button wouldn't be shown), but handle gracefully.
+		h.hatchWorldWithCover(c, sse, session, mayorName, worldName, worldSummary, nil, "")
+		return nil
+	}
+
+	// Show loading spinner.
+	if err := sse.PatchElementTempl(p.CoverArtGenerating(worldName, mayorName)); err != nil {
+		c.Logger().Errorf("Failed to patch cover art loading: %v", err)
+	}
+
+	// Generate cover art.
+	prompt := buildCoverArtPrompt(worldName, worldSummary)
+	result, err := h.imagegenClient.Generate(c.Request().Context(), prompt, imagegen.GenerateOptions{
+		AspectRatio: "16:9",
+	})
+	if err != nil {
+		c.Logger().Errorf("Cover art regeneration failed: %v", err)
+		if patchErr := sse.PatchElementTempl(p.CoverArtError(err.Error(), worldName, mayorName)); patchErr != nil {
+			c.Logger().Errorf("Failed to patch cover art error: %v", patchErr)
+		}
+		return nil
+	}
+
+	// Save to disk (overwrites previous).
+	artPath, saveErr := savePendingCoverArt(h.dataDir, session.DiscordID, result.Data, result.MIMEType)
+	if saveErr != nil {
+		c.Logger().Errorf("Failed to save regenerated cover art: %v", saveErr)
+		if patchErr := sse.PatchElementTempl(p.CoverArtError(saveErr.Error(), worldName, mayorName)); patchErr != nil {
+			c.Logger().Errorf("Failed to patch cover art error: %v", patchErr)
+		}
+		return nil
+	}
+	h.convMgr.SetCoverArtPath(session.DiscordID, artPath, result.MIMEType)
+
+	// Show preview with cache-busting query param.
+	previewURL := fmt.Sprintf("/mayor/cover-preview?t=%d", time.Now().UnixMilli())
+	if err := sse.PatchElementTempl(p.CoverArtPreview(previewURL, worldName, mayorName)); err != nil {
+		c.Logger().Errorf("Failed to patch cover art preview: %v", err)
+	}
+
+	return nil
+}
+
+// HandleHatch reads pending cover art from disk and hatches the world.
+// POST /mayor/hatch
+func (h *Handler) HandleHatch(c echo.Context) error {
+	session, ok := c.Get("session").(*auth.Session)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
+	}
+
+	mayorName, worldName, worldSummary, ready := h.convMgr.GetWorldReady(session.DiscordID)
+	if !ready {
+		return echo.NewHTTPError(http.StatusBadRequest, "no world ready to hatch")
+	}
+
+	sse := datastar.NewSSE(c.Response().Writer, c.Request())
+
+	// Read cover art from disk (if available).
+	var coverData []byte
+	var coverMIME string
+	if artPath, mime, ok := h.convMgr.GetCoverArtPath(session.DiscordID); ok {
+		data, err := os.ReadFile(artPath)
+		if err != nil {
+			h.logger.Warn("failed to read pending cover art, hatching without", "error", err)
+		} else {
+			coverData = data
+			coverMIME = mime
+		}
+	}
+
+	h.hatchWorldWithCover(c, sse, session, mayorName, worldName, worldSummary, coverData, coverMIME)
+	return nil
+}
+
+// notifyHarnessWorldHatchedWithCover sends the world-hatched webhook with
+// optional cover art as base64. Non-blocking — errors are logged.
+func (h *Handler) notifyHarnessWorldHatchedWithCover(channelID, worldName, mayorName, creatorDiscordID, creatorUsername string, coverData []byte, coverMIME string) {
+	harnessURL := h.HarnessURL
+	if harnessURL == "" {
+		return
+	}
+
+	hookSecret := os.Getenv("CM_HOOK_SECRET")
+
+	payloadMap := map[string]string{
+		"discord_channel_id": channelID,
+		"world_name":         worldName,
+		"mayor_name":         mayorName,
+		"creator_discord_id": creatorDiscordID,
+		"creator_username":   creatorUsername,
+	}
+	if len(coverData) > 0 {
+		payloadMap["cover_image_base64"] = base64.StdEncoding.EncodeToString(coverData)
+		payloadMap["cover_image_mime"] = coverMIME
+	}
+
+	payload, _ := json.Marshal(payloadMap)
+
+	req, err := http.NewRequest(http.MethodPost, harnessURL+"/api/world-hatched", bytes.NewReader(payload))
+	if err != nil {
+		h.logger.Error("failed to create world-hatched request", "error", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if hookSecret != "" {
+		req.Header.Set("X-Hook-Secret", hookSecret)
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		h.logger.Error("world-hatched webhook failed", "error", err)
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusAccepted {
+		h.logger.Error("world-hatched webhook returned unexpected status", "status", resp.StatusCode)
 	}
 }
 
@@ -368,48 +586,6 @@ func (h *Handler) pinOnboardingConversation(c echo.Context, channelID string, se
 		Messages: onboardingMessages,
 	}); err != nil {
 		c.Logger().Errorf("Failed to pin onboarding data: %v", err)
-	}
-}
-
-// notifyHarnessWorldHatched sends a webhook to the harness server to trigger
-// mayor agent provisioning. Non-blocking — errors are logged but don't fail
-// the user flow.
-func (h *Handler) notifyHarnessWorldHatched(channelID, worldName, mayorName, creatorDiscordID, creatorUsername string) {
-	harnessURL := h.HarnessURL
-	if harnessURL == "" {
-		return
-	}
-
-	hookSecret := os.Getenv("CM_HOOK_SECRET")
-
-	payload, _ := json.Marshal(map[string]string{
-		"discord_channel_id": channelID,
-		"world_name":         worldName,
-		"mayor_name":         mayorName,
-		"creator_discord_id": creatorDiscordID,
-		"creator_username":   creatorUsername,
-	})
-
-	req, err := http.NewRequest(http.MethodPost, harnessURL+"/api/world-hatched", bytes.NewReader(payload))
-	if err != nil {
-		fmt.Printf("ERROR: failed to create world-hatched request: %v\n", err)
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if hookSecret != "" {
-		req.Header.Set("X-Hook-Secret", hookSecret)
-	}
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		fmt.Printf("ERROR: world-hatched webhook failed: %v\n", err)
-		return
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusAccepted {
-		fmt.Printf("ERROR: world-hatched webhook returned %d\n", resp.StatusCode)
 	}
 }
 

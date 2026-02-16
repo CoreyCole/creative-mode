@@ -51,6 +51,7 @@ sql:
           duration_seconds: "DurationSeconds"
           error_message: "ErrorMessage"
           invited_by: "InvitedBy"
+          cover_image_path: "CoverImagePath"
         overrides:
           - db_type: "TIMESTAMP"
             go_type:

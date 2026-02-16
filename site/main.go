@@ -102,6 +102,7 @@ func main() {
 		ReferrerPolicy:        "strict-origin-when-cross-origin",
 		ContentSecurityPolicy: "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://cdn.discordapp.com",
 	}))
+	e.Use(monitor.PageViewMiddleware(database))
 
 	// --- Auth setup ---
 	authConfig := &auth.Config{
@@ -174,6 +175,7 @@ func main() {
 		os.Getenv("HARNESS_URL"), os.Getenv("PRESIDENT_SECRET"), commit, wcClient)
 	e.GET("/status", monitorHandler.HandlePage)
 	e.GET("/status/events", monitorHandler.HandleEvents)
+	e.POST("/status/graph", monitorHandler.HandleGraphUpdate)
 
 	// --- Dev auth route (only in dev mode) ---
 	if devMode {
@@ -368,6 +370,7 @@ func main() {
 	go func() {
 		<-ctx.Done()
 		logger.Info("Shutting down server...")
+		monitorHandler.Stop()
 		if shutdownErr := e.Shutdown(context.Background()); shutdownErr != nil {
 			logger.Error("Server shutdown error", "error", shutdownErr)
 		}

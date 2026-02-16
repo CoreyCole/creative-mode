@@ -14,27 +14,42 @@ templ statusDot(status string) {
 }
 
 templ DBHealthCard(status string, latency string, sessionCount int) {
-	<div class="rounded-lg border border-border bg-card p-4">
-		<div class="flex items-center justify-between mb-3">
-			<h2 class="text-lg font-semibold text-foreground">Database</h2>
-			@statusDot(status)
-		</div>
-		if status == "checking" {
-			<p class="text-sm text-muted-foreground">Checking connection...</p>
-		} else if status == "ok" {
-			<div class="grid grid-cols-2 gap-4 text-sm">
-				<div>
-					<p class="text-muted-foreground">Ping</p>
-					<p class="font-medium text-foreground">{ latency }</p>
-				</div>
-				<div>
-					<p class="text-muted-foreground">Active Sessions</p>
-					<p class="font-medium text-foreground">{ fmt.Sprintf("%d", sessionCount) }</p>
-				</div>
+	<div class="grid grid-cols-3 gap-4">
+		<div class="rounded-lg border border-border bg-card p-4">
+			<p class="text-xs font-medium text-muted-foreground uppercase tracking-wider">Status</p>
+			<div class="mt-1 flex items-center gap-2">
+				@statusDot(status)
+				<span class="text-xl font-semibold text-foreground">
+					if status == "checking" {
+						...
+					} else if status == "ok" {
+						OK
+					} else {
+						Error
+					}
+				</span>
 			</div>
-		} else {
-			<p class="text-sm text-destructive">Database unreachable</p>
-		}
+		</div>
+		<div class="rounded-lg border border-border bg-card p-4">
+			<p class="text-xs font-medium text-muted-foreground uppercase tracking-wider">Ping</p>
+			<p class="mt-1 text-xl font-semibold text-foreground tabular-nums">
+				if latency != "" {
+					{ latency }
+				} else {
+					--
+				}
+			</p>
+		</div>
+		<div class="rounded-lg border border-border bg-card p-4">
+			<p class="text-xs font-medium text-muted-foreground uppercase tracking-wider">Active Sessions</p>
+			<p class="mt-1 text-xl font-semibold text-foreground tabular-nums">
+				if status == "ok" {
+					{ fmt.Sprintf("%d", sessionCount) }
+				} else {
+					--
+				}
+			</p>
+		</div>
 	</div>
 }
 
@@ -102,6 +117,123 @@ templ WorldStatusTable(worlds []WorldInfo, timestamp string) {
 						}
 					</tbody>
 				</table>
+			</div>
+		}
+	</div>
+}
+
+templ StatsOverview(totalVisits int64, uniqueVisitors int64, discordMembers int, worldsHatched int) {
+	<div class="grid grid-cols-4 gap-4">
+		<div class="rounded-lg border border-border bg-card p-4">
+			<p class="text-xs font-medium text-muted-foreground uppercase tracking-wider">Page Views</p>
+			<p class="mt-1 text-xl font-semibold text-foreground tabular-nums">
+				if totalVisits > 0 {
+					{ fmt.Sprintf("%d", totalVisits) }
+				} else {
+					--
+				}
+			</p>
+		</div>
+		<div class="rounded-lg border border-border bg-card p-4">
+			<p class="text-xs font-medium text-muted-foreground uppercase tracking-wider">Visitors</p>
+			<p class="mt-1 text-xl font-semibold text-foreground tabular-nums">
+				if uniqueVisitors > 0 {
+					{ fmt.Sprintf("%d", uniqueVisitors) }
+				} else {
+					--
+				}
+			</p>
+		</div>
+		<div class="rounded-lg border border-border bg-card p-4">
+			<p class="text-xs font-medium text-muted-foreground uppercase tracking-wider">Discord Members</p>
+			<p class="mt-1 text-xl font-semibold text-foreground tabular-nums">
+				if discordMembers > 0 {
+					{ fmt.Sprintf("%d", discordMembers) }
+				} else {
+					--
+				}
+			</p>
+		</div>
+		<div class="rounded-lg border border-border bg-card p-4">
+			<p class="text-xs font-medium text-muted-foreground uppercase tracking-wider">Worlds Hatched</p>
+			<p class="mt-1 text-xl font-semibold text-foreground tabular-nums">
+				if worldsHatched > 0 {
+					{ fmt.Sprintf("%d", worldsHatched) }
+				} else {
+					--
+				}
+			</p>
+		</div>
+	</div>
+}
+
+templ MetricsGraph(data GraphData) {
+	<div class="rounded-lg border border-border bg-card p-4">
+		<div class="flex items-center justify-between mb-4">
+			if data.TimeLabel != "" {
+				<span class="text-sm text-muted-foreground">{ data.TimeLabel }</span>
+			}
+			if data.PointCount > 0 {
+				<span class="text-xs text-muted-foreground">{ fmt.Sprintf("%d points", data.PointCount) }</span>
+			}
+		</div>
+		if data.PointCount == 0 {
+			<div class="flex items-center justify-center h-48 text-sm text-muted-foreground">
+				Collecting data...
+			</div>
+		} else {
+			<!-- Legend -->
+			<div class="flex gap-6 mb-3 text-sm">
+				<div class="flex items-center gap-2">
+					<span class="inline-block h-0.5 w-4 bg-primary"></span>
+					<span class="text-muted-foreground">Memory</span>
+					<span class="font-medium text-foreground tabular-nums">{ data.MemoryLast }</span>
+				</div>
+				<div class="flex items-center gap-2">
+					<span class="inline-block h-0.5 w-4 bg-green-500"></span>
+					<span class="text-muted-foreground">Page Views</span>
+					<span class="font-medium text-foreground tabular-nums">{ data.VisitsLast }</span>
+				</div>
+			</div>
+			<!-- Chart -->
+			<div class="relative h-48">
+				<!-- Left Y-axis: Memory -->
+				<div class="absolute left-0 top-0 bottom-0 w-12 flex flex-col justify-between text-[10px] text-primary tabular-nums pointer-events-none">
+					<span>{ data.MemoryMax }</span>
+					<span>{ data.MemoryMid }</span>
+					<span>{ data.MemoryMin }</span>
+				</div>
+				<!-- Right Y-axis: Page Views -->
+				<div class="absolute right-0 top-0 bottom-0 w-8 flex flex-col justify-between text-[10px] text-green-500 tabular-nums pointer-events-none text-right">
+					<span>{ fmt.Sprintf("%d", data.VisitsMax) }</span>
+					<span>{ fmt.Sprintf("%d", (data.VisitsMax+data.VisitsMin)/2) }</span>
+					<span>{ fmt.Sprintf("%d", data.VisitsMin) }</span>
+				</div>
+				<!-- SVG chart area -->
+				<div class="ml-14 mr-10 h-full">
+					<svg viewBox="0 0 100 100" preserveAspectRatio="none" class="w-full h-full">
+						<!-- Grid lines -->
+						<line x1="0" y1="25" x2="100" y2="25" stroke="currentColor" class="text-border" stroke-width="0.5" vector-effect="non-scaling-stroke"></line>
+						<line x1="0" y1="50" x2="100" y2="50" stroke="currentColor" class="text-border" stroke-width="0.5" vector-effect="non-scaling-stroke"></line>
+						<line x1="0" y1="75" x2="100" y2="75" stroke="currentColor" class="text-border" stroke-width="0.5" vector-effect="non-scaling-stroke"></line>
+						<!-- Memory line -->
+						<path
+							d={ data.MemoryPath }
+							fill="none"
+							stroke="hsl(var(--primary))"
+							stroke-width="2"
+							vector-effect="non-scaling-stroke"
+						></path>
+						<!-- Page Views line -->
+						<path
+							d={ data.VisitsPath }
+							fill="none"
+							stroke="#22c55e"
+							stroke-width="2"
+							vector-effect="non-scaling-stroke"
+						></path>
+					</svg>
+				</div>
 			</div>
 		}
 	</div>

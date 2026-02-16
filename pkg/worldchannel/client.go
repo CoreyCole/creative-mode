@@ -73,6 +73,15 @@ func (c *Client) SendComplexMessage(channelID string, msg *discordgo.MessageSend
 	return m, nil
 }
 
+// GuildMemberCount returns the approximate member count for the configured guild.
+func (c *Client) GuildMemberCount() (int, error) {
+	guild, err := c.session.GuildWithCounts(c.config.GuildID)
+	if err != nil {
+		return 0, fmt.Errorf("fetching guild with counts: %w", err)
+	}
+	return guild.ApproximateMemberCount, nil
+}
+
 // Close cleans up the Discord session.
 func (c *Client) Close() error {
 	return c.session.Close()

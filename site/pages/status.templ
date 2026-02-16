@@ -3,6 +3,7 @@ package pages
 import (
 	"github.com/starfederation/datastar-go/datastar"
 
+	selectui "github.com/coreycole/creative-mode/site/internal/ui/select"
 	l "github.com/coreycole/creative-mode/site/layouts"
 )
 
@@ -12,33 +13,65 @@ templ StatusPage(rootArgs l.RootArgs, showHarness bool, showWorlds bool) {
 			<div
 				class="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8"
 				data-init={ datastar.GetSSE("/status/events") }
-				data-signals="{memTotal:'',memUsed:'',memUsedPercent:'',cpuPercent:'',uptime:''}"
+				data-signals="{memTotal:'',memUsed:'',memUsedPercent:'',cpuPercent:'',uptime:'',diskTotal:'',diskUsed:'',diskUsedPercent:''}"
 			>
-				<h1 class="text-3xl font-bold tracking-tight text-foreground mb-8">System Status</h1>
+				<!-- Metrics Graph -->
+				<div class="mb-6">
+					<div class="flex items-center justify-between mb-2">
+						<h2 class="text-lg font-semibold text-foreground">Metrics</h2>
+						@selectui.Select(selectui.SelectArgs{
+							ID:          "graphRange",
+							Placeholder: "1h",
+							OnChange:    "@post('/status/graph')",
+							Options: []selectui.SelectOption{
+								{Value: "1h", Label: "1h"},
+								{Value: "6h", Label: "6h"},
+								{Value: "24h", Label: "24h"},
+								{Value: "7d", Label: "7d"},
+							},
+						})
+					</div>
+					<div id="metrics-graph">
+						@MetricsGraph(GraphData{})
+					</div>
+				</div>
+				<!-- Site Stats -->
+				<div class="mb-6">
+					<h2 class="text-lg font-semibold text-foreground mb-4">Site Stats</h2>
+					<div id="stats-overview">
+						@StatsOverview(0, 0, 0, 0)
+					</div>
+				</div>
 				<!-- System Metrics -->
-				<div class="mb-8">
-					<h2 class="text-lg font-semibold text-foreground mb-4">System Metrics</h2>
-					<div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+				<div class="mb-6">
+					<h2 class="text-lg font-semibold text-foreground mb-4">System</h2>
+					<div class="grid grid-cols-2 md:grid-cols-4 gap-4">
 						@metricCard("CPU", "$cpuPercent")
 						@metricCard("Memory Used", "$memUsed")
 						@metricCard("Memory %", "$memUsedPercent")
 						@metricCard("Total Memory", "$memTotal")
 						@metricCard("Uptime", "$uptime")
+						@metricCard("Disk Used", "$diskUsed")
+						@metricCard("Disk %", "$diskUsedPercent")
+						@metricCard("Total Disk", "$diskTotal")
 					</div>
 				</div>
-				<!-- DB Health -->
-				<div class="mb-8" id="db-health">
-					@DBHealthCard("checking", "", 0)
+				<!-- Database -->
+				<div class="mb-6">
+					<h2 class="text-lg font-semibold text-foreground mb-4">Database</h2>
+					<div id="db-health">
+						@DBHealthCard("checking", "", 0)
+					</div>
 				</div>
 				<!-- Harness Health -->
 				if showHarness {
-					<div class="mb-8" id="harness-health">
+					<div class="mb-6" id="harness-health">
 						@HarnessHealthCard("checking", "", "")
 					</div>
 				}
 				<!-- World Status -->
 				if showWorlds {
-					<div class="mb-8" id="world-status">
+					<div class="mb-6" id="world-status">
 						@WorldStatusTable(nil, "")
 					</div>
 				}

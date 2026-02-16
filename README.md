@@ -4,7 +4,7 @@ An OpenClaw-powered game world builder. Create multiplayer games through convers
 
 Test the onboarding experience at [creative-mode.ai](https://creative-mode.ai).
 
-![Generated Image February 13, 2026 - 10_48PM](https://github.com/user-attachments/assets/668b3ea3-a467-4dad-b556-c0d1c32990aa)
+[![Generated Image February 13, 2026 - 10_48PM](https://github.com/user-attachments/assets/668b3ea3-a467-4dad-b556-c0d1c32990aa)](https://youtu.be/OJRt62-ews0)
 
 | | Creative Mode puts game development in everyone's hands — describe what you want, and a personalized AI mayor builds your multiplayer game world in real time. |
 |---|---|
@@ -12,8 +12,6 @@ Test the onboarding experience at [creative-mode.ai](https://creative-mode.ai).
 | **Opus 4.6** | Mayor agents use Opus to manage worlds, plan changes, use APIs to generate assets, and spawn Claude Code Opus agents to build world forks. The president agent uses Opus to maintain the project as a whole. |
 | **Depth** | 87k+ lines of Go, Rust, and templ, directed by 43k+ lines of specs, plans, and review agent loops. Like the jump from assembly to C, we developed at a higher level of abstraction — not vibe coding, but engineering through **structured intent**. Server-authoritative multiplayer, WASM compilation, OpenClaw AI mayors & president, Gemini Nano Banana. |
 | **Demo** | A new user creates a 2D world, chats with their AI mayor, and watches it come to life — zero to playable in one session. |
-
-![demo videp](https://youtu.be/OJRt62-ews0)
 
 | | The demo harness server is locked behind a private tailnet. | |
 |---|---|---|

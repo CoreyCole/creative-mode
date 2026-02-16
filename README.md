@@ -11,6 +11,10 @@ An OpenClaw-powered game world builder. Create multiplayer games through convers
 | **Depth** | 10k+ lines of Go and Rust, directed by 27k+ lines of specs and plans. Like the jump from assembly to C, we develop at a higher level of abstraction — not vibe coding, but engineering through **structured intent**. Server-authoritative multiplayer, WASM compilation, OpenClaw AI mayors, Gemini Nano Banana. |
 | **Demo** | A new user creates a 2D world, chats with their AI mayor, and watches it come to life — zero to playable in one session. |
 
+Test the onboarding experience at [creative-mode.ai](https://creative-mode.ai).
+
+The harness server is locked behind a private tailnet. On-demand infrastructure coming soon.
+
 ## How It Works
 
 ```

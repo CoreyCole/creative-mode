@@ -238,7 +238,7 @@ func (m *Manager) ForkCheckpoint(
 	}
 
 	newID := uuid.New().String()[:8]
-	newDir := filepath.Join(filepath.Dir(sourceCP.DirPath), newID)
+	newDir := filepath.Join(m.dataDir, "worlds", worldID, newID)
 
 	// Copy source files (excluding target/).
 	if err := copyDir(sourceCP.DirPath, newDir, []string{"target"}); err != nil {
@@ -583,9 +583,38 @@ func (m *Manager) startTemplateDevServers(
 			"gamePort", srv.Port)
 	}
 
-	// No trunk serve on boot — template worlds use static dist/ builds.
-	// Trunk serve is started on-demand via StartLiveReload (Phase 2).
+	// No trunk serve on boot — started on-demand when a user visits the world.
 	return nil
+}
+
+// EnsureTemplateTrunkServe starts trunk serve for a template world on demand.
+// Only one trunk serve can run at a time (memory constraint), so any existing
+// trunk serve is stopped first.
+func (m *Manager) EnsureTemplateTrunkServe(
+	worldID, cpID, checkpointDir string,
+) (int, error) {
+	// Already running for this world?
+	if gs := m.GameServers.GetServer(worldID, cpID); gs != nil && gs.TrunkPort > 0 {
+		return gs.TrunkPort, nil
+	}
+
+	// Stop all other trunk serves (only one at a time due to memory).
+	m.GameServers.StopAllTrunkServes()
+
+	// Start trunk serve.
+	port, err := m.GameServers.StartTrunkServe(worldID, cpID, checkpointDir)
+	if err != nil {
+		return 0, fmt.Errorf("starting trunk serve: %w", err)
+	}
+
+	m.logger.Info("on-demand trunk serve started",
+		"worldID", worldID, "cpID", cpID, "port", port)
+	return port, nil
+}
+
+// IsTemplateWorld returns true if the world name matches the template naming convention.
+func IsTemplateWorld(name string) bool {
+	return strings.HasSuffix(name, "Template World")
 }
 
 // Shutdown stops all game servers.

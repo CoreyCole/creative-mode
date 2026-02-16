@@ -741,3 +741,31 @@ func (m *GameServerManager) StopTrunkServe(worldID, cpID string) {
 	srv.TrunkPort = 0
 	srv.TrunkSessionName = ""
 }
+
+// StopAllTrunkServes kills all running trunk serve sessions.
+// Used to enforce the single-trunk-serve constraint (memory limit).
+func (m *GameServerManager) StopAllTrunkServes() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, srv := range m.servers {
+		if srv.TrunkSessionName == "" {
+			continue
+		}
+
+		_ = exec.CommandContext(
+			context.Background(),
+			"tmux", "kill-session", "-t", srv.TrunkSessionName,
+		).Run()
+
+		m.logger.Info("trunk serve stopped",
+			"worldID", srv.WorldID, "cpID", srv.CPID,
+			"session", srv.TrunkSessionName)
+
+		if srv.TrunkPort > 0 {
+			m.trunkPorts.Release(srv.TrunkPort)
+		}
+		srv.TrunkPort = 0
+		srv.TrunkSessionName = ""
+	}
+}

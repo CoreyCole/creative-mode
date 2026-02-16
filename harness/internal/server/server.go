@@ -607,10 +607,15 @@ func (s *Server) handleSharedAssets(c echo.Context) error {
 	}
 
 	// In production, enable browser caching with background revalidation.
+	// Room JSON files use no-cache so placement updates are always fetched fresh.
 	if os.Getenv("DEV_MODE") != "true" {
-		c.Response().
-			Header().
-			Set("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400")
+		if strings.HasSuffix(fullPath, ".room.json") {
+			c.Response().Header().Set("Cache-Control", "no-cache")
+		} else {
+			c.Response().
+				Header().
+				Set("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400")
+		}
 	}
 
 	return c.File(fullPath)

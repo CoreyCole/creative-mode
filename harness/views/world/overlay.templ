@@ -47,7 +47,7 @@ templ OverlayTopBar(w sqlc.World) {
 				@button.Button(button.ButtonArgs{Size: "sm", Variant: "outline", Attributes: templ.Attributes{"data-on:click": OE.ToggleTree()}}) {
 					Tree
 				}
-				@button.Button(button.ButtonArgs{Size: "sm", Variant: "outline", Attributes: templ.Attributes{"data-on:click": "document.getElementById('game-frame').contentWindow.postMessage({type:'reload-room'},'*')"}}) {
+				@button.Button(button.ButtonArgs{Size: "sm", Variant: "outline", Attributes: templ.Attributes{"data-on:click": "var f=document.getElementById('game-frame');if(f){f.src=f.src;}"}}) {
 					Reload
 				}
 				@button.Button(button.ButtonArgs{Size: "sm", Variant: "ghost", Attributes: templ.Attributes{"data-on:click": OE.Minimize()}}) {

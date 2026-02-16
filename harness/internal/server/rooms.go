@@ -132,7 +132,15 @@ func (s *Server) handlePlaceBackground(c echo.Context) error {
 
 	s.Logger.Info("placed background image", "room", roomID, "asset", assetPath)
 
-	return sse.PatchElementTempl(imagegen.PlacementSuccess(room.Name, "background"))
+	if err := sse.PatchElementTempl(
+		imagegen.PlacementSuccess(room.Name, "background"),
+	); err != nil {
+		return err
+	}
+
+	return sse.ExecuteScript(
+		"var f=document.getElementById('game-frame');if(f){f.src=f.src;}",
+	)
 }
 
 // handlePlaceOnHotspot sets the image on an existing hotspot.
@@ -201,8 +209,14 @@ func (s *Server) handlePlaceOnHotspot(c echo.Context) error {
 		"room", roomID, "hotspot", hotspotID, "asset", assetPath,
 	)
 
-	return sse.PatchElementTempl(
+	if err := sse.PatchElementTempl(
 		imagegen.PlacementSuccess(room.Name, "hotspot \""+hotspotID+"\""),
+	); err != nil {
+		return err
+	}
+
+	return sse.ExecuteScript(
+		"var f=document.getElementById('game-frame');if(f){f.src=f.src;}",
 	)
 }
 
@@ -332,6 +346,12 @@ func (s *Server) handlePlaceNewHotspot(c echo.Context) error {
 
 	if err := sse.PatchElementTempl(
 		imagegen.PlacementSuccess(room.Name, "new hotspot \""+hsID+"\""),
+	); err != nil {
+		return err
+	}
+
+	if err := sse.ExecuteScript(
+		"var f=document.getElementById('game-frame');if(f){f.src=f.src;}",
 	); err != nil {
 		return err
 	}

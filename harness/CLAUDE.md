@@ -15,7 +15,7 @@ The harness is a Go server (Echo framework) that manages multiplayer creative wo
 | `internal/db/` | SQLite wrapper, migrations, sqlc queries |
 | `internal/events/` | EventBus: global + per-world pub/sub channels |
 | `internal/world/` | World creation, checkpoints, game server management |
-| `internal/claude/` | Claude Code session management (memory, session lifecycle) |
+| `internal/claude/` | Claude Code orchestrator: prompt-to-build pipeline (fork, tmux, build, events) |
 | `internal/builder/` | Build pipeline: fork checkpoint → Claude Code → compile → deploy (renamed from `internal/build/`) |
 | `internal/tmux/` | Tmux session management for Claude Code and game servers |
 | `internal/logging/` | Structured JSON logger |
@@ -133,7 +133,7 @@ The `OnBuildComplete` callback is wired in `main.go` to post build results to Di
 - `ListWorlds(ctx)`, `GetWorld(ctx, id)`, `CreateWorld(ctx, params)`
 - `GetCheckpoint(ctx, id)`, `GetCheckpointTree(ctx, worldID)`, `CreateCheckpoint(ctx, params)`
 - `GetCheckpointAncestry(ctx, worldID, cpID)` — root-to-current chain (custom method on DB wrapper)
-- `GetRecentMessages(ctx, limit)`, `GetRecentMessagesByWorld(ctx, params)`, `CreateMessage(ctx, params)`
+- `GetRecentMessagesWithUser(ctx, limit)`, `GetRecentMessagesByWorld(ctx, params)`, `CreateMessage(ctx, params)`
 - `ListUsers(ctx)`, `GetUserByID(ctx, id)`, `UpdateUserRole(ctx, params)`
 - **Mayor/world queries**: `GetWorldByMayorSecret(ctx, secret)`, `GetWorldByDiscordChannel(ctx, channelID)`, `UpdateWorldMayor(ctx, params)`, `GetWorldsWithDiscordChannels(ctx)`
 - **Mayor messages**: `CreateMayorMessage(ctx, params)`, `GetMayorMessages(ctx, worldID)`, `GetRecentMayorMessages(ctx, params)`, `GetMayorMessageByDiscordID(ctx, discordMsgID)`
@@ -467,6 +467,7 @@ Game servers run in dedicated tmux sessions named `cm-server-{worldID}-{cpID}`. 
 ### Session Naming
 
 - Game server: `cm-server-{worldID}-{cpID}` (parseable — both IDs are 8-char hex, no hyphens)
+- Trunk serve: `cm-trunk-{worldID}-{cpID}` (WASM dev server)
 - Claude Code: `cm-{worldID}-{cpID}` (managed by `internal/tmux/`)
 
 ### Environment Variables
@@ -512,7 +513,7 @@ Game server output is captured via `tmux pipe-pane` to `{logsDir}/worlds/{worldI
 
 ```bash
 cd harness
-just generate    # sqlc generate + templ generate
+just generate    # sqlc generate + templ generate + tailwind build
 just build       # go build -o harness .
 just dev         # go run .
 just lint        # golangci-lint run ./...

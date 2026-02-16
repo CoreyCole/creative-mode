@@ -9,7 +9,8 @@ Multiplayer creative sandbox — Go harness server + Bevy/WASM game client.
 | `harness/` | Go server (Echo + SQLite + Datastar + templ) — see `harness/CLAUDE.md` |
 | `templates/3d/` | 3D Bevy/Lightyear game template — see `templates/3d/CLAUDE.md` |
 | `templates/2d/` | 2D Bevy room-based template — see `templates/2d/CLAUDE.md` |
-| `scripts/` | Build, format, and setup scripts |
+| `templates/boardgame/` | Board game (Checkers) Bevy/WASM template — see `templates/boardgame/CLAUDE.md` |
+| `scripts/` | Build, format, setup, and infrastructure bootstrap scripts |
 | `site/`    | Marketing site + onboarding (Echo + templ) — see `site/CLAUDE.md` |
 | `pkg/`     | Shared Go packages: `worldchannel` (Discord channels), `mayorchat` (onboarding chat), `markdown` (renderer), `imagegen` (image generation) |
 | `context/` | Reference code (gitignored) |
@@ -193,6 +194,10 @@ Query world game state from the terminal. Handles auth, endpoint routing, and ou
 | `just debug <world> click <id>` | 2D: trigger hotspot by ID |
 | `just debug <world> query <comp...>` | 3D: server ECS query |
 | `just debug <world> resources` | 3D: list server resources |
+| `just debug <world> components <entity>` | 3D: list components on entity |
+| `just debug <world> list` | List queryable types (client) |
+| `just debug <world> resource <name>` | Query a resource by name (client) |
+| `just debug <world> client-query <comp...>` | Query components (client) |
 | `just debug <world> client '<json>'` | Raw client debug query |
 | `just debug <world> server '<json>'` | Raw server BRP query |
 

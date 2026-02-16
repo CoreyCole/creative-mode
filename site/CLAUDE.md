@@ -12,7 +12,7 @@ Go server (Echo + templ + Datastar + Tailwind) that serves the marketing pages a
 | `internal/auth/` | Discord OAuth, session management, invite codes |
 | `internal/db/` | SQLite persistence (WAL mode, schema migrations) |
 | `internal/mayor/` | Claude-powered onboarding conversation (uses `claude-sonnet-4-5-20250929`) |
-| `internal/markdown/` | Goldmark markdown renderer |
+| `pkg/markdown/` | Goldmark markdown renderer (shared package, not site-internal) |
 | `internal/webhook/` | GitHub push webhook handler for self-rebuild (`POST /webhook/github`) |
 | `internal/ui/` | Shared templ components (tooltip) and utilities (signals, expressions, tailwind merge) |
 | `static/` | CSS, images |

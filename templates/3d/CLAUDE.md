@@ -106,7 +106,7 @@ There are 3+ copies of each player entity across the network — one authoritati
    ```
 2. Register in `ProtocolPlugin::build()`:
    ```rust
-   app.register_component::<MyComponent>(ChannelDirection::ServerToClient)
+   app.register_component::<MyComponent>()
        .add_prediction()           // if client should predict it
        .add_linear_interpolation() // if remote clients should interpolate it
    app.register_type::<MyComponent>();  // required for debug queries

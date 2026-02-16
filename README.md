@@ -134,7 +134,7 @@ The first user to sign in becomes the server admin and can approve other users.
 
 ## License
 
-Creative Mode is licensed under the [Elastic License 2.0 (ELv2)](./LICENSE.md). You're free to self-host, modify, and build with it. Games and worlds you create are yours — sell them, share them, do whatever you want. The one restriction: you can't offer Creative Mode itself as a competing for-profit service.
+Creative Mode is licensed under the [Elastic License 2.0 (ELv2)](./LICENSE). You're free to self-host, modify, and build with it. Games and worlds you create are yours — sell them, share them, do whatever you want. The one restriction: you can't offer Creative Mode itself as a competing for-profit service.
 
 ______________________________________________________________________
 

@@ -15,6 +15,7 @@ Harness (Go server, port 8080)
                         └─ Bevy app (Camera2d, sprites, text, input)
                             ├─ room.rs     — room loading & entity spawning
                             ├─ interaction.rs — hover/click detection
+                            ├─ camera.rs  — auto-fit scaling, touch pan/zoom, scroll-wheel zoom
                             ├─ bridge.rs   — postMessage to parent frame
                             └─ debug.rs    — runtime ECS inspection
 ```
@@ -57,7 +58,7 @@ This crate has both a `[lib]` (artifact name: `room_world`) and an implicit bina
 ### Bevy Features
 
 ```toml
-bevy = { version = "0.18", default-features = false, features = ["2d", "default_font"] }
+bevy = { version = "0.18", default-features = false, features = ["2d", "default_font", "touch"] }
 ```
 
 The `2d` feature includes everything needed for WASM rendering:
@@ -87,6 +88,7 @@ The harness `game-loader.js` listens for these messages and dispatches navigatio
 | `src/lib.rs` | App setup: `DefaultPlugins` + `WindowPlugin` + game plugins |
 | `src/room.rs` | Room loading, JSON schema types, entity spawning, camera setup |
 | `src/interaction.rs` | Hover highlighting + click detection on hotspots |
+| `src/camera.rs` | Auto-fit scaling, touch pan/zoom, scroll-wheel zoom |
 | `src/bridge.rs` | `postMessage` bridge to harness parent frame for navigation |
 | `src/debug.rs` | Debug query system (room/dialog/hotspot inspection via JS bridge) |
 | `rooms/*.room.json` | Room definitions (data-driven content, seeded to shared-assets on startup) |

@@ -54,7 +54,7 @@ OpenClaw is installed at `/opt/openclaw/`, CLI at `/opt/openclaw/node_modules/.b
 
 ### VPS (production) — Nix + systemd
 
-The harness runs as a native binary under systemd. Nix provides build/runtime deps, Rust is installed system-wide via rustup.
+The harness runs via `air` (hot-reload) under systemd — `scripts/harness-run.sh` sets up PATH for Nix, Rust, and Go tools, then `exec air`. Air rebuilds to `/tmp/harness` on file changes. Nix provides build/runtime deps, Rust is installed system-wide via rustup.
 
 | Command | Purpose |
 |---------|---------|
@@ -121,6 +121,10 @@ playwright-cli run-code "async page => { await page.evaluate(async () => { await
 
 **Screenshots are images**: `playwright-cli screenshot` saves a PNG. Use the Read tool on the PNG path to view it — Claude Code is multimodal and can visually inspect screenshots.
 
+## WASM Build Constraints
+
+Each `wasm-bindgen` invocation uses ~5 GB RAM. The VPS has 10 GB, so only one template build can run at a time — two simultaneous builds will OOM. The build pipeline (`internal/builder/`) serializes builds per-world, but be aware if manually triggering builds.
+
 ## Build & Check
 
 **macOS only: NEVER run `cargo build/clippy/check`, `go build`, `templ generate`, or `just generate` directly on the host.** The Docker container bind-mounts the project root, so host-side cargo writes to the same `target/` directories that trunk uses inside Docker, corrupting incremental builds and crashing the WASM server. These commands are denied in `.claude/settings.json`.
@@ -132,7 +136,7 @@ playwright-cli run-code "async page => { await page.evaluate(async () => { await
 ```bash
 just check          # verify Go + Rust + WASM all compile
 just fmt            # format all code
-just setup          # run setup (includes playwright-cli)
+just setup          # run setup (currently only runs setup-playwright; scripts/setup.sh is a placeholder)
 ```
 
 ## Debug CLI

@@ -10,8 +10,11 @@ Go server (Echo + templ + Datastar + Tailwind) that serves the marketing pages a
 | `layouts/` | templ root layout (HTML head, nav, footer) |
 | `pages/` | templ page components and SSE fragments |
 | `internal/auth/` | Discord OAuth, session management, invite codes |
-| `internal/mayor/` | Claude-powered onboarding conversation |
+| `internal/db/` | SQLite persistence (WAL mode, schema migrations) |
+| `internal/mayor/` | Claude-powered onboarding conversation (uses `claude-sonnet-4-5-20250929`) |
 | `internal/markdown/` | Goldmark markdown renderer |
+| `internal/webhook/` | GitHub push webhook handler for self-rebuild (`POST /webhook/github`) |
+| `internal/ui/` | Shared templ components (tooltip) and utilities (signals, expressions, tailwind merge) |
 | `static/` | CSS, images |
 
 ## Meet the Mayor — Onboarding Design

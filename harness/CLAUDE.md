@@ -15,7 +15,11 @@ The harness is a Go server (Echo framework) that manages multiplayer creative wo
 | `internal/db/` | SQLite wrapper, migrations, sqlc queries |
 | `internal/events/` | EventBus: global + per-world pub/sub channels |
 | `internal/world/` | World creation, checkpoints, game server management |
-| `internal/claude/` | Claude Code orchestrator (tmux sessions, build pipeline) |
+| `internal/claude/` | Claude Code session management (memory, session lifecycle) |
+| `internal/builder/` | Build pipeline: fork checkpoint → Claude Code → compile → deploy (renamed from `internal/build/`) |
+| `internal/tmux/` | Tmux session management for Claude Code and game servers |
+| `internal/logging/` | Structured JSON logger |
+| `internal/gemini/` | Gemini image generation integration |
 | `internal/mayor/` | Mayor agent lifecycle: OpenClaw provisioning, workspace files, Discord posting |
 | `internal/president/` | President agent: provisioning, repo-level operations, deploy |
 | `internal/discord/` | Discord Gateway listener: mirrors messages to DB + EventBus |

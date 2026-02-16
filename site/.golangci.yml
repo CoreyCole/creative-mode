@@ -14,6 +14,8 @@ linters:
         - fieldalignment
       enable-all: true
 exclusions:
+  paths:
+    - _templ\.go$
   generated: lax
   presets:
     - comments
@@ -45,6 +47,8 @@ formatters:
           replacement: 'a[b:]'
   exclusions:
     generated: lax
+    paths:
+      - _templ\.go$
 output:
   formats:
     text:

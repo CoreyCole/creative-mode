@@ -3,7 +3,6 @@ site
 site-linux
 
 # Generated
-*_templ.go
 static/css/out.css
 static/css/out.*.css
 

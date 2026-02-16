@@ -31,9 +31,11 @@ templ MayorPage(rootArgs l.RootArgs, messages []ChatMessage) {
 			</div>
 			<script>
 				// Scroll to bottom on page load to show latest messages.
-				requestAnimationFrame(function() {
-					var el = document.getElementById('chat-messages');
-					if (el) { el.scrollTop = el.scrollHeight; }
+				requestAnimationFrame(function () {
+					var el = document.getElementById("chat-messages");
+					if (el) {
+						el.scrollTop = el.scrollHeight;
+					}
 				});
 			</script>
 			<!-- Input area -->

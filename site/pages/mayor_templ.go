@@ -63,14 +63,14 @@ func MayorPage(rootArgs l.RootArgs, messages []ChatMessage) templ.Component {
 					}
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<!-- World hatched card placeholder --><div id=\"mayor-signup\"></div></div><script>\n\t\t\t\t// Scroll to bottom on page load to show latest messages.\n\t\t\t\trequestAnimationFrame(function() {\n\t\t\t\t\tvar el = document.getElementById('chat-messages');\n\t\t\t\t\tif (el) { el.scrollTop = el.scrollHeight; }\n\t\t\t\t});\n\t\t\t</script><!-- Input area --><div class=\"shrink-0 border-t border-border/40 px-4 py-3 relative\"><div class=\"mx-auto max-w-2xl\"><!-- Rate limit error --><div id=\"rate-limit-error\"></div><div data-signals='{\"mayor_input\": \"\", \"create_world\": false}' class=\"flex gap-2\"><input type=\"text\" data-bind:mayor_input data-on:keydown=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<!-- World hatched card placeholder --><div id=\"mayor-signup\"></div></div><script>\n\t\t\t\t// Scroll to bottom on page load to show latest messages.\n\t\t\t\trequestAnimationFrame(function () {\n\t\t\t\t\tvar el = document.getElementById(\"chat-messages\");\n\t\t\t\t\tif (el) {\n\t\t\t\t\t\tel.scrollTop = el.scrollHeight;\n\t\t\t\t\t}\n\t\t\t\t});\n\t\t\t</script><!-- Input area --><div class=\"shrink-0 border-t border-border/40 px-4 py-3 relative\"><div class=\"mx-auto max-w-2xl\"><!-- Rate limit error --><div id=\"rate-limit-error\"></div><div data-signals='{\"mayor_input\": \"\", \"create_world\": false}' class=\"flex gap-2\"><input type=\"text\" data-bind:mayor_input data-on:keydown=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var3 string
 			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(`evt.key === 'Enter' && !$_sending && $mayor_input.trim() !== '' && ` + string(datastar.PostSSE("/mayor/chat")))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages/mayor.templ`, Line: 51, Col: 136}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages/mayor.templ`, Line: 53, Col: 136}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 			if templ_7745c5c3_Err != nil {
@@ -83,7 +83,7 @@ func MayorPage(rootArgs l.RootArgs, messages []ChatMessage) templ.Component {
 			var templ_7745c5c3_Var4 string
 			templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(`!$_sending && $mayor_input.trim() !== '' && ` + string(datastar.PostSSE("/mayor/chat")))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages/mayor.templ`, Line: 58, Col: 111}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages/mayor.templ`, Line: 60, Col: 111}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 			if templ_7745c5c3_Err != nil {
@@ -96,7 +96,7 @@ func MayorPage(rootArgs l.RootArgs, messages []ChatMessage) templ.Component {
 			var templ_7745c5c3_Var5 string
 			templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(`$create_world = true; ` + string(datastar.PostSSE("/mayor/chat")))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages/mayor.templ`, Line: 72, Col: 87}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages/mayor.templ`, Line: 74, Col: 87}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 			if templ_7745c5c3_Err != nil {

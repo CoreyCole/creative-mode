@@ -13,10 +13,9 @@ An OpenClaw-powered game world builder. Create multiplayer games through convers
 
 Test the onboarding experience at [creative-mode.ai](https://creative-mode.ai).
 
-| | | |
+| | The demo harness server is locked behind a private tailnet. Secured on-demand infrastructure coming soon. | |
 |---|---|---|
 | ⚠️⚠️⚠️ | **WARNING: The harness server runs OpenClaw agents. Do NOT run this on your personal computer. A VM or cloud VPS on a private network is HIGHLY recommended.** | ⚠️⚠️⚠️ |
-| | The demo harness server is locked behind a private tailnet. Secured on-demand infrastructure coming soon. | |
 
 ## How It Works
 

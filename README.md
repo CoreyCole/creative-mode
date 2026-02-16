@@ -13,9 +13,10 @@ Test the onboarding experience at [creative-mode.ai](https://creative-mode.ai).
 | **Depth** | 10k+ lines of Go and Rust, directed by 27k+ lines of specs and plans. Like the jump from assembly to C, we develop at a higher level of abstraction — not vibe coding, but engineering through **structured intent**. Server-authoritative multiplayer, WASM compilation, OpenClaw AI mayors, Gemini Nano Banana. |
 | **Demo** | A new user creates a 2D world, chats with their AI mayor, and watches it come to life — zero to playable in one session. |
 
-| | The demo harness server is locked behind a private tailnet. Secured on-demand infrastructure coming soon. | |
+| | The demo harness server is locked behind a private tailnet. | |
 |---|---|---|
 | ⚠️⚠️⚠️ | **WARNING: The harness server runs OpenClaw agents. Do NOT run this on your personal computer. A VM or cloud VPS on a private network is HIGHLY recommended.** | ⚠️⚠️⚠️ |
+| |  Secured on-demand infrastructure coming soon. | |
 
 ## How It Works
 

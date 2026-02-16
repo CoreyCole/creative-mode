@@ -10,7 +10,9 @@ import (
 	"os/exec"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 
 	"github.com/coreycole/creative-mode/pkg/imagegen"
 	"github.com/coreycole/creative-mode/pkg/worldchannel"
@@ -25,6 +27,11 @@ import (
 	"github.com/coreycole/creative-mode/site/internal/webhook"
 	l "github.com/coreycole/creative-mode/site/layouts"
 	p "github.com/coreycole/creative-mode/site/pages"
+)
+
+var (
+	inviteAttempts   = make(map[string]time.Time)
+	inviteAttemptsMu sync.Mutex
 )
 
 func gitCommit() string {
@@ -54,10 +61,45 @@ func main() {
 	}
 	defer func() { _ = database.Close() }()
 
+	devMode := os.Getenv("DEV_MODE") == "true"
+
+	// Validate required env vars.
+	requiredEnv := []string{"DISCORD_CLIENT_ID", "DISCORD_CLIENT_SECRET", "DISCORD_REDIRECT_URI"}
+	var missing []string
+	for _, name := range requiredEnv {
+		if os.Getenv(name) == "" {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		log.Fatalf("Missing required environment variables: %s", strings.Join(missing, ", "))
+	}
+	if os.Getenv("INVITE_CODES") == "" {
+		log.Printf("WARNING: INVITE_CODES is empty — all invite codes will be rejected")
+	}
+
 	e := echo.New()
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
-	e.Use(middleware.CORS())
+
+	// CORS — restrict to creative-mode.ai in production, allow localhost in dev.
+	corsOrigins := []string{"https://creative-mode.ai"}
+	if devMode {
+		corsOrigins = append(corsOrigins, "http://localhost:*")
+	}
+	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+		AllowOrigins: corsOrigins,
+		AllowMethods: []string{http.MethodGet, http.MethodPost},
+	}))
+	e.Use(middleware.BodyLimit("1M"))
+	e.Use(middleware.SecureWithConfig(middleware.SecureConfig{
+		XSSProtection:         "1; mode=block",
+		ContentTypeNosniff:    "nosniff",
+		XFrameOptions:         "DENY",
+		HSTSMaxAge:            31536000,
+		ReferrerPolicy:        "strict-origin-when-cross-origin",
+		ContentSecurityPolicy: "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://cdn.discordapp.com",
+	}))
 
 	// --- Auth setup ---
 	authConfig := &auth.Config{
@@ -124,8 +166,6 @@ func main() {
 	e.GET("/health", wh.HandleHealth)
 	e.POST("/webhook/github", wh.HandleGitHub)
 
-	devMode := os.Getenv("DEV_MODE") == "true"
-
 	// --- Dev auth route (only in dev mode) ---
 	if devMode {
 		e.POST("/dev/auth/login", sessionMgr.HandleDevLogin)
@@ -141,8 +181,15 @@ func main() {
 		return p.HomePage(rootArgs, devMode).Render(c.Request().Context(), c.Response().Writer)
 	})
 
-	// Serve static files.
-	e.Static("/", "static/")
+	// Serve static files with cache headers.
+	staticGroup := e.Group("")
+	staticGroup.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			c.Response().Header().Set("Cache-Control", "public, max-age=86400")
+			return next(c)
+		}
+	})
+	staticGroup.Static("/", "static/")
 
 	// --- Auth routes ---
 	e.GET("/auth/discord/login", sessionMgr.HandleLogin)
@@ -164,6 +211,20 @@ func main() {
 	sessionGroup.POST("/invite", func(c echo.Context) error {
 		session := c.Get("session").(*auth.Session)
 		code := c.FormValue("code")
+
+		inviteAttemptsMu.Lock()
+		if last, ok := inviteAttempts[session.ID]; ok && time.Since(last) < 2*time.Second {
+			inviteAttemptsMu.Unlock()
+			c.Logger().Warnf("Rate-limited invite attempt from session %s", session.ID)
+			rootArgs := l.RootArgs{
+				Title:       "Invite Code - Creative Mode",
+				CurrentPath: c.Request().URL.Path,
+				Commit:      commit,
+			}
+			return p.InvitePage(rootArgs, "Please wait a moment before trying again.").Render(c.Request().Context(), c.Response().Writer)
+		}
+		inviteAttempts[session.ID] = time.Now()
+		inviteAttemptsMu.Unlock()
 
 		if !inviteCodes.VerifyCode(code) {
 			rootArgs := l.RootArgs{
@@ -307,6 +368,10 @@ func main() {
 	if port == "" {
 		port = "80"
 	}
+
+	e.Server.ReadTimeout = 30 * time.Second
+	e.Server.WriteTimeout = 180 * time.Second // long for SSE streams + cover art gen
+	e.Server.IdleTimeout = 120 * time.Second
 
 	if err := e.Start(":" + port); err != http.ErrServerClosed {
 		log.Fatal(err)

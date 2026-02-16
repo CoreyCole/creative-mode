@@ -20,7 +20,8 @@ func New(dbPath string) (*sql.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
-	db.SetMaxOpenConns(1)
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(4)
 
 	if err := createTables(db); err != nil {
 		_ = db.Close()

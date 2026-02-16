@@ -74,6 +74,10 @@ func (h *Handler) HandleChat(c echo.Context) error {
 
 	forceCreate := signals.CreateWorld
 	content := strings.TrimSpace(signals.MayorInput)
+	const maxMessageLen = 2000
+	if runes := []rune(content); len(runes) > maxMessageLen {
+		content = string(runes[:maxMessageLen])
+	}
 	if forceCreate {
 		content = "I'm ready — let's create the world!"
 	}
@@ -268,10 +272,17 @@ func (h *Handler) HandleChat(c echo.Context) error {
 	var mayorName, worldName, worldSummary string
 	if idx := strings.Index(fullContent, "WORLD_READY|"); idx != -1 {
 		parts := strings.SplitN(fullContent[idx+len("WORLD_READY|"):], "|", 3)
-		if len(parts) == 3 {
+		switch len(parts) {
+		case 3:
 			mayorName = strings.TrimSpace(parts[0])
 			worldName = strings.TrimSpace(parts[1])
 			worldSummary = strings.TrimSpace(parts[2])
+		case 2:
+			mayorName = strings.TrimSpace(parts[0])
+			worldName = strings.TrimSpace(parts[1])
+			worldSummary = ""
+		default:
+			c.Logger().Errorf("Malformed WORLD_READY marker: %q", fullContent[idx:])
 		}
 	}
 
@@ -342,7 +353,7 @@ func (h *Handler) prepareCoverArtAndHatch(c echo.Context, sse *datastar.ServerSe
 	})
 	if err != nil {
 		c.Logger().Errorf("Cover art generation failed: %v", err)
-		if patchErr := sse.PatchElementTempl(p.CoverArtError(err.Error(), worldName, mayorName)); patchErr != nil {
+		if patchErr := sse.PatchElementTempl(p.CoverArtError("Cover art generation failed. You can try again or hatch without it.", worldName, mayorName)); patchErr != nil {
 			c.Logger().Errorf("Failed to patch cover art error: %v", patchErr)
 		}
 		if err := sse.ExecuteScript(scrollChatJS); err != nil {
@@ -355,7 +366,7 @@ func (h *Handler) prepareCoverArtAndHatch(c echo.Context, sse *datastar.ServerSe
 	artPath, saveErr := savePendingCoverArt(h.dataDir, session.DiscordID, result.Data, result.MIMEType)
 	if saveErr != nil {
 		c.Logger().Errorf("Failed to save cover art to disk: %v", saveErr)
-		if patchErr := sse.PatchElementTempl(p.CoverArtError(saveErr.Error(), worldName, mayorName)); patchErr != nil {
+		if patchErr := sse.PatchElementTempl(p.CoverArtError("Cover art generation failed. You can try again or hatch without it.", worldName, mayorName)); patchErr != nil {
 			c.Logger().Errorf("Failed to patch cover art error: %v", patchErr)
 		}
 		if err := sse.ExecuteScript(scrollChatJS); err != nil {
@@ -493,7 +504,7 @@ func (h *Handler) HandleGenerateCover(c echo.Context) error {
 	})
 	if err != nil {
 		c.Logger().Errorf("Cover art regeneration failed: %v", err)
-		if patchErr := sse.PatchElementTempl(p.CoverArtError(err.Error(), worldName, mayorName)); patchErr != nil {
+		if patchErr := sse.PatchElementTempl(p.CoverArtError("Cover art generation failed. You can try again or hatch without it.", worldName, mayorName)); patchErr != nil {
 			c.Logger().Errorf("Failed to patch cover art error: %v", patchErr)
 		}
 		if err := sse.ExecuteScript(scrollChatJS); err != nil {
@@ -506,7 +517,7 @@ func (h *Handler) HandleGenerateCover(c echo.Context) error {
 	artPath, saveErr := savePendingCoverArt(h.dataDir, session.DiscordID, result.Data, result.MIMEType)
 	if saveErr != nil {
 		c.Logger().Errorf("Failed to save regenerated cover art: %v", saveErr)
-		if patchErr := sse.PatchElementTempl(p.CoverArtError(saveErr.Error(), worldName, mayorName)); patchErr != nil {
+		if patchErr := sse.PatchElementTempl(p.CoverArtError("Cover art generation failed. You can try again or hatch without it.", worldName, mayorName)); patchErr != nil {
 			c.Logger().Errorf("Failed to patch cover art error: %v", patchErr)
 		}
 		if err := sse.ExecuteScript(scrollChatJS); err != nil {

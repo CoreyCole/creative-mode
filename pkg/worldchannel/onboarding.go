@@ -1,9 +1,15 @@
 package worldchannel
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
+	"time"
+
+	"github.com/bwmarrin/discordgo"
 )
 
 const (
@@ -47,71 +53,71 @@ type OnboardingMessage struct {
 	Content string `json:"content"`
 }
 
-// PinOnboardingData posts the onboarding conversation as a JSON message
-// and pins it in the channel. If the JSON exceeds Discord's 2000-char limit,
-// it splits across multiple messages (metadata first, then conversation chunks).
+// PinOnboardingData posts a human-friendly summary message with the full
+// onboarding conversation as a JSON file attachment, then pins it.
 func (c *Client) PinOnboardingData(channelID string, data OnboardingData) error {
-	fullJSON, err := json.Marshal(data)
+	fullJSON, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshaling onboarding data: %w", err)
 	}
 
-	// Try fitting everything in one message.
-	singleMsg := formatOnboardingMessage(onboardingMarker, string(fullJSON))
-	if len(singleMsg) <= discordMaxMessageLen {
-		return c.sendAndPin(channelID, singleMsg)
+	// Human-friendly message content.
+	summary := data.World.Summary
+	if runes := []rune(summary); len(runes) > 200 {
+		summary = string(runes[:200]) + "..."
+	}
+	content := fmt.Sprintf("%s\n\n**World**: %s\n**Mayor**: %s\n**Creator**: <@%s>\n\n> %s",
+		onboardingMarker, data.World.Name, data.Mayor.Name, data.Creator.DiscordID, summary)
+
+	msg := &discordgo.MessageSend{
+		Content: content,
+		Files: []*discordgo.File{{
+			Name:        "onboarding.json",
+			ContentType: "application/json",
+			Reader:      bytes.NewReader(fullJSON),
+		}},
 	}
 
-	// Split: first message has metadata (no conversation), second has conversation.
-	metaData := OnboardingData{
-		Version:  data.Version,
-		Creator:  data.Creator,
-		World:    data.World,
-		Mayor:    data.Mayor,
-		Messages: nil,
-	}
-	metaJSON, err := json.Marshal(metaData)
+	sent, err := c.SendComplexMessage(channelID, msg)
 	if err != nil {
-		return fmt.Errorf("marshaling onboarding metadata: %w", err)
+		return fmt.Errorf("sending onboarding message: %w", err)
 	}
-	metaMsg := formatOnboardingMessage(onboardingMarker, string(metaJSON))
-	if err := c.sendAndPin(channelID, metaMsg); err != nil {
-		return err
+	if err := c.session.ChannelMessagePin(channelID, sent.ID); err != nil {
+		c.logger.Warn("failed to pin onboarding message", "message_id", sent.ID, "error", err)
 	}
-
-	// Split conversation into chunks that fit in Discord messages.
-	convChunks := splitConversation(data.Messages)
-	for _, chunk := range convChunks {
-		chunkJSON, err := json.Marshal(chunk)
-		if err != nil {
-			return fmt.Errorf("marshaling conversation chunk: %w", err)
-		}
-		chunkMsg := formatOnboardingMessage(onboardingContinuation, string(chunkJSON))
-		if err := c.sendAndPin(channelID, chunkMsg); err != nil {
-			return err
-		}
-	}
-
 	return nil
 }
 
 // ReadOnboardingData reads pinned messages from a channel and reassembles
-// the onboarding conversation. Returns nil if no onboarding data is found.
+// the onboarding conversation. Checks for file attachments first (new format),
+// then falls back to legacy code-block format. Returns nil if no data is found.
 func (c *Client) ReadOnboardingData(channelID string) (*OnboardingData, error) {
 	pins, err := c.session.ChannelMessagesPinned(channelID)
 	if err != nil {
 		return nil, fmt.Errorf("fetching pinned messages: %w", err)
 	}
 
-	// Find onboarding messages (oldest first — pins are returned newest first).
+	// Try new format first: file attachment on message with marker.
+	for _, pin := range pins {
+		if !strings.HasPrefix(pin.Content, onboardingMarker) {
+			continue
+		}
+		for _, att := range pin.Attachments {
+			if att.Filename == "onboarding.json" {
+				return c.downloadOnboardingJSON(att.URL)
+			}
+		}
+	}
+
+	// Fall back to legacy code-block format for existing channels.
 	var mainMsg string
 	var continuationMsgs []string
 	for i := len(pins) - 1; i >= 0; i-- {
 		content := pins[i].Content
-		if json := extractJSON(content, onboardingMarker); json != "" {
-			mainMsg = json
-		} else if json := extractJSON(content, onboardingContinuation); json != "" {
-			continuationMsgs = append(continuationMsgs, json)
+		if j := extractJSON(content, onboardingMarker); j != "" {
+			mainMsg = j
+		} else if j := extractJSON(content, onboardingContinuation); j != "" {
+			continuationMsgs = append(continuationMsgs, j)
 		}
 	}
 
@@ -123,8 +129,6 @@ func (c *Client) ReadOnboardingData(channelID string) (*OnboardingData, error) {
 	if err := json.Unmarshal([]byte(mainMsg), &data); err != nil {
 		return nil, fmt.Errorf("parsing onboarding data: %w", err)
 	}
-
-	// Reassemble conversation from continuation messages.
 	for _, contJSON := range continuationMsgs {
 		var msgs []OnboardingMessage
 		if err := json.Unmarshal([]byte(contJSON), &msgs); err != nil {
@@ -133,28 +137,28 @@ func (c *Client) ReadOnboardingData(channelID string) (*OnboardingData, error) {
 		}
 		data.Messages = append(data.Messages, msgs...)
 	}
-
 	return &data, nil
 }
 
-// sendAndPin sends a message and pins it.
-func (c *Client) sendAndPin(channelID, content string) error {
-	msg, err := c.session.ChannelMessageSend(channelID, content)
+// downloadOnboardingJSON fetches and decodes a JSON file attachment.
+func (c *Client) downloadOnboardingJSON(url string) (*OnboardingData, error) {
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Get(url)
 	if err != nil {
-		return fmt.Errorf("sending onboarding message: %w", err)
+		return nil, fmt.Errorf("downloading onboarding attachment: %w", err)
 	}
-	if err := c.session.ChannelMessagePin(channelID, msg.ID); err != nil {
-		c.logger.Warn("failed to pin onboarding message", "message_id", msg.ID, "error", err)
-	}
-	return nil
-}
+	defer resp.Body.Close()
 
-// formatOnboardingMessage wraps JSON in a Discord code block with a marker.
-func formatOnboardingMessage(marker, jsonStr string) string {
-	return marker + "\n```json\n" + jsonStr + "\n```"
+	limited := io.LimitReader(resp.Body, 1<<20) // 1MB max
+	var data OnboardingData
+	if err := json.NewDecoder(limited).Decode(&data); err != nil {
+		return nil, fmt.Errorf("decoding onboarding attachment: %w", err)
+	}
+	return &data, nil
 }
 
 // extractJSON extracts the JSON string from a formatted onboarding message.
+// Used for legacy code-block format compatibility.
 func extractJSON(content, marker string) string {
 	if !strings.HasPrefix(content, marker) {
 		return ""
@@ -173,7 +177,7 @@ func extractJSON(content, marker string) string {
 }
 
 // splitConversation splits messages into chunks where each chunk's JSON
-// fits within a Discord message.
+// fits within a Discord message. Retained for legacy format compatibility.
 func splitConversation(messages []OnboardingMessage) [][]OnboardingMessage {
 	if len(messages) == 0 {
 		return nil

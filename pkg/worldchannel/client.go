@@ -64,6 +64,15 @@ func (c *Client) SendMessage(channelID, content string) (string, error) {
 	return msg.ID, nil
 }
 
+// SendComplexMessage sends a message with optional file attachments.
+func (c *Client) SendComplexMessage(channelID string, msg *discordgo.MessageSend) (*discordgo.Message, error) {
+	m, err := c.session.ChannelMessageSendComplex(channelID, msg)
+	if err != nil {
+		return nil, fmt.Errorf("sending complex message to channel %s: %w", channelID, err)
+	}
+	return m, nil
+}
+
 // Close cleans up the Discord session.
 func (c *Client) Close() error {
 	return c.session.Close()

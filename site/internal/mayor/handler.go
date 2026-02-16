@@ -94,8 +94,13 @@ func (h *Handler) HandleChat(c echo.Context) error {
 	// Add user message to conversation.
 	h.convMgr.AddMessage(session.DiscordID, "user", content)
 
-	// Build Anthropic messages from conversation history.
+	// Attach any pending images to this message.
 	messages := h.convMgr.GetMessages(session.DiscordID)
+	messageIndex := len(messages) - 1 // index of the message we just added
+	attachedImages := h.convMgr.AttachPendingImages(session.DiscordID, messageIndex)
+
+	// Re-fetch messages to include image attachments.
+	messages = h.convMgr.GetMessages(session.DiscordID)
 	anthropicMessages := mayorchat.BuildAnthropicMessages(messages)
 
 	// Start SSE stream.
@@ -111,11 +116,29 @@ func (h *Handler) HandleChat(c echo.Context) error {
 		c.Logger().Errorf("Failed to clear rate limit error: %v", err)
 	}
 
-	// Append user message to chat.
+	// Clear image previews if images were attached.
+	if len(attachedImages) > 0 {
+		if err := sse.PatchElements(`<div id="image-previews"></div>`); err != nil {
+			c.Logger().Errorf("Failed to clear image previews: %v", err)
+		}
+	}
+
+	// Append user message to chat — with images if any.
 	userMsgID := uuid.New().String()
-	if err := sse.PatchElementTempl(p.UserMessage(userMsgID, content, session.DiscordAvatar),
-		datastar.WithModeAppend(), datastar.WithSelectorID("chat-messages")); err != nil {
-		return err
+	if len(attachedImages) > 0 {
+		imageURLs := make([]string, len(attachedImages))
+		for i, img := range attachedImages {
+			imageURLs[i] = "/mayor/image/" + img.ID
+		}
+		if err := sse.PatchElementTempl(p.UserMessageWithImages(userMsgID, content, session.DiscordAvatar, imageURLs),
+			datastar.WithModeAppend(), datastar.WithSelectorID("chat-messages")); err != nil {
+			return err
+		}
+	} else {
+		if err := sse.PatchElementTempl(p.UserMessage(userMsgID, content, session.DiscordAvatar),
+			datastar.WithModeAppend(), datastar.WithSelectorID("chat-messages")); err != nil {
+			return err
+		}
 	}
 
 	// Scroll to bottom.
@@ -271,7 +294,7 @@ func (h *Handler) HandleChat(c echo.Context) error {
 		if err := sse.MarshalAndPatchSignals(map[string]any{"world_creating": true}); err != nil {
 			c.Logger().Errorf("Failed to patch world_creating signal: %v", err)
 		}
-		h.prepareCoverArtAndHatch(c, sse, session, worldInfo.MayorName, worldInfo.WorldName, worldInfo.WorldSummary)
+		h.prepareCoverArtAndHatch(c, sse, session, worldInfo)
 	} else if forceCreate {
 		// Claude didn't emit WORLD_READY despite force-create — re-enable the button.
 		if err := sse.MarshalAndPatchSignals(map[string]any{"world_creating": false}); err != nil {
@@ -285,7 +308,7 @@ func (h *Handler) HandleChat(c echo.Context) error {
 // prepareCoverArtAndHatch is the unified entry point for ALL code paths that
 // reach WORLD_READY. It handles cover art generation (if Gemini is available)
 // and then either hatches immediately or shows the cover art preview UI.
-func (h *Handler) prepareCoverArtAndHatch(c echo.Context, sse *datastar.ServerSentEventGenerator, session *auth.Session, mayorName, worldName, worldSummary string) {
+func (h *Handler) prepareCoverArtAndHatch(c echo.Context, sse *datastar.ServerSentEventGenerator, session *auth.Session, info *mayorchat.WorldReadyInfo) {
 	// Prevent duplicate hatch attempts from concurrent requests.
 	if !h.convMgr.SetHatched(session.DiscordID) {
 		h.logger.Warn("duplicate hatch attempt blocked (prepareCoverArtAndHatch)", "user", session.DiscordID)
@@ -293,7 +316,11 @@ func (h *Handler) prepareCoverArtAndHatch(c echo.Context, sse *datastar.ServerSe
 	}
 
 	// Store world-ready state for later use by HandleHatch/HandleGenerateCover.
-	h.convMgr.SetWorldReady(session.DiscordID, mayorName, worldName, worldSummary)
+	h.convMgr.SetWorldReady(session.DiscordID, info)
+
+	mayorName := info.MayorName
+	worldName := info.WorldName
+	worldSummary := info.WorldSummary
 
 	if h.wcClient == nil {
 		// No Discord bot — show summary card only.
@@ -405,8 +432,16 @@ func (h *Handler) hatchWorldWithCover(c echo.Context, sse *datastar.ServerSentEv
 		c.Logger().Errorf("Failed to send welcome message: %v", err)
 	}
 
+	// Read personality fields before clearing world-ready state.
+	var creature, vibe, emoji string
+	if info, ok := h.convMgr.GetWorldReady(session.DiscordID); ok {
+		creature = info.Creature
+		vibe = info.Vibe
+		emoji = info.Emoji
+	}
+
 	// Persist onboarding conversation for future OpenClaw agent bootstrap.
-	h.pinOnboardingConversation(c, result.ChannelID, session, finalMayorName, worldName, worldSummary)
+	h.pinOnboardingConversation(c, result.ChannelID, session, finalMayorName, worldName, worldSummary, creature, vibe, emoji)
 
 	// Notify harness (with cover art if available).
 	go h.notifyHarnessWorldHatchedWithCover(result.ChannelID, worldName, finalMayorName, session.DiscordID, session.DiscordUsername, coverArtData, coverArtMIME)
@@ -453,10 +488,14 @@ func (h *Handler) HandleGenerateCover(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
 
-	mayorName, worldName, worldSummary, ready := h.convMgr.GetWorldReady(session.DiscordID)
+	worldInfo, ready := h.convMgr.GetWorldReady(session.DiscordID)
 	if !ready {
 		return echo.NewHTTPError(http.StatusBadRequest, "no world ready for cover art generation")
 	}
+
+	mayorName := worldInfo.MayorName
+	worldName := worldInfo.WorldName
+	worldSummary := worldInfo.WorldSummary
 
 	sse := datastar.NewSSE(c.Response().Writer, c.Request())
 
@@ -524,10 +563,14 @@ func (h *Handler) HandleHatch(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
 
-	mayorName, worldName, worldSummary, ready := h.convMgr.GetWorldReady(session.DiscordID)
+	worldInfo, ready := h.convMgr.GetWorldReady(session.DiscordID)
 	if !ready {
 		return echo.NewHTTPError(http.StatusBadRequest, "no world ready to hatch")
 	}
+
+	mayorName := worldInfo.MayorName
+	worldName := worldInfo.WorldName
+	worldSummary := worldInfo.WorldSummary
 
 	// Prevent duplicate hatch attempts from concurrent requests.
 	if !h.convMgr.SetHatched(session.DiscordID) {
@@ -603,7 +646,7 @@ func (h *Handler) notifyHarnessWorldHatchedWithCover(channelID, worldName, mayor
 
 // pinOnboardingConversation persists the full onboarding conversation to Discord
 // as a pinned message for later OpenClaw agent bootstrap.
-func (h *Handler) pinOnboardingConversation(c echo.Context, channelID string, session *auth.Session, mayorName, worldName, worldSummary string) {
+func (h *Handler) pinOnboardingConversation(c echo.Context, channelID string, session *auth.Session, mayorName, worldName, worldSummary string, creature, vibe, emoji string) {
 	messages := h.convMgr.GetMessages(session.DiscordID)
 	onboardingMessages := make([]worldchannel.OnboardingMessage, len(messages))
 	for i, m := range messages {
@@ -612,7 +655,7 @@ func (h *Handler) pinOnboardingConversation(c echo.Context, channelID string, se
 		}
 	}
 	if err := h.wcClient.PinOnboardingData(channelID, worldchannel.OnboardingData{
-		Version: 1,
+		Version: worldchannel.OnboardingDataVersion,
 		Creator: worldchannel.OnboardingCreator{
 			DiscordID: session.DiscordID,
 			Username:  session.DiscordUsername,
@@ -620,7 +663,12 @@ func (h *Handler) pinOnboardingConversation(c echo.Context, channelID string, se
 		World: worldchannel.OnboardingWorld{
 			Name: worldName, Summary: worldSummary,
 		},
-		Mayor:    worldchannel.OnboardingMayor{Name: mayorName},
+		Mayor: worldchannel.OnboardingMayor{
+			Name:     mayorName,
+			Creature: creature,
+			Vibe:     vibe,
+			Emoji:    emoji,
+		},
 		Messages: onboardingMessages,
 	}); err != nil {
 		c.Logger().Errorf("Failed to pin onboarding data: %v", err)

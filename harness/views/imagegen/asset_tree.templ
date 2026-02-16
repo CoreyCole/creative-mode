@@ -2,66 +2,77 @@ package imagegen
 
 import "fmt"
 
-// AssetTree renders a collapsible file tree of generated image assets.
-templ AssetTree(files []AssetFileInfo) {
+// AssetTree renders a collapsible file tree of all asset folders.
+templ AssetTree(folders []AssetFolder) {
 	<div id="asset-tree" class="border-t border-border pt-3 flex flex-col gap-2">
 		<span class="text-[11px] text-muted-foreground uppercase tracking-wider">Assets</span>
-		<!-- generated/ folder node -->
-		<div class="flex flex-col">
-			<button
-				class="flex items-center gap-1 bg-transparent border-0 cursor-pointer text-[11px] text-muted-foreground hover:text-foreground px-0 py-0.5"
-				data-on:click="$assets_gen_open = !$assets_gen_open"
-			>
-				<span data-text="$assets_gen_open ? '▼' : '▶'" class="text-[10px] w-3">▼</span>
-				<span>generated/ ({ fmt.Sprintf("%d", len(files)) })</span>
-			</button>
-			<div data-show="$assets_gen_open" class="ml-4">
-				if len(files) == 0 {
-					<div class="text-[11px] text-muted-foreground/60 py-2">
-						No generated assets yet
-					</div>
-				} else {
-					<div class="flex flex-col gap-1">
-						for _, f := range files {
-							<div class="flex items-center gap-2 px-1.5 py-1 rounded hover:bg-muted/30 group">
-								<img
-									src={ "/assets/" + f.Path }
-									class="w-8 h-8 object-cover rounded border border-border flex-shrink-0"
-									alt={ f.Filename }
-									loading="lazy"
-								/>
-								<div class="flex flex-col min-w-0 flex-1">
-									<a
-										href={ templ.SafeURL("/assets/" + f.Path) }
-										download={ f.Filename }
-										class="text-[11px] text-foreground hover:text-primary truncate"
-										title={ f.Filename }
-									>
-										{ f.Filename }
-									</a>
-									<span class="text-[10px] text-muted-foreground/60">
-										{ fmt.Sprintf("%d KB", f.SizeKB) } &middot; { f.ModTime }
-									</span>
-								</div>
-								<button
-									class="opacity-0 group-hover:opacity-100 text-[10px] text-muted-foreground hover:text-foreground bg-transparent border-0 cursor-pointer px-1"
-									data-on:click={ fmt.Sprintf("navigator.clipboard.writeText('%s')", f.Path) }
-									title="Copy path"
-								>
-									Copy
-								</button>
-								<button
-									class="opacity-0 group-hover:opacity-100 text-[10px] text-primary hover:text-primary/80 bg-transparent border-0 cursor-pointer px-1"
-									data-on:click={ fmt.Sprintf("$place_asset_path = '%s'; @get('/api/rooms')", f.Path) }
-									title="Place in room"
-								>
-									Place
-								</button>
-							</div>
-						}
-					</div>
-				}
+		if len(folders) == 0 {
+			<div class="text-[11px] text-muted-foreground/60 py-2">
+				No assets yet
 			</div>
+		}
+		for _, folder := range folders {
+			@AssetFolderNode(folder)
+		}
+	</div>
+}
+
+// AssetFolderNode renders a single collapsible folder in the asset tree.
+templ AssetFolderNode(folder AssetFolder) {
+	<div class="flex flex-col">
+		<button
+			class="flex items-center gap-1 bg-transparent border-0 cursor-pointer text-[11px] text-muted-foreground hover:text-foreground px-0 py-0.5"
+			data-on:click={ fmt.Sprintf("$assets_%s_open = !$assets_%s_open", folder.Name, folder.Name) }
+		>
+			<span data-text={ fmt.Sprintf("$assets_%s_open ? '▼' : '▶'", folder.Name) } class="text-[10px] w-3">▼</span>
+			<span>{ folder.Name }/ ({ fmt.Sprintf("%d", len(folder.Files)) })</span>
+		</button>
+		<div data-show={ fmt.Sprintf("$assets_%s_open", folder.Name) } class="ml-4">
+			if len(folder.Files) == 0 {
+				<div class="text-[11px] text-muted-foreground/60 py-2">
+					Empty
+				</div>
+			} else {
+				<div class="flex flex-col gap-1">
+					for _, f := range folder.Files {
+						<div class="flex items-center gap-2 px-1.5 py-1 rounded hover:bg-muted/30 group">
+							<img
+								src={ "/assets/" + f.Path }
+								class="w-8 h-8 object-cover rounded border border-border flex-shrink-0"
+								alt={ f.Filename }
+								loading="lazy"
+							/>
+							<div class="flex flex-col min-w-0 flex-1">
+								<a
+									href={ templ.SafeURL("/assets/" + f.Path) }
+									download={ f.Filename }
+									class="text-[11px] text-foreground hover:text-primary truncate"
+									title={ f.Filename }
+								>
+									{ f.Filename }
+								</a>
+								<span class="text-[10px] text-muted-foreground/60">
+									{ fmt.Sprintf("%d KB", f.SizeKB) } &middot; { f.ModTime }
+								</span>
+							</div>
+							<button
+								class="opacity-0 group-hover:opacity-100 text-[10px] text-muted-foreground hover:text-foreground bg-transparent border-0 cursor-pointer px-1"
+								data-on:click={ fmt.Sprintf("navigator.clipboard.writeText('%s')", f.Path) }
+								title="Copy path"
+							>
+								Copy
+							</button>
+							<button
+								class="opacity-0 group-hover:opacity-100 text-[10px] text-primary hover:text-primary/80 bg-transparent border-0 cursor-pointer px-1"
+								data-on:click={ fmt.Sprintf("$place_asset_path = '%s'; @get('/api/rooms')", f.Path) }
+								title="Place in room"
+							>
+								Place
+							</button>
+						</div>
+					}
+				</div>
+			}
 		</div>
 	</div>
 }

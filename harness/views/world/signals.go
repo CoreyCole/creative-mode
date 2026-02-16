@@ -24,7 +24,6 @@ type OverlaySignals struct {
 	ImagePrompt         string  `json:"image_prompt"`          //nolint:tagliatelle // Datastar signal names use snake_case
 	ImageAspectRatio    string  `json:"image_aspect_ratio"`    //nolint:tagliatelle // Datastar signal names use snake_case
 	ImageTransparentBG  bool    `json:"image_transparent_bg"`  //nolint:tagliatelle // Datastar signal names use snake_case
-	AssetsGenOpen       bool    `json:"assets_gen_open"`       //nolint:tagliatelle // Datastar signal names use snake_case
 	PlaceAssetPath      string  `json:"place_asset_path"`      //nolint:tagliatelle // Datastar signal names use snake_case
 	PlaceScale          float64 `json:"place_scale"`           //nolint:tagliatelle // Datastar signal names use snake_case
 	PlaceX              float64 `json:"place_x"`               //nolint:tagliatelle // Datastar signal names use snake_case
@@ -43,7 +42,6 @@ func DefaultOverlaySignals(worldID, cpID string) OverlaySignals {
 		ActiveTab:           "global",
 		ImageAspectRatio:    "1:1",
 		ImageTransparentBG:  true,
-		AssetsGenOpen:       true,
 		PlaceScale:          defaultPlaceScale,
 		PlaceX:              defaultPlaceX,
 		PlaceY:              defaultPlaceY,

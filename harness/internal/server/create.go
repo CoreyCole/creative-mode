@@ -611,7 +611,11 @@ func (s *Server) prepareCreateCoverArtAndHatch(
 	}
 
 	// Store world-ready state.
-	s.CreateConvMgr.SetWorldReady(user.ID, mayorName, worldName, worldSummary)
+	s.CreateConvMgr.SetWorldReady(user.ID, &mayorchat.WorldReadyInfo{
+		MayorName:    mayorName,
+		WorldName:    worldName,
+		WorldSummary: worldSummary,
+	})
 
 	if s.GeminiClient == nil {
 		// No Gemini — hatch immediately without cover art.
@@ -836,7 +840,7 @@ func (s *Server) createDiscordChannelForWorld(
 		}
 	}
 	if err := wcClient.PinOnboardingData(result.ChannelID, worldchannel.OnboardingData{
-		Version: 1,
+		Version: worldchannel.OnboardingDataVersion,
 		Creator: worldchannel.OnboardingCreator{
 			DiscordID: user.DiscordID,
 			Username:  user.DiscordUsername,
@@ -881,13 +885,14 @@ func (s *Server) handleCreateGenerateCover(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "create not available")
 	}
 
-	mayorName, worldName, worldSummary, ready := s.CreateConvMgr.GetWorldReady(user.ID)
+	worldInfo, ready := s.CreateConvMgr.GetWorldReady(user.ID)
 	if !ready {
 		return echo.NewHTTPError(
 			http.StatusBadRequest,
 			"no world ready for cover art generation",
 		)
 	}
+	mayorName, worldName, worldSummary := worldInfo.MayorName, worldInfo.WorldName, worldInfo.WorldSummary
 
 	sse := datastar.NewSSE(c.Response().Writer, c.Request())
 
@@ -995,10 +1000,11 @@ func (s *Server) handleCreateHatch(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "create not available")
 	}
 
-	mayorName, worldName, worldSummary, ready := s.CreateConvMgr.GetWorldReady(user.ID)
+	worldInfo, ready := s.CreateConvMgr.GetWorldReady(user.ID)
 	if !ready {
 		return echo.NewHTTPError(http.StatusBadRequest, "no world ready to hatch")
 	}
+	mayorName, worldName, worldSummary := worldInfo.MayorName, worldInfo.WorldName, worldInfo.WorldSummary
 
 	// Prevent duplicate hatch attempts.
 	if !s.CreateConvMgr.SetHatched(user.ID) {

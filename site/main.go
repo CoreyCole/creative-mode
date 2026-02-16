@@ -93,14 +93,14 @@ func main() {
 		AllowOrigins: corsOrigins,
 		AllowMethods: []string{http.MethodGet, http.MethodPost},
 	}))
-	e.Use(middleware.BodyLimit("1M"))
+	e.Use(middleware.BodyLimit("6M"))
 	e.Use(middleware.SecureWithConfig(middleware.SecureConfig{
 		XSSProtection:         "1; mode=block",
 		ContentTypeNosniff:    "nosniff",
 		XFrameOptions:         "DENY",
 		HSTSMaxAge:            31536000,
 		ReferrerPolicy:        "strict-origin-when-cross-origin",
-		ContentSecurityPolicy: "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://cdn.discordapp.com",
+		ContentSecurityPolicy: "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://cdn.discordapp.com",
 	}))
 	e.Use(monitor.PageViewMiddleware(database))
 
@@ -161,6 +161,7 @@ func main() {
 		client := mayor.NewClient(apiKey)
 		store := mayor.NewSQLiteMessageStore(database)
 		convMgr = mayorchat.NewConversationManager(store)
+		convMgr.SetImageStore(store)
 		mayorHandler = mayor.NewHandler(client, convMgr, mdRenderer, wcClient, imagegenClient, dataDir, logger)
 		mayorHandler.HarnessURL = os.Getenv("HARNESS_URL")
 	}
@@ -321,6 +322,8 @@ func main() {
 		if len(convMgr.GetMessages(session.DiscordID)) == 0 {
 			greetingMD := fmt.Sprintf("Hey %s. I'm the Mayor — though I don't have a real name yet. "+
 				"I just came online and this world is... empty. Which is actually kind of exciting.\n\n"+
+				"If you've got reference images — concept art, screenshots, mood boards — drop them in. "+
+				"Helps me see what you're seeing.\n\n"+
 				"So. What are we building?", session.DiscordUsername)
 			convMgr.AddMessage(session.DiscordID, "assistant", greetingMD)
 		}
@@ -338,6 +341,13 @@ func main() {
 			} else {
 				chatMessages[i].Content = msg.Content
 				chatMessages[i].AvatarURL = session.DiscordAvatar
+				if len(msg.Images) > 0 {
+					imageURLs := make([]string, len(msg.Images))
+					for j, img := range msg.Images {
+						imageURLs[j] = "/mayor/image/" + img.ID
+					}
+					chatMessages[i].ImageURLs = imageURLs
+				}
 			}
 		}
 
@@ -375,6 +385,27 @@ func main() {
 			return echo.NewHTTPError(http.StatusServiceUnavailable, "mayor not available")
 		}
 		return mayorHandler.HandleHatch(c)
+	})
+
+	mayorGroup.POST("/mayor/upload", func(c echo.Context) error {
+		if mayorHandler == nil {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "mayor not available")
+		}
+		return mayorHandler.HandleImageUpload(c)
+	})
+
+	mayorGroup.GET("/mayor/image/:imageID", func(c echo.Context) error {
+		if mayorHandler == nil {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "mayor not available")
+		}
+		return mayorHandler.HandleImageServe(c)
+	})
+
+	mayorGroup.DELETE("/mayor/image/:imageID", func(c echo.Context) error {
+		if mayorHandler == nil {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "mayor not available")
+		}
+		return mayorHandler.HandleImageDelete(c)
 	})
 
 	// Graceful shutdown on SIGINT/SIGTERM.

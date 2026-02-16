@@ -74,6 +74,19 @@ func createTables(db *sql.DB) error {
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE INDEX IF NOT EXISTS idx_metrics_created_at ON metrics_snapshots(created_at);
+
+		CREATE TABLE IF NOT EXISTS conversation_images (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			discord_id TEXT NOT NULL,
+			message_index INTEGER NOT NULL,
+			image_id TEXT NOT NULL,
+			file_path TEXT NOT NULL,
+			mime_type TEXT NOT NULL,
+			original_filename TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE INDEX IF NOT EXISTS idx_conv_images_discord_id ON conversation_images(discord_id);
+		CREATE INDEX IF NOT EXISTS idx_conv_images_image_id ON conversation_images(image_id);
 	`)
 	if err != nil {
 		return err

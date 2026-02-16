@@ -2,11 +2,12 @@ package pages
 
 // ChatMessage represents a pre-rendered chat message for the mayor page template.
 type ChatMessage struct {
-	ID          string // unique DOM element ID
-	Role        string // "user" or "assistant"
-	HTMLContent string // markdown-rendered HTML (assistant messages)
-	Content     string // plain text (user messages)
-	AvatarURL   string // Discord avatar URL (user messages)
+	ID          string   // unique DOM element ID
+	Role        string   // "user" or "assistant"
+	HTMLContent string   // markdown-rendered HTML (assistant messages)
+	Content     string   // plain text (user messages)
+	AvatarURL   string   // Discord avatar URL (user messages)
+	ImageURLs   []string // image URLs for user messages with attachments
 }
 
 // GraphData holds SVG path data for the metrics line graph.

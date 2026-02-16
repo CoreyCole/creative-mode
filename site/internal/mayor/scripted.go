@@ -61,7 +61,9 @@ func (h *Handler) handleScriptedResponse(c echo.Context, sse *datastar.ServerSen
 		}
 
 		if mayorName != "" && worldName != "" {
-			h.prepareCoverArtAndHatch(c, sse, session, mayorName, worldName, worldSummary)
+			h.prepareCoverArtAndHatch(c, sse, session, &mayorchat.WorldReadyInfo{
+				MayorName: mayorName, WorldName: worldName, WorldSummary: worldSummary,
+			})
 		}
 		return nil
 	}
@@ -90,7 +92,9 @@ func (h *Handler) handleScriptedResponse(c echo.Context, sse *datastar.ServerSen
 		worldSummary := mayorchat.Truncate(mayorchat.NthUserMessage(updatedMessages, 0), 100)
 
 		if mayorName != "" && worldName != "" {
-			h.prepareCoverArtAndHatch(c, sse, session, mayorName, worldName, worldSummary)
+			h.prepareCoverArtAndHatch(c, sse, session, &mayorchat.WorldReadyInfo{
+				MayorName: mayorName, WorldName: worldName, WorldSummary: worldSummary,
+			})
 		}
 	}
 
@@ -145,7 +149,9 @@ func (h *Handler) handleScriptedForceCreate(c echo.Context, sse *datastar.Server
 	}
 
 	if mayorName != "" && worldName != "" {
-		h.prepareCoverArtAndHatch(c, sse, session, mayorName, worldName, worldSummary)
+		h.prepareCoverArtAndHatch(c, sse, session, &mayorchat.WorldReadyInfo{
+			MayorName: mayorName, WorldName: worldName, WorldSummary: worldSummary,
+		})
 	}
 
 	return nil

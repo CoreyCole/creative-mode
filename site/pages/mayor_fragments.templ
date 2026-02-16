@@ -56,6 +56,29 @@ templ UserMessage(msgID string, content string, avatarURL string) {
 	</div>
 }
 
+// UserMessageWithImages renders a user message with attached images and the user's Discord avatar.
+templ UserMessageWithImages(msgID string, content string, avatarURL string, imageURLs []string) {
+	<div id={ "msg-" + msgID } class="max-w-2xl mx-auto flex items-end gap-2 justify-end">
+		<div class="max-w-[85%] rounded-2xl rounded-br-sm bg-primary text-primary-foreground px-4 py-3">
+			<div class="flex flex-wrap gap-2 mb-2">
+				for _, url := range imageURLs {
+					<img src={ url } alt="Attached image" class="max-w-[200px] max-h-[150px] rounded-lg object-cover"/>
+				}
+			</div>
+			if content != "" {
+				<p class="text-sm whitespace-pre-wrap">{ content }</p>
+			}
+		</div>
+		if avatarURL != "" {
+			<img src={ avatarURL } alt="You" class="w-8 h-8 rounded-full shrink-0 object-cover"/>
+		} else {
+			<div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/20 text-primary text-xs font-bold">
+				U
+			</div>
+		}
+	</div>
+}
+
 // WorldHatched is shown after the Discord channel is created.
 templ WorldHatched(worldName, mayorName, discordChannelURL, discordUsername, discordAvatar, harnessURL string) {
 	<div id="mayor-signup" class="mx-auto max-w-2xl my-6 rounded-lg border border-border/40 bg-card p-6 text-center">

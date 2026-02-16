@@ -1,7 +1,9 @@
 package mayorchat
 
 import (
+	"encoding/base64"
 	"errors"
+	"os"
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -12,11 +14,19 @@ type WorldReadyInfo struct {
 	MayorName    string
 	WorldName    string
 	WorldSummary string
-	TemplateType string // empty for 3-field markers
+	TemplateType string // empty for site markers (no template detection)
+	Creature     string // optional: "rogue AI", "tree spirit", etc.
+	Vibe         string // optional: "snarky", "warm", "chaotic"
+	Emoji        string // optional: single emoji like "🔌"
 }
 
 // ParseWorldReady extracts WORLD_READY info from content.
-// Handles both 3-field (site) and 4-field (harness with template type) markers.
+// Handles multiple marker formats:
+//   - 3-field: mayor|world|summary (old site)
+//   - 4-field: mayor|world|template|summary (old harness)
+//   - 6-field: mayor|world|creature|vibe|emoji|summary (new site)
+//   - 7-field: mayor|world|template|creature|vibe|emoji|summary (new harness)
+//
 // Returns nil if no marker found.
 func ParseWorldReady(content string) *WorldReadyInfo {
 	idx := strings.Index(content, "WORLD_READY|")
@@ -28,10 +38,27 @@ func ParseWorldReady(content string) *WorldReadyInfo {
 	// Strip any trailing whitespace/newlines.
 	raw = strings.TrimSpace(raw)
 
-	parts := strings.SplitN(raw, "|", 4)
+	parts := strings.SplitN(raw, "|", 8)
 	info := &WorldReadyInfo{}
 
 	switch len(parts) {
+	case 7:
+		// 7-field: mayor|world|template|creature|vibe|emoji|summary
+		info.MayorName = strings.TrimSpace(parts[0])
+		info.WorldName = strings.TrimSpace(parts[1])
+		info.TemplateType = strings.TrimSpace(parts[2])
+		info.Creature = strings.TrimSpace(parts[3])
+		info.Vibe = strings.TrimSpace(parts[4])
+		info.Emoji = strings.TrimSpace(parts[5])
+		info.WorldSummary = strings.TrimSpace(parts[6])
+	case 6:
+		// 6-field: mayor|world|creature|vibe|emoji|summary
+		info.MayorName = strings.TrimSpace(parts[0])
+		info.WorldName = strings.TrimSpace(parts[1])
+		info.Creature = strings.TrimSpace(parts[2])
+		info.Vibe = strings.TrimSpace(parts[3])
+		info.Emoji = strings.TrimSpace(parts[4])
+		info.WorldSummary = strings.TrimSpace(parts[5])
 	case 4:
 		// 4-field: mayor|world|template|summary
 		info.MayorName = strings.TrimSpace(parts[0])
@@ -79,11 +106,30 @@ func IsBillingOrOverloadError(err error) bool {
 }
 
 // BuildAnthropicMessages converts conversation messages to Anthropic API params.
+// User messages with images are sent as multi-content blocks (image + text) for vision API.
 func BuildAnthropicMessages(messages []Message) []anthropic.MessageParam {
 	result := make([]anthropic.MessageParam, 0, len(messages))
 	for _, msg := range messages {
 		if msg.Role == "user" {
-			result = append(result, anthropic.NewUserMessage(anthropic.NewTextBlock(msg.Content)))
+			if len(msg.Images) > 0 {
+				var blocks []anthropic.ContentBlockParamUnion
+				for _, img := range msg.Images {
+					data, err := os.ReadFile(img.FilePath)
+					if err != nil {
+						continue
+					}
+					b64 := base64.StdEncoding.EncodeToString(data)
+					blocks = append(blocks, anthropic.NewImageBlockBase64(img.MIMEType, b64))
+				}
+				if msg.Content != "" {
+					blocks = append(blocks, anthropic.NewTextBlock(msg.Content))
+				}
+				if len(blocks) > 0 {
+					result = append(result, anthropic.NewUserMessage(blocks...))
+				}
+			} else {
+				result = append(result, anthropic.NewUserMessage(anthropic.NewTextBlock(msg.Content)))
+			}
 		} else {
 			result = append(result, anthropic.NewAssistantMessage(anthropic.NewTextBlock(msg.Content)))
 		}

@@ -31,7 +31,7 @@ func writeWorkspaceFiles(
 	files := map[string]string{
 		"SOUL.md":     generateSOUL(mayorName, worldName, onboarding),
 		"AGENTS.md":   generateAGENTS(mayorName, worldName),
-		"IDENTITY.md": generateIDENTITY(mayorName, worldName),
+		"IDENTITY.md": generateIDENTITY(mayorName, worldName, onboarding),
 		"USER.md":     generateUSER(creatorUsername),
 		"MEMORY.md":   "# Memory\n\nNo observations yet.\n",
 	}

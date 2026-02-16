@@ -15,27 +15,60 @@ type MessageStore interface {
 	DeleteUserMessages(userID string) error
 }
 
+// ImageStore is the persistence interface for conversation image attachments.
+type ImageStore interface {
+	AddImage(discordID string, messageIndex int, imageID, filePath, mimeType, filename string) error
+	GetImages(discordID string) ([]ImageRecord, error)
+	GetImageByID(imageID string) (*ImageRecord, error)
+	DeleteImages(discordID string) error
+	DeleteImagesOlderThan(d time.Duration) ([]string, error) // returns file paths of deleted rows
+}
+
+// ImageRecord represents a persisted image attachment in the database.
+type ImageRecord struct {
+	DiscordID    string
+	MessageIndex int
+	ImageID      string
+	FilePath     string
+	MIMEType     string
+	Filename     string
+}
+
+// PendingImage represents an uploaded image not yet attached to a message.
+type PendingImage struct {
+	ID       string
+	FilePath string
+	MIMEType string
+	Filename string
+}
+
 // transientState holds per-user state that intentionally resets on restart.
 type transientState struct {
-	LastMessage  time.Time
-	Scripted     bool
-	WorldReady   bool
-	Hatched      bool // true once hatching has started (prevents duplicate channels)
-	MayorName    string
-	WorldName    string
-	WorldSummary string
-	TemplateType string // "3d", "2d", "boardgame" — detected from conversation
-	CoverArtPath string // disk path to pending cover art (NOT image bytes)
-	CoverArtMIME string
+	LastMessage   time.Time
+	Scripted      bool
+	WorldReady    bool
+	Hatched       bool // true once hatching has started (prevents duplicate channels)
+	MayorName     string
+	WorldName     string
+	WorldSummary  string
+	TemplateType  string // "3d", "2d", "boardgame" — detected from conversation
+	Creature      string // optional personality: "rogue AI", "tree spirit", etc.
+	Vibe          string // optional personality: "snarky", "warm", "chaotic"
+	Emoji         string // optional personality: single emoji
+	CoverArtPath  string // disk path to pending cover art (NOT image bytes)
+	CoverArtMIME  string
+	PendingImages []PendingImage // uploaded but not yet sent with a message
+	ImageCount    int            // total images uploaded in this conversation
 }
 
 // ConversationManager manages per-user conversation state.
 // Messages are persisted via a MessageStore; rate limits and scripted flags are in-memory.
 type ConversationManager struct {
-	store     MessageStore
-	mu        sync.RWMutex
-	transient map[string]*transientState // keyed by user ID
-	rateLimit time.Duration
+	store      MessageStore
+	imageStore ImageStore // optional — nil if image uploads not supported
+	mu         sync.RWMutex
+	transient  map[string]*transientState // keyed by user ID
+	rateLimit  time.Duration
 }
 
 // NewConversationManager creates a new conversation manager.
@@ -59,10 +92,42 @@ func (cm *ConversationManager) AddMessage(userID, role, content string) {
 	cm.mu.Unlock()
 }
 
-// GetMessages returns the conversation history for a user.
+// GetMessages returns the conversation history for a user, with images merged in.
 func (cm *ConversationManager) GetMessages(userID string) []Message {
 	msgs, _ := cm.store.GetMessages(userID)
+	if cm.imageStore == nil {
+		return msgs
+	}
+	images, err := cm.imageStore.GetImages(userID)
+	if err != nil || len(images) == 0 {
+		return msgs
+	}
+	// Group images by message index.
+	byIndex := make(map[int][]ImageAttachment)
+	for _, img := range images {
+		byIndex[img.MessageIndex] = append(byIndex[img.MessageIndex], ImageAttachment{
+			ID:       img.ImageID,
+			FilePath: img.FilePath,
+			MIMEType: img.MIMEType,
+			Filename: img.Filename,
+		})
+	}
+	for i := range msgs {
+		if attachments, ok := byIndex[i]; ok {
+			msgs[i].Images = attachments
+		}
+	}
 	return msgs
+}
+
+// SetImageStore sets the optional image store for persisting image attachments.
+func (cm *ConversationManager) SetImageStore(store ImageStore) {
+	cm.imageStore = store
+}
+
+// ImageStoreAvailable returns whether image uploads are supported.
+func (cm *ConversationManager) ImageStoreAvailable() bool {
+	return cm.imageStore != nil
 }
 
 // SetScripted marks a user's conversation as using the scripted fallback.
@@ -99,25 +164,36 @@ func (cm *ConversationManager) CheckRateLimit(userID string) error {
 }
 
 // SetWorldReady stores the world-ready info for later hatching.
-func (cm *ConversationManager) SetWorldReady(userID, mayorName, worldName, worldSummary string) {
+func (cm *ConversationManager) SetWorldReady(userID string, info *WorldReadyInfo) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 	ts := cm.getOrCreate(userID)
 	ts.WorldReady = true
-	ts.MayorName = mayorName
-	ts.WorldName = worldName
-	ts.WorldSummary = worldSummary
+	ts.MayorName = info.MayorName
+	ts.WorldName = info.WorldName
+	ts.WorldSummary = info.WorldSummary
+	ts.Creature = info.Creature
+	ts.Vibe = info.Vibe
+	ts.Emoji = info.Emoji
 }
 
 // GetWorldReady returns the stored world-ready info.
-func (cm *ConversationManager) GetWorldReady(userID string) (mayorName, worldName, worldSummary string, ok bool) {
+func (cm *ConversationManager) GetWorldReady(userID string) (info *WorldReadyInfo, ok bool) {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
 	ts, exists := cm.transient[userID]
 	if !exists || !ts.WorldReady {
-		return "", "", "", false
+		return nil, false
 	}
-	return ts.MayorName, ts.WorldName, ts.WorldSummary, true
+	return &WorldReadyInfo{
+		MayorName:    ts.MayorName,
+		WorldName:    ts.WorldName,
+		WorldSummary: ts.WorldSummary,
+		TemplateType: ts.TemplateType,
+		Creature:     ts.Creature,
+		Vibe:         ts.Vibe,
+		Emoji:        ts.Emoji,
+	}, true
 }
 
 // SetTemplateType stores the detected template type.
@@ -158,6 +234,112 @@ func (cm *ConversationManager) GetCoverArtPath(userID string) (path, mimeType st
 	return ts.CoverArtPath, ts.CoverArtMIME, true
 }
 
+// AddPendingImage adds an uploaded image to the user's pending list.
+func (cm *ConversationManager) AddPendingImage(userID string, img PendingImage) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	ts := cm.getOrCreate(userID)
+	ts.PendingImages = append(ts.PendingImages, img)
+	ts.ImageCount++
+}
+
+// GetPendingImages returns the pending images for a user.
+func (cm *ConversationManager) GetPendingImages(userID string) []PendingImage {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	ts, ok := cm.transient[userID]
+	if !ok {
+		return nil
+	}
+	result := make([]PendingImage, len(ts.PendingImages))
+	copy(result, ts.PendingImages)
+	return result
+}
+
+// RemovePendingImage removes a pending image by ID and returns its file path.
+func (cm *ConversationManager) RemovePendingImage(userID, imageID string) (filePath string, ok bool) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	ts, exists := cm.transient[userID]
+	if !exists {
+		return "", false
+	}
+	for i, img := range ts.PendingImages {
+		if img.ID == imageID {
+			filePath = img.FilePath
+			ts.PendingImages = append(ts.PendingImages[:i], ts.PendingImages[i+1:]...)
+			ts.ImageCount--
+			return filePath, true
+		}
+	}
+	return "", false
+}
+
+// GetImageCount returns the total number of images uploaded in this conversation.
+func (cm *ConversationManager) GetImageCount(userID string) int {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	ts, ok := cm.transient[userID]
+	if !ok {
+		return 0
+	}
+	return ts.ImageCount
+}
+
+// AttachPendingImages persists all pending images to the image store for the given message index,
+// clears them from transient state, and returns the attached images.
+func (cm *ConversationManager) AttachPendingImages(userID string, messageIndex int) []ImageAttachment {
+	cm.mu.Lock()
+	pending := make([]PendingImage, 0)
+	if ts, ok := cm.transient[userID]; ok {
+		pending = append(pending, ts.PendingImages...)
+		ts.PendingImages = nil
+	}
+	cm.mu.Unlock()
+
+	if len(pending) == 0 || cm.imageStore == nil {
+		return nil
+	}
+
+	var attached []ImageAttachment
+	for _, p := range pending {
+		if err := cm.imageStore.AddImage(userID, messageIndex, p.ID, p.FilePath, p.MIMEType, p.Filename); err != nil {
+			continue
+		}
+		attached = append(attached, ImageAttachment{
+			ID:       p.ID,
+			FilePath: p.FilePath,
+			MIMEType: p.MIMEType,
+			Filename: p.Filename,
+		})
+	}
+	return attached
+}
+
+// GetImageByID looks up an image by ID, checking pending images first then the image store.
+func (cm *ConversationManager) GetImageByID(userID, imageID string) (filePath, mimeType string, ok bool) {
+	// Check pending images first.
+	cm.mu.RLock()
+	if ts, exists := cm.transient[userID]; exists {
+		for _, img := range ts.PendingImages {
+			if img.ID == imageID {
+				cm.mu.RUnlock()
+				return img.FilePath, img.MIMEType, true
+			}
+		}
+	}
+	cm.mu.RUnlock()
+
+	// Check image store.
+	if cm.imageStore != nil {
+		rec, err := cm.imageStore.GetImageByID(imageID)
+		if err == nil && rec != nil {
+			return rec.FilePath, rec.MIMEType, true
+		}
+	}
+	return "", "", false
+}
+
 // SetHatched atomically marks a user as hatching. Returns true if this call
 // set the flag (first caller wins), false if already hatching/hatched.
 func (cm *ConversationManager) SetHatched(userID string) bool {
@@ -176,11 +358,24 @@ func (cm *ConversationManager) ResetConversation(userID string) error {
 	if err := cm.store.DeleteUserMessages(userID); err != nil {
 		return err
 	}
+	// Delete persisted images and their files.
+	if cm.imageStore != nil {
+		if images, err := cm.imageStore.GetImages(userID); err == nil {
+			for _, img := range images {
+				_ = os.Remove(img.FilePath)
+			}
+		}
+		_ = cm.imageStore.DeleteImages(userID)
+	}
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 	if ts, ok := cm.transient[userID]; ok {
 		if ts.CoverArtPath != "" {
 			_ = os.Remove(ts.CoverArtPath)
+		}
+		// Clean up pending image files.
+		for _, img := range ts.PendingImages {
+			_ = os.Remove(img.FilePath)
 		}
 		delete(cm.transient, userID)
 	}
@@ -204,6 +399,9 @@ func (cm *ConversationManager) ClearWorldReady(userID string) {
 	ts.WorldName = ""
 	ts.WorldSummary = ""
 	ts.TemplateType = ""
+	ts.Creature = ""
+	ts.Vibe = ""
+	ts.Emoji = ""
 	ts.CoverArtPath = ""
 	ts.CoverArtMIME = ""
 }
@@ -226,11 +424,23 @@ func (cm *ConversationManager) cleanupLoop() {
 	for range ticker.C {
 		_ = cm.store.DeleteOlderThan(24 * time.Hour)
 
+		// Clean up old images.
+		if cm.imageStore != nil {
+			if paths, err := cm.imageStore.DeleteImagesOlderThan(24 * time.Hour); err == nil {
+				for _, p := range paths {
+					_ = os.Remove(p)
+				}
+			}
+		}
+
 		cm.mu.Lock()
 		for id, ts := range cm.transient {
 			if time.Since(ts.LastMessage) > 24*time.Hour {
 				if ts.CoverArtPath != "" {
 					_ = os.Remove(ts.CoverArtPath)
+				}
+				for _, img := range ts.PendingImages {
+					_ = os.Remove(img.FilePath)
 				}
 				delete(cm.transient, id)
 			}

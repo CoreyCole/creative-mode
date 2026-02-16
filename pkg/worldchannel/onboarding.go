@@ -13,6 +13,9 @@ import (
 )
 
 const (
+	// OnboardingDataVersion is the current version for newly created onboarding data.
+	OnboardingDataVersion = 2
+
 	// onboardingMarker identifies onboarding data messages in Discord.
 	onboardingMarker = "\U0001F95A Onboarding Conversation"
 	// onboardingContinuation identifies continuation messages.
@@ -42,9 +45,12 @@ type OnboardingWorld struct {
 	Summary string `json:"summary"`
 }
 
-// OnboardingMayor holds the mayor's name.
+// OnboardingMayor holds the mayor's name and optional personality traits.
 type OnboardingMayor struct {
-	Name string `json:"name"`
+	Name     string `json:"name"`
+	Creature string `json:"creature,omitempty"`
+	Vibe     string `json:"vibe,omitempty"`
+	Emoji    string `json:"emoji,omitempty"`
 }
 
 // OnboardingMessage is a single message in the onboarding conversation.

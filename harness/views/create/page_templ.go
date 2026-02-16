@@ -63,40 +63,40 @@ func Page(messages []ChatMessage) templ.Component {
 					}
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<!-- World hatched card placeholder --><div id=\"mayor-signup\"></div></div><script>\n\t\t\t\t// Scroll to bottom on page load to show latest messages.\n\t\t\t\trequestAnimationFrame(function () {\n\t\t\t\t\tvar el = document.getElementById(\"chat-messages\");\n\t\t\t\t\tif (el) {\n\t\t\t\t\t\tel.scrollTop = el.scrollHeight;\n\t\t\t\t\t}\n\t\t\t\t});\n\t\t\t</script><!-- Input area --><div class=\"shrink-0 border-t border-border/40 px-4 py-3 relative\"><div class=\"mx-auto max-w-2xl\"><!-- Rate limit error --><div id=\"rate-limit-error\"></div><div data-signals='{\"mayor_input\": \"\", \"create_world\": false}' class=\"flex gap-2\"><input type=\"text\" data-bind:mayor_input data-on:keydown=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<!-- World hatched card placeholder --><div id=\"mayor-signup\"></div></div><script>\n\t\t\t\t// Scroll to bottom on page load to show latest messages.\n\t\t\t\trequestAnimationFrame(function () {\n\t\t\t\t\tvar el = document.getElementById(\"chat-messages\");\n\t\t\t\t\tif (el) {\n\t\t\t\t\t\tel.scrollTop = el.scrollHeight;\n\t\t\t\t\t}\n\t\t\t\t});\n\t\t\t</script><script>\n\t\t\t\t// Auto-resize textarea as content grows.\n\t\t\t\t(function() {\n\t\t\t\t\tvar ta = document.querySelector('textarea[data-bind\\\\:mayor_input]');\n\t\t\t\t\tif (!ta) return;\n\t\t\t\t\tfunction resize() { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 128) + 'px'; }\n\t\t\t\t\tta.addEventListener('input', resize);\n\t\t\t\t\tnew MutationObserver(function() { if (!ta.value) { ta.style.height = 'auto'; } }).observe(ta, {attributes: true});\n\t\t\t\t})();\n\t\t\t</script><!-- Input area --><div class=\"shrink-0 border-t border-border/40 px-4 py-3 relative\"><div class=\"mx-auto max-w-2xl\"><!-- Rate limit error --><div id=\"rate-limit-error\"></div><div data-signals='{\"mayor_input\": \"\", \"create_world\": false}' class=\"flex gap-2 items-end\"><textarea data-bind:mayor_input data-on:keydown=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var3 string
-			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(`evt.key === 'Enter' && !$_sending && $mayor_input.trim() !== '' && ` + string(datastar.PostSSE("/create/chat")))
+			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(`evt.key === 'Enter' && !evt.shiftKey && (evt.preventDefault(), !$_sending && $mayor_input.trim() !== '' && ` + string(datastar.PostSSE("/create/chat")) + `)`)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/create/page.templ`, Line: 56, Col: 137}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/create/page.templ`, Line: 65, Col: 183}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "\" data-attr:disabled=\"$_sending\" placeholder=\"Type your message...\" class=\"flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50\" autocomplete=\"off\"> <button data-on:click=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "\" data-attr:disabled=\"$_sending\" placeholder=\"Type your message... (Shift+Enter for new line)\" rows=\"1\" class=\"flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 resize-none overflow-y-auto max-h-32\" autocomplete=\"off\"></textarea> <button data-on:click=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var4 string
 			templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(`!$_sending && $mayor_input.trim() !== '' && ` + string(datastar.PostSSE("/create/chat")))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/create/page.templ`, Line: 63, Col: 112}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/create/page.templ`, Line: 73, Col: 112}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "\" data-indicator:_sending data-attr:disabled=\"$_sending\" class=\"inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 disabled:opacity-50\"><span data-show=\"!$_sending\">Send</span> <span data-show=\"$_sending\" class=\"flex items-center gap-1.5\"><span class=\"inline-block w-1.5 h-1.5 rounded-full bg-primary-foreground/70 animate-pulse\"></span> Sending</span></button></div></div><button data-on:click=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "\" data-indicator:_sending data-attr:disabled=\"$_sending\" class=\"self-end inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 disabled:opacity-50\"><span data-show=\"!$_sending\">Send</span> <span data-show=\"$_sending\" class=\"flex items-center gap-1.5\"><span class=\"inline-block w-1.5 h-1.5 rounded-full bg-primary-foreground/70 animate-pulse\"></span> Sending</span></button></div></div><button data-on:click=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var5 string
 			templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(`$create_world = true; ` + string(datastar.PostSSE("/create/chat")))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/create/page.templ`, Line: 77, Col: 88}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/create/page.templ`, Line: 87, Col: 88}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 			if templ_7745c5c3_Err != nil {

@@ -2,10 +2,19 @@ package mayorchat
 
 import "strings"
 
+// ImageAttachment represents an image attached to a message.
+type ImageAttachment struct {
+	ID       string // unique image ID
+	FilePath string // disk path to image file
+	MIMEType string // e.g. "image/png"
+	Filename string // original filename
+}
+
 // Message represents a single conversation message.
 type Message struct {
-	Role    string // "user" or "assistant"
+	Role    string            // "user" or "assistant"
 	Content string
+	Images  []ImageAttachment // attached images (user messages only)
 }
 
 // CountUserMessages returns the number of user messages in the conversation.

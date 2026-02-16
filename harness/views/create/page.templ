@@ -41,6 +41,16 @@ templ Page(messages []ChatMessage) {
 					}
 				});
 			</script>
+			<script>
+				// Auto-resize textarea as content grows.
+				(function() {
+					var ta = document.querySelector('textarea[data-bind\\:mayor_input]');
+					if (!ta) return;
+					function resize() { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 128) + 'px'; }
+					ta.addEventListener('input', resize);
+					new MutationObserver(function() { if (!ta.value) { ta.style.height = 'auto'; } }).observe(ta, {attributes: true});
+				})();
+			</script>
 			<!-- Input area -->
 			<div class="shrink-0 border-t border-border/40 px-4 py-3 relative">
 				<div class="mx-auto max-w-2xl">
@@ -48,22 +58,22 @@ templ Page(messages []ChatMessage) {
 					<div id="rate-limit-error"></div>
 					<div
 						data-signals='{"mayor_input": "", "create_world": false}'
-						class="flex gap-2"
+						class="flex gap-2 items-end"
 					>
-						<input
-							type="text"
+						<textarea
 							data-bind:mayor_input
-							data-on:keydown={ `evt.key === 'Enter' && !$_sending && $mayor_input.trim() !== '' && ` + string(datastar.PostSSE("/create/chat")) }
+							data-on:keydown={ `evt.key === 'Enter' && !evt.shiftKey && (evt.preventDefault(), !$_sending && $mayor_input.trim() !== '' && ` + string(datastar.PostSSE("/create/chat")) + `)` }
 							data-attr:disabled="$_sending"
-							placeholder="Type your message..."
-							class="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
+							placeholder="Type your message... (Shift+Enter for new line)"
+							rows="1"
+							class="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 resize-none overflow-y-auto max-h-32"
 							autocomplete="off"
-						/>
+						></textarea>
 						<button
 							data-on:click={ `!$_sending && $mayor_input.trim() !== '' && ` + string(datastar.PostSSE("/create/chat")) }
 							data-indicator:_sending
 							data-attr:disabled="$_sending"
-							class="inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 disabled:opacity-50"
+							class="self-end inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 disabled:opacity-50"
 						>
 							<span data-show="!$_sending">Send</span>
 							<span data-show="$_sending" class="flex items-center gap-1.5">

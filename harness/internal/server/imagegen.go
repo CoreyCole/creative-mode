@@ -170,9 +170,10 @@ func (s *Server) handleImageSave(c echo.Context) error {
 		return err
 	}
 
-	files, _ := listGeneratedAssets(genDir)
+	baseDir := filepath.Join(s.DataDir, "shared-assets")
+	folders := listAllAssetFolders(baseDir)
 
-	return sse.PatchElementTempl(imagegen.AssetTree(files))
+	return sse.PatchElementTempl(imagegen.AssetTree(folders))
 }
 
 var nonAlphaNum = regexp.MustCompile(`[^a-z0-9]+`)
@@ -203,26 +204,63 @@ func slugify(s string) string {
 	return s
 }
 
-// handleAssetTree serves the generated assets file tree via SSE.
+// handleAssetTree serves the full shared-assets file tree via SSE.
 func (s *Server) handleAssetTree(c echo.Context) error {
 	sse := datastar.NewSSE(c.Response().Writer, c.Request())
 
-	genDir := filepath.Join(s.DataDir, "shared-assets", "generated")
-	files, _ := listGeneratedAssets(genDir)
+	baseDir := filepath.Join(s.DataDir, "shared-assets")
+	folders := listAllAssetFolders(baseDir)
 
-	return sse.PatchElementTempl(imagegen.AssetTree(files))
+	return sse.PatchElementTempl(imagegen.AssetTree(folders))
 }
 
-// listGeneratedAssets reads the generated directory and returns file metadata
-// sorted by modification time descending (newest first).
-func listGeneratedAssets(genDir string) ([]imagegen.AssetFileInfo, error) {
-	entries, err := os.ReadDir(genDir)
+// listAllAssetFolders scans all subdirectories under shared-assets/ and returns
+// an AssetFolder for each, sorted alphabetically by folder name.
+func listAllAssetFolders(baseDir string) []imagegen.AssetFolder {
+	entries, err := os.ReadDir(baseDir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return []imagegen.AssetFileInfo{}, nil
+		return nil
+	}
+
+	var folders []imagegen.AssetFolder
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
 		}
 
-		return nil, err
+		folderName := entry.Name()
+		files := listFolderAssets(baseDir, folderName)
+		folders = append(folders, imagegen.AssetFolder{
+			Name:  folderName,
+			Files: files,
+		})
+	}
+
+	sort.Slice(folders, func(i, j int) bool {
+		return folders[i].Name < folders[j].Name
+	})
+
+	return folders
+}
+
+// imageExtensions lists file extensions shown in the asset tree.
+var imageExtensions = map[string]bool{
+	".png":  true,
+	".jpg":  true,
+	".jpeg": true,
+	".webp": true,
+	".gif":  true,
+}
+
+// listFolderAssets reads a single folder under shared-assets/ and returns image
+// file metadata sorted by modification time descending (newest first).
+func listFolderAssets(baseDir, folderName string) []imagegen.AssetFileInfo {
+	dirPath := filepath.Join(baseDir, folderName)
+
+	entries, err := os.ReadDir(dirPath)
+	if err != nil {
+		return nil
 	}
 
 	type fileWithTime struct {
@@ -237,6 +275,10 @@ func listGeneratedAssets(genDir string) ([]imagegen.AssetFileInfo, error) {
 			continue
 		}
 
+		if !imageExtensions[strings.ToLower(filepath.Ext(entry.Name()))] {
+			continue
+		}
+
 		info, err := entry.Info()
 		if err != nil {
 			continue
@@ -245,7 +287,7 @@ func listGeneratedAssets(genDir string) ([]imagegen.AssetFileInfo, error) {
 		items = append(items, fileWithTime{
 			info: imagegen.AssetFileInfo{
 				Filename: entry.Name(),
-				Path:     "generated/" + entry.Name(),
+				Path:     folderName + "/" + entry.Name(),
 				SizeKB:   info.Size() / 1024, //nolint:mnd // bytes to KB
 				ModTime:  info.ModTime().Format("Jan 2, 3:04 PM"),
 			},
@@ -253,7 +295,6 @@ func listGeneratedAssets(genDir string) ([]imagegen.AssetFileInfo, error) {
 		})
 	}
 
-	// Sort newest first.
 	sort.Slice(items, func(i, j int) bool {
 		return items[i].mod.After(items[j].mod)
 	})
@@ -263,7 +304,7 @@ func listGeneratedAssets(genDir string) ([]imagegen.AssetFileInfo, error) {
 		files[i] = item.info
 	}
 
-	return files, nil
+	return files
 }
 
 // extensionForMIME returns a file extension for the given MIME type.

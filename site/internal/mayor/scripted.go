@@ -76,7 +76,7 @@ func (h *Handler) handleScriptedResponse(c echo.Context, sse *datastar.ServerSen
 			return err
 		}
 		h.convMgr.AddMessage(session.DiscordID, "assistant", responseMD)
-		if err := sse.ExecuteScript("document.getElementById('chat-messages').scrollTop = document.getElementById('chat-messages').scrollHeight"); err != nil {
+		if err := sse.ExecuteScript(scrollChatJS); err != nil {
 			c.Logger().Errorf("Failed to scroll: %v", err)
 		}
 		return nil
@@ -106,7 +106,7 @@ func (h *Handler) handleScriptedResponse(c echo.Context, sse *datastar.ServerSen
 			h.convMgr.AddMessage(session.DiscordID, "assistant", responseMD)
 		}
 
-		if err := sse.ExecuteScript("document.getElementById('chat-messages').scrollTop = document.getElementById('chat-messages').scrollHeight"); err != nil {
+		if err := sse.ExecuteScript(scrollChatJS); err != nil {
 			c.Logger().Errorf("Failed to scroll: %v", err)
 		}
 
@@ -128,7 +128,7 @@ func (h *Handler) handleScriptedResponse(c echo.Context, sse *datastar.ServerSen
 	h.convMgr.AddMessage(session.DiscordID, "assistant", responseMD)
 
 	// Scroll to bottom.
-	if err := sse.ExecuteScript("document.getElementById('chat-messages').scrollTop = document.getElementById('chat-messages').scrollHeight"); err != nil {
+	if err := sse.ExecuteScript(scrollChatJS); err != nil {
 		c.Logger().Errorf("Failed to scroll: %v", err)
 	}
 
@@ -170,7 +170,7 @@ func (h *Handler) handleScriptedForceCreate(c echo.Context, sse *datastar.Server
 			return err
 		}
 		h.convMgr.AddMessage(session.DiscordID, "assistant", responseMD)
-		if err := sse.ExecuteScript("document.getElementById('chat-messages').scrollTop = document.getElementById('chat-messages').scrollHeight"); err != nil {
+		if err := sse.ExecuteScript(scrollChatJS); err != nil {
 			c.Logger().Errorf("Failed to scroll: %v", err)
 		}
 		return nil
@@ -195,7 +195,7 @@ func (h *Handler) handleScriptedForceCreate(c echo.Context, sse *datastar.Server
 
 	h.convMgr.AddMessage(session.DiscordID, "assistant", responseMD)
 
-	if err := sse.ExecuteScript("document.getElementById('chat-messages').scrollTop = document.getElementById('chat-messages').scrollHeight"); err != nil {
+	if err := sse.ExecuteScript(scrollChatJS); err != nil {
 		c.Logger().Errorf("Failed to scroll: %v", err)
 	}
 

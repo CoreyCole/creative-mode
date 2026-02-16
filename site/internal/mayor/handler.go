@@ -25,6 +25,9 @@ import (
 	p "github.com/coreycole/creative-mode/site/pages"
 )
 
+// scrollChatJS is the JS snippet that scrolls the chat container to the bottom.
+const scrollChatJS = "document.getElementById('chat-messages').scrollTop = document.getElementById('chat-messages').scrollHeight"
+
 // ChatSignals matches the client-side signals sent with @post.
 type ChatSignals struct {
 	MayorInput  string `json:"mayor_input"`
@@ -119,7 +122,7 @@ func (h *Handler) HandleChat(c echo.Context) error {
 	}
 
 	// Scroll to bottom.
-	if err := sse.ExecuteScript("document.getElementById('chat-messages').scrollTop = document.getElementById('chat-messages').scrollHeight"); err != nil {
+	if err := sse.ExecuteScript(scrollChatJS); err != nil {
 		c.Logger().Errorf("Failed to scroll: %v", err)
 	}
 
@@ -131,7 +134,7 @@ func (h *Handler) HandleChat(c echo.Context) error {
 	}
 
 	// Scroll to streaming message.
-	if err := sse.ExecuteScript("document.getElementById('chat-messages').scrollTop = document.getElementById('chat-messages').scrollHeight"); err != nil {
+	if err := sse.ExecuteScript(scrollChatJS); err != nil {
 		c.Logger().Errorf("Failed to scroll: %v", err)
 	}
 
@@ -233,7 +236,7 @@ func (h *Handler) HandleChat(c echo.Context) error {
 				}
 
 				// Auto-scroll.
-				if err := sse.ExecuteScript("document.getElementById('chat-messages').scrollTop = document.getElementById('chat-messages').scrollHeight"); err != nil {
+				if err := sse.ExecuteScript(scrollChatJS); err != nil {
 					c.Logger().Errorf("Failed to scroll during streaming: %v", err)
 				}
 			}
@@ -279,7 +282,7 @@ func (h *Handler) HandleChat(c echo.Context) error {
 	}
 
 	// Scroll to bottom after final render.
-	if err := sse.ExecuteScript("document.getElementById('chat-messages').scrollTop = document.getElementById('chat-messages').scrollHeight"); err != nil {
+	if err := sse.ExecuteScript(scrollChatJS); err != nil {
 		c.Logger().Errorf("Failed to scroll: %v", err)
 	}
 
@@ -295,6 +298,12 @@ func (h *Handler) HandleChat(c echo.Context) error {
 // reach WORLD_READY. It handles cover art generation (if Gemini is available)
 // and then either hatches immediately or shows the cover art preview UI.
 func (h *Handler) prepareCoverArtAndHatch(c echo.Context, sse *datastar.ServerSentEventGenerator, session *auth.Session, mayorName, worldName, worldSummary string) {
+	// Prevent duplicate hatch attempts from concurrent requests.
+	if !h.convMgr.SetHatched(session.DiscordID) {
+		h.logger.Warn("duplicate hatch attempt blocked (prepareCoverArtAndHatch)", "user", session.DiscordID)
+		return
+	}
+
 	// Store world-ready state for later use by HandleHatch/HandleGenerateCover.
 	h.convMgr.SetWorldReady(session.DiscordID, mayorName, worldName, worldSummary)
 
@@ -302,6 +311,9 @@ func (h *Handler) prepareCoverArtAndHatch(c echo.Context, sse *datastar.ServerSe
 		// No Discord bot — show summary card only.
 		if err := sse.PatchElementTempl(p.WorldSummaryCard(worldName, mayorName, worldSummary)); err != nil {
 			c.Logger().Errorf("Failed to patch summary card: %v", err)
+		}
+		if err := sse.ExecuteScript(scrollChatJS); err != nil {
+			c.Logger().Errorf("Failed to scroll: %v", err)
 		}
 		return
 	}
@@ -319,6 +331,9 @@ func (h *Handler) prepareCoverArtAndHatch(c echo.Context, sse *datastar.ServerSe
 		h.hatchWorldWithCover(c, sse, session, mayorName, worldName, worldSummary, nil, "")
 		return
 	}
+	if err := sse.ExecuteScript(scrollChatJS); err != nil {
+		c.Logger().Errorf("Failed to scroll: %v", err)
+	}
 
 	// Generate cover art (3-10s).
 	prompt := buildCoverArtPrompt(worldName, worldSummary)
@@ -330,6 +345,9 @@ func (h *Handler) prepareCoverArtAndHatch(c echo.Context, sse *datastar.ServerSe
 		if patchErr := sse.PatchElementTempl(p.CoverArtError(err.Error(), worldName, mayorName)); patchErr != nil {
 			c.Logger().Errorf("Failed to patch cover art error: %v", patchErr)
 		}
+		if err := sse.ExecuteScript(scrollChatJS); err != nil {
+			c.Logger().Errorf("Failed to scroll: %v", err)
+		}
 		return
 	}
 
@@ -340,6 +358,9 @@ func (h *Handler) prepareCoverArtAndHatch(c echo.Context, sse *datastar.ServerSe
 		if patchErr := sse.PatchElementTempl(p.CoverArtError(saveErr.Error(), worldName, mayorName)); patchErr != nil {
 			c.Logger().Errorf("Failed to patch cover art error: %v", patchErr)
 		}
+		if err := sse.ExecuteScript(scrollChatJS); err != nil {
+			c.Logger().Errorf("Failed to scroll: %v", err)
+		}
 		return
 	}
 	h.convMgr.SetCoverArtPath(session.DiscordID, artPath, result.MIMEType)
@@ -347,6 +368,9 @@ func (h *Handler) prepareCoverArtAndHatch(c echo.Context, sse *datastar.ServerSe
 	// Show preview with Hatch/Regenerate buttons.
 	if err := sse.PatchElementTempl(p.CoverArtPreview("/mayor/cover-preview", worldName, mayorName)); err != nil {
 		c.Logger().Errorf("Failed to patch cover art preview: %v", err)
+	}
+	if err := sse.ExecuteScript(scrollChatJS); err != nil {
+		c.Logger().Errorf("Failed to scroll: %v", err)
 	}
 }
 
@@ -378,6 +402,9 @@ func (h *Handler) hatchWorldWithCover(c echo.Context, sse *datastar.ServerSentEv
 		if patchErr := sse.PatchElementTempl(p.WorldSummaryCard(worldName, finalMayorName, worldSummary)); patchErr != nil {
 			c.Logger().Errorf("Failed to patch summary card: %v", patchErr)
 		}
+		if err := sse.ExecuteScript(scrollChatJS); err != nil {
+			c.Logger().Errorf("Failed to scroll: %v", err)
+		}
 		return
 	}
 
@@ -408,6 +435,9 @@ func (h *Handler) hatchWorldWithCover(c echo.Context, sse *datastar.ServerSentEv
 		h.HarnessURL,
 	)); err != nil {
 		c.Logger().Errorf("Failed to patch hatched card: %v", err)
+	}
+	if err := sse.ExecuteScript(scrollChatJS); err != nil {
+		c.Logger().Errorf("Failed to scroll: %v", err)
 	}
 }
 
@@ -452,6 +482,9 @@ func (h *Handler) HandleGenerateCover(c echo.Context) error {
 	if err := sse.PatchElementTempl(p.CoverArtGenerating(worldName, mayorName)); err != nil {
 		c.Logger().Errorf("Failed to patch cover art loading: %v", err)
 	}
+	if err := sse.ExecuteScript(scrollChatJS); err != nil {
+		c.Logger().Errorf("Failed to scroll: %v", err)
+	}
 
 	// Generate cover art.
 	prompt := buildCoverArtPrompt(worldName, worldSummary)
@@ -463,6 +496,9 @@ func (h *Handler) HandleGenerateCover(c echo.Context) error {
 		if patchErr := sse.PatchElementTempl(p.CoverArtError(err.Error(), worldName, mayorName)); patchErr != nil {
 			c.Logger().Errorf("Failed to patch cover art error: %v", patchErr)
 		}
+		if err := sse.ExecuteScript(scrollChatJS); err != nil {
+			c.Logger().Errorf("Failed to scroll: %v", err)
+		}
 		return nil
 	}
 
@@ -473,6 +509,9 @@ func (h *Handler) HandleGenerateCover(c echo.Context) error {
 		if patchErr := sse.PatchElementTempl(p.CoverArtError(saveErr.Error(), worldName, mayorName)); patchErr != nil {
 			c.Logger().Errorf("Failed to patch cover art error: %v", patchErr)
 		}
+		if err := sse.ExecuteScript(scrollChatJS); err != nil {
+			c.Logger().Errorf("Failed to scroll: %v", err)
+		}
 		return nil
 	}
 	h.convMgr.SetCoverArtPath(session.DiscordID, artPath, result.MIMEType)
@@ -481,6 +520,9 @@ func (h *Handler) HandleGenerateCover(c echo.Context) error {
 	previewURL := fmt.Sprintf("/mayor/cover-preview?t=%d", time.Now().UnixMilli())
 	if err := sse.PatchElementTempl(p.CoverArtPreview(previewURL, worldName, mayorName)); err != nil {
 		c.Logger().Errorf("Failed to patch cover art preview: %v", err)
+	}
+	if err := sse.ExecuteScript(scrollChatJS); err != nil {
+		c.Logger().Errorf("Failed to scroll: %v", err)
 	}
 
 	return nil
@@ -497,6 +539,12 @@ func (h *Handler) HandleHatch(c echo.Context) error {
 	mayorName, worldName, worldSummary, ready := h.convMgr.GetWorldReady(session.DiscordID)
 	if !ready {
 		return echo.NewHTTPError(http.StatusBadRequest, "no world ready to hatch")
+	}
+
+	// Prevent duplicate hatch attempts from concurrent requests.
+	if !h.convMgr.SetHatched(session.DiscordID) {
+		h.logger.Warn("duplicate hatch attempt blocked (HandleHatch)", "user", session.DiscordID)
+		return echo.NewHTTPError(http.StatusConflict, "world is already being hatched")
 	}
 
 	sse := datastar.NewSSE(c.Response().Writer, c.Request())

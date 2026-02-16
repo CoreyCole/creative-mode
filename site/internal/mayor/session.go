@@ -19,6 +19,7 @@ type transientState struct {
 	LastMessage  time.Time
 	Scripted     bool
 	WorldReady   bool
+	Hatched      bool // true once hatching has started (prevents duplicate channels)
 	MayorName    string
 	WorldName    string
 	WorldSummary string
@@ -181,6 +182,24 @@ func (cm *ConversationManager) GetCoverArtPath(userID string) (path, mimeType st
 	return ts.CoverArtPath, ts.CoverArtMIME, true
 }
 
+// SetHatched atomically marks a user as hatching. Returns true if this call
+// set the flag (first caller wins), false if already hatching/hatched.
+func (cm *ConversationManager) SetHatched(userID string) bool {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+
+	ts, ok := cm.transient[userID]
+	if !ok {
+		ts = &transientState{}
+		cm.transient[userID] = ts
+	}
+	if ts.Hatched {
+		return false
+	}
+	ts.Hatched = true
+	return true
+}
+
 // ClearWorldReady clears the world-ready state and removes any pending cover art file.
 func (cm *ConversationManager) ClearWorldReady(userID string) {
 	cm.mu.Lock()
@@ -194,6 +213,7 @@ func (cm *ConversationManager) ClearWorldReady(userID string) {
 		_ = os.Remove(ts.CoverArtPath)
 	}
 	ts.WorldReady = false
+	ts.Hatched = false
 	ts.MayorName = ""
 	ts.WorldName = ""
 	ts.WorldSummary = ""

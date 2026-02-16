@@ -26,6 +26,8 @@ templ MayorPage(rootArgs l.RootArgs, messages []ChatMessage) {
 						@UserMessage(msg.ID, msg.Content, msg.AvatarURL)
 					}
 				}
+				<!-- World hatched card placeholder -->
+				<div id="mayor-signup"></div>
 			</div>
 			<script>
 				// Scroll to bottom on page load to show latest messages.
@@ -34,8 +36,6 @@ templ MayorPage(rootArgs l.RootArgs, messages []ChatMessage) {
 					if (el) { el.scrollTop = el.scrollHeight; }
 				});
 			</script>
-			<!-- World hatched card placeholder -->
-			<div id="mayor-signup"></div>
 			<!-- Input area -->
 			<div class="shrink-0 border-t border-border/40 px-4 py-3 relative">
 				<div class="mx-auto max-w-2xl">
@@ -70,6 +70,7 @@ templ MayorPage(rootArgs l.RootArgs, messages []ChatMessage) {
 				</div>
 				<button
 					data-on:click={ `$create_world = true; ` + string(datastar.PostSSE("/mayor/chat")) }
+					data-indicator:_sending
 					data-attr:disabled="$_sending"
 					class="absolute right-4 bottom-3 inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors border border-border bg-background text-foreground hover:bg-muted h-9 px-4 disabled:opacity-50"
 				>

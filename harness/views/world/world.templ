@@ -13,7 +13,7 @@ templ Page(w sqlc.World, cp sqlc.Checkpoint, user *sqlc.User, signals OverlaySig
 			if trunkPort > 0 {
 				<iframe
 					id="game-frame"
-					src={ fmt.Sprintf("http://localhost:%d/", trunkPort) }
+					src={ fmt.Sprintf("/world/%s/%s/trunk/", w.ID, cp.ID) }
 					style="touch-action: none;"
 					class="fixed top-0 left-0 w-screen h-screen border-none z-0"
 				></iframe>
@@ -30,7 +30,7 @@ templ Page(w sqlc.World, cp sqlc.Checkpoint, user *sqlc.User, signals OverlaySig
 		} else if trunkPort > 0 && serverPort > 0 {
 			<iframe
 				id="game-frame"
-				src={ fmt.Sprintf("http://localhost:%d/?server_port=%d", trunkPort, serverPort) }
+				src={ fmt.Sprintf("/world/%s/%s/trunk/?server_port=%d", w.ID, cp.ID, serverPort) }
 				style="touch-action: none;"
 				class="fixed top-0 left-0 w-screen h-screen border-none z-0"
 			></iframe>

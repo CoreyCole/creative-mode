@@ -8,6 +8,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -245,6 +247,37 @@ func (s *Server) registerWorldRoutes(approved *echo.Group) {
 	w.POST("/:worldID/debug", s.handleDebugProxy)
 	w.POST("/:worldID/client-debug", s.handleClientDebug)
 	w.POST("/:worldID/client-debug-response", s.handleClientDebugResponse)
+	w.GET("/:worldID/:cpID/trunk/*", s.handleTrunkProxy)
+	w.GET("/:worldID/:cpID/trunk", s.handleTrunkProxy)
+}
+
+// handleTrunkProxy reverse-proxies requests to a running trunk dev server
+// so the game iframe can load via the harness origin instead of localhost.
+func (s *Server) handleTrunkProxy(c echo.Context) error {
+	worldID := c.Param("worldID")
+	cpID := c.Param("cpID")
+
+	gs := s.WorldManager.GameServers.GetServer(worldID, cpID)
+	if gs == nil || gs.TrunkPort == 0 {
+		return echo.NewHTTPError(http.StatusNotFound, "no trunk server running")
+	}
+
+	target, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", gs.TrunkPort))
+	proxy := httputil.NewSingleHostReverseProxy(target)
+
+	// Strip the /world/:worldID/:cpID/trunk prefix so trunk sees / or /foo.
+	originalDirector := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		originalDirector(req)
+		prefix := fmt.Sprintf("/world/%s/%s/trunk", worldID, cpID)
+		req.URL.Path = strings.TrimPrefix(req.URL.Path, prefix)
+		if req.URL.Path == "" {
+			req.URL.Path = "/"
+		}
+	}
+
+	proxy.ServeHTTP(c.Response(), c.Request())
+	return nil
 }
 
 // handleHealth returns a simple JSON health check response.

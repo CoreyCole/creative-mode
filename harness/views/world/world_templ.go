@@ -55,9 +55,9 @@ func Page(w sqlc.World, cp sqlc.Checkpoint, user *sqlc.User, signals OverlaySign
 						return templ_7745c5c3_Err
 					}
 					var templ_7745c5c3_Var3 string
-					templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("http://localhost:%d/", trunkPort))
+					templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("/world/%s/%s/trunk/", w.ID, cp.ID))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/world/world.templ`, Line: 16, Col: 57}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/world/world.templ`, Line: 16, Col: 58}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 					if templ_7745c5c3_Err != nil {
@@ -97,9 +97,9 @@ func Page(w sqlc.World, cp sqlc.Checkpoint, user *sqlc.User, signals OverlaySign
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var5 string
-				templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("http://localhost:%d/?server_port=%d", trunkPort, serverPort))
+				templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("/world/%s/%s/trunk/?server_port=%d", w.ID, cp.ID, serverPort))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/world/world.templ`, Line: 33, Col: 83}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/world/world.templ`, Line: 33, Col: 84}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 				if templ_7745c5c3_Err != nil {

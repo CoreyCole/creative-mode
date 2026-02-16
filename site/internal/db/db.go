@@ -83,5 +83,7 @@ func createTables(db *sql.DB) error {
 	_, _ = db.Exec("ALTER TABLE metrics_snapshots ADD COLUMN mem_used_bytes INTEGER NOT NULL DEFAULT 0")
 	_, _ = db.Exec("ALTER TABLE page_views ADD COLUMN visitor_hash TEXT NOT NULL DEFAULT ''")
 	_, _ = db.Exec("ALTER TABLE metrics_snapshots ADD COLUMN unique_visitors INTEGER NOT NULL DEFAULT 0")
+	_, _ = db.Exec("ALTER TABLE metrics_snapshots ADD COLUMN discord_members INTEGER NOT NULL DEFAULT 0")
+	_, _ = db.Exec("ALTER TABLE metrics_snapshots ADD COLUMN worlds_hatched INTEGER NOT NULL DEFAULT 0")
 	return nil
 }

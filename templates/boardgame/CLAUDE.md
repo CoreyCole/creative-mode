@@ -102,6 +102,10 @@ crate-type = ["cdylib", "rlib"]
 
 `wasm-bindgen` is pinned to exactly `0.2.108` in both `Cargo.toml` and `Trunk.toml`. These MUST match.
 
+### public_url
+
+`Trunk.toml` sets `public_url = "./"` so that `trunk build` generates relative asset paths instead of root-absolute. This is required for static WASM serving at `/wasm/{worldID}/{cpID}/`.
+
 ## CHANGES.txt (Required)
 
 Before you finish, ALWAYS write a brief summary of what you changed to `CHANGES.txt`.

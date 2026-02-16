@@ -2,6 +2,7 @@
 target = "index.html"
 filehash = true
 minify = "on_release"
+public_url = "./"
 
 [tools]
 wasm_bindgen = "0.2.108"

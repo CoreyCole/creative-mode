@@ -450,6 +450,18 @@ func (m *Manager) createTemplateWorldDev(
 		return "", fmt.Errorf("committing transaction: %w", err)
 	}
 
+	// Set cover image if a template cover exists in shared-assets.
+	coverPath := filepath.Join(m.dataDir, "shared-assets",
+		templateDisplayName(templateType)+"-template-cover.png")
+	if _, statErr := os.Stat(coverPath); statErr == nil {
+		if dbErr := m.db.UpdateWorldCoverImage(ctx, sqlc.UpdateWorldCoverImageParams{
+			CoverImagePath: sql.NullString{String: coverPath, Valid: true},
+			ID:             worldID,
+		}); dbErr != nil {
+			m.logger.Warn("failed to set template cover image", "error", dbErr)
+		}
+	}
+
 	// Symlink dist/ into wasm-builds so handleWASMArtifacts can serve it.
 	m.symlinkTemplateDist(ctx, worldID, cpID, templateType, templateDir)
 

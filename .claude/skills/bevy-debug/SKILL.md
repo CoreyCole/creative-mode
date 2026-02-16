@@ -166,7 +166,8 @@ done
 
 1. **Harness running**: `curl http://localhost:8080/health`
 2. **Game server running**: Check checkpoint has `server_port` set
-3. **WASM client built**: `cd template/client && trunk build --release --public-url ./`
+3. **WASM client built**: `cd client && trunk build --release` (Trunk.toml already sets `public_url = "./"`)
+
 4. **WSS cert accepted**: Navigate to `https://127.0.0.1:<GAME_PORT>` in browser, type `thisisunsafe` on Chrome interstitial. With `--persistent` playwright profile, this persists for 7 days.
 5. **Browser on world page**: The Phase 3 SSE round-trip requires an active browser connection
 

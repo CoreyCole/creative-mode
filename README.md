@@ -9,8 +9,8 @@ Test the onboarding experience at [creative-mode.ai](https://creative-mode.ai).
 | | Creative Mode puts game development in everyone's hands — describe what you want, and a personalized AI mayor builds your multiplayer game world in real time. |
 |---|---|
 | **Impact** | Build multiplayer games with friends. Game development for everyone, not just developers. |
-| **Opus 4.6** | Mayor agents use Opus to manage worlds, plan changes, use APIs to generate assets, and spawn Claude Code Opus agents to build world forks. The president agent disseminates game-dev knowledge to all the Mayors. |
-| **Depth** | 10k+ lines of Go and Rust, directed by 27k+ lines of specs and plans. Like the jump from assembly to C, we develop at a higher level of abstraction — not vibe coding, but engineering through **structured intent**. Server-authoritative multiplayer, WASM compilation, OpenClaw AI mayors, Gemini Nano Banana. |
+| **Opus 4.6** | Mayor agents use Opus to manage worlds, plan changes, use APIs to generate assets, and spawn Claude Code Opus agents to build world forks. The president agent uses Opus to maintain the project as a whole. |
+| **Depth** | 27k+ lines of Go, Rust, and templ, directed by 40k+ lines of specs, plans, and review agent loops. Like the jump from assembly to C, we developed at a higher level of abstraction — not vibe coding, but engineering through **structured intent**. Server-authoritative multiplayer, WASM compilation, OpenClaw AI mayors & president, Gemini Nano Banana. |
 | **Demo** | A new user creates a 2D world, chats with their AI mayor, and watches it come to life — zero to playable in one session. |
 
 | | The demo harness server is locked behind a private tailnet. | |

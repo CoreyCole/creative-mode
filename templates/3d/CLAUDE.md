@@ -92,6 +92,10 @@ There are 3+ copies of each player entity across the network — one authoritati
 
 `wasm-bindgen` is pinned to exactly `0.2.108` in both `Cargo.toml` and `client/Trunk.toml`. These MUST match. If you update one, update the other.
 
+### public_url
+
+`client/Trunk.toml` sets `public_url = "./"` so that `trunk build` generates relative asset paths (`./client-*.js`) instead of root-absolute (`/client-*.js`). This is required for static WASM serving — template worlds are served at `/wasm/{worldID}/{cpID}/`, and root-absolute paths would 404.
+
 ## Adding New Replicated Components
 
 1. Define the component in `shared/src/protocol.rs`. **Always** include `Reflect` and `#[reflect(Component, Serialize, Deserialize)]` so it's queryable via the debug system:

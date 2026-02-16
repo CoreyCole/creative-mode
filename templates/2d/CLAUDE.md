@@ -91,7 +91,7 @@ The harness `game-loader.js` listens for these messages and dispatches navigatio
 | `src/debug.rs` | Debug query system (room/dialog/hotspot inspection via JS bridge) |
 | `rooms/*.room.json` | Room definitions (data-driven content, seeded to shared-assets on startup) |
 | `index.html` | Trunk entry point — canvas element, JS bridge, keyboard handler |
-| `Trunk.toml` | Trunk build config — wasm-bindgen version pin |
+| `Trunk.toml` | Trunk build config — wasm-bindgen version pin, `public_url = "./"` for static serving |
 | `Cargo.toml` | Rust dependencies — Bevy features, wasm-bindgen pin |
 
 ## Room JSON Schema
@@ -220,6 +220,10 @@ The harness `game-loader.js` handles: `navigate-world`, `navigate-checkpoint`, `
 ### wasm-bindgen Pin
 
 `wasm-bindgen` is pinned to exactly `0.2.108` in both `Cargo.toml` and `Trunk.toml`. These MUST match.
+
+### public_url
+
+`Trunk.toml` sets `public_url = "./"` so that `trunk build` generates relative asset paths (`./room-world-*.js`) instead of root-absolute (`/room-world-*.js`). This is required for static WASM serving — template worlds are served at `/wasm/{worldID}/{cpID}/`, and root-absolute paths would 404.
 
 ### Common Build Issues
 

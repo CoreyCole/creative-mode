@@ -348,6 +348,25 @@ func (s *Server) handleWorldView(c echo.Context) error {
 		trunkPort = gs.TrunkPort
 	}
 
+	// Auto-start trunk serve for template worlds with no static WASM build.
+	if trunkPort == 0 && !cp.WasmPath.Valid && world.IsTemplateWorld(w.Name) {
+		if port, err := s.WorldManager.EnsureTemplateTrunkServe(
+			worldID,
+			cpID,
+			cp.DirPath,
+		); err != nil {
+			s.Logger.Warn(
+				"failed to start on-demand trunk serve",
+				"worldID",
+				worldID,
+				"error",
+				err,
+			)
+		} else {
+			trunkPort = port
+		}
+	}
+
 	signals := worldview.DefaultOverlaySignals(worldID, cpID)
 
 	return render(c, worldview.Page(

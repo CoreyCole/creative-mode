@@ -30,4 +30,5 @@ echo "$JSONL" >> "$LOG_FILE"
 # POST to harness for live SSE updates (fire-and-forget)
 curl -s -X POST "$HARNESS_URL/api/claude-event" \
   -H "Content-Type: application/json" \
+  ${CM_HOOK_SECRET:+-H "X-Hook-Secret: $CM_HOOK_SECRET"} \
   -d "$JSONL" &>/dev/null &

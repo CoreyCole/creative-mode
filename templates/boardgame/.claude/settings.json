@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "command": ".claude/hooks/on-tool-use.sh pre"
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": ".*",
+        "command": ".claude/hooks/on-tool-use.sh post"
+      }
+    ],
+    "Stop": [
+      {
+        "command": ".claude/hooks/on-stop.sh"
+      }
+    ],
+    "Notification": [
+      {
+        "command": ".claude/hooks/on-notification.sh"
+      }
+    ]
+  }
+}

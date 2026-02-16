@@ -298,13 +298,22 @@ func (s *Server) handlePlaceNewHotspot(c echo.Context) error {
 
 	hsID := slugify(label)
 
-	// Ensure uniqueness.
-	for _, h := range room.Hotspots {
-		if h.ID == hsID {
-			hsID += "-2"
-
+	// Ensure uniqueness — keep incrementing until no collision.
+	base := hsID
+	counter := 2
+	for {
+		found := false
+		for _, h := range room.Hotspots {
+			if h.ID == hsID {
+				found = true
+				break
+			}
+		}
+		if !found {
 			break
 		}
+		hsID = fmt.Sprintf("%s-%d", base, counter)
+		counter++
 	}
 
 	action, err := json.Marshal(map[string]string{

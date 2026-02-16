@@ -309,17 +309,19 @@ pub fn spawn_room(commands: &mut Commands, room: &RoomAsset, asset_server: &Asse
             ));
         }
 
-        // Hotspot label
-        commands.spawn((
-            Text2d::new(&hotspot.label),
-            TextFont {
-                font_size: 18.0,
-                ..default()
-            },
-            TextColor(Color::WHITE),
-            Transform::from_xyz(center_x, center_y, 2.0),
-            RoomEntity,
-        ));
+        // Hotspot label — only for non-image hotspots.
+        if hotspot.image.is_none() {
+            commands.spawn((
+                Text2d::new(&hotspot.label),
+                TextFont {
+                    font_size: 18.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                Transform::from_xyz(center_x, center_y, 2.0),
+                RoomEntity,
+            ));
+        }
     }
 }
 

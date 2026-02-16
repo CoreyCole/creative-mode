@@ -110,7 +110,17 @@ fn hotspot_click(
 
         match &hotspot.action {
             ActionDef::Dialog { text } => {
-                // Spawn dialog text at bottom of screen.
+                // Dark backdrop behind dialog text.
+                commands.spawn((
+                    Sprite {
+                        color: Color::srgba(0.0, 0.0, 0.0, 0.75),
+                        custom_size: Some(Vec2::new(900.0, 60.0)),
+                        ..default()
+                    },
+                    Transform::from_xyz(0.0, -300.0, 9.5),
+                    DialogText,
+                    RoomEntity,
+                ));
                 commands.spawn((
                     Text2d::new(text),
                     TextFont {

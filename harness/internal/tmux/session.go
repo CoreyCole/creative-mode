@@ -44,6 +44,12 @@ func (s *Session) Create(
 		"-e", "CM_HARNESS_URL=" + harnessURL,
 		"-e", "CM_LOG_DIR=" + logDir,
 	}
+
+	// Propagate hook secret so hook scripts can authenticate with the harness.
+	if secret := os.Getenv("CM_HOOK_SECRET"); secret != "" {
+		args = append(args, "-e", "CM_HOOK_SECRET="+secret)
+	}
+
 	for _, env := range extraEnv {
 		args = append(args, "-e", env)
 	}

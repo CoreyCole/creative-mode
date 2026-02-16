@@ -117,7 +117,7 @@ The system runs on two servers connected via Tailscale:
 
 | Server | Runs | Access |
 |--------|------|--------|
-| **EC2** (Ubuntu) | Marketing site (`site/`) — native Go binary under systemd | Public: `creative-mode.ai` → Route 53 → API Gateway → port 80 |
+| **EC2** (Ubuntu) | Marketing site (`site/`) — native Go binary under systemd | Public: `creative-mode.ai` → Route 53 → Caddy:443 → localhost:3000 |
 | **VPS** (Nix) | Harness (`harness/`) — `air` hot-reload under systemd | Internal: `100.x.x.x:8080` via Tailscale |
 
 The site creates Discord channels during onboarding, then fires `POST /api/world-hatched` to the harness (via Tailscale) to provision the mayor agent. Both servers share `DISCORD_BOT_TOKEN` and `CM_HOOK_SECRET`.

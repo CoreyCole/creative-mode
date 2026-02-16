@@ -92,7 +92,7 @@ The marketing site runs on an EC2 instance as a native Go binary under systemd (
 
 **Traffic flow**:
 ```
-Browser → Route 53 → API Gateway (TLS) → EC2 port 80 → site binary
+Browser → Route 53 → EC2 Elastic IP → Caddy:443 (TLS) → localhost:3000
 ```
 
 **Setup** (on a fresh EC2 instance):
@@ -115,8 +115,8 @@ cd ~/creative-mode/site && git pull && just build && cp site-linux /tmp/creative
 
 **Logs**: `just deploy-logs` or `journalctl -u creative-mode-site -f`
 
-**DNS**: `creative-mode.ai` → Route 53 A record → API Gateway → EC2 port 80
+**DNS**: `creative-mode.ai` → Route 53 A record → EC2 Elastic IP → Caddy:443 → localhost:3000
 
 **Key files**:
-- `creative-mode-site.service` — systemd unit (runs as `ubuntu` user, binds port 80 via `CAP_NET_BIND_SERVICE`)
+- `creative-mode-site.service` — systemd unit (runs as `ubuntu` user, listens on port 3000 behind Caddy)
 - `site.env.example` — env var template (Discord OAuth, bot token, Anthropic key, invite codes)

@@ -7,7 +7,6 @@ Wants=network-online.target
 Type=simple
 User=ubuntu
 Group=ubuntu
-AmbientCapabilities=CAP_NET_BIND_SERVICE
 Environment=PATH=/home/ubuntu/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
 WorkingDirectory=/home/ubuntu/creative-mode/site
 ExecStart=/tmp/creative-mode-site

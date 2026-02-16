@@ -3,6 +3,7 @@ check:
 
 build:
   @templ generate
+  @go mod tidy
   @go build -o site-linux main.go
   @just build-tailwind
 

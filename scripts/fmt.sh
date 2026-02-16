@@ -11,7 +11,8 @@ site_go_out=$(mktemp)
 site_templ_out=$(mktemp)
 rs_3d_out=$(mktemp)
 rs_2d_out=$(mktemp)
-trap 'rm -f "$go_out" "$templ_out" "$site_go_out" "$site_templ_out" "$rs_3d_out" "$rs_2d_out"' EXIT
+rs_boardgame_out=$(mktemp)
+trap 'rm -f "$go_out" "$templ_out" "$site_go_out" "$site_templ_out" "$rs_3d_out" "$rs_2d_out" "$rs_boardgame_out"' EXIT
 
 (cd "$ROOT/harness" && golangci-lint fmt ./... 2>&1) >"$go_out" 2>&1 &
 pid_go=$!
@@ -30,6 +31,9 @@ pid_rs_3d=$!
 
 (cd "$ROOT/templates/2d" && cargo fmt 2>&1) >"$rs_2d_out" 2>&1 &
 pid_rs_2d=$!
+
+(cd "$ROOT/templates/boardgame" && cargo fmt 2>&1) >"$rs_boardgame_out" 2>&1 &
+pid_rs_boardgame=$!
 
 # Wait and report.
 if wait $pid_go; then
@@ -77,6 +81,14 @@ if wait $pid_rs_2d; then
 else
   echo "FAIL  templates/2d (cargo fmt)"
   cat "$rs_2d_out"
+  failed=1
+fi
+
+if wait $pid_rs_boardgame; then
+  echo "  ok  templates/boardgame (cargo fmt)"
+else
+  echo "FAIL  templates/boardgame (cargo fmt)"
+  cat "$rs_boardgame_out"
   failed=1
 fi
 

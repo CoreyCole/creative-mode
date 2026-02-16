@@ -184,8 +184,8 @@ func (m *Manager) CreateWorld(
 		}
 		m.Builder.PostBuild(cp)
 
-		// 2D worlds have no game server.
-		if templateType == "2d" {
+		// Client-only templates have no game server.
+		if templateType == "2d" || templateType == "boardgame" {
 			return
 		}
 

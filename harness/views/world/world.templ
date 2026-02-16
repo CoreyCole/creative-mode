@@ -9,7 +9,7 @@ import (
 
 templ Page(w sqlc.World, cp sqlc.Checkpoint, user *sqlc.User, signals OverlaySignals, serverPort int, trunkPort int, checkpoints []sqlc.Checkpoint) {
 	@layout.Base(w.Name) {
-		if w.TemplateType == "2d" {
+		if w.TemplateType == "2d" || w.TemplateType == "boardgame" {
 			if trunkPort > 0 {
 				<iframe
 					id="game-frame"

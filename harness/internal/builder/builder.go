@@ -83,8 +83,8 @@ func (b *Builder) Build(cp *sqlc.Checkpoint, isInitial bool, templateType string
 		event:   "build.output",
 	}
 
-	// Step 1: Build game server (native binary) — skip for 2D templates.
-	if templateType != "2d" {
+	// Step 1: Build game server (native binary) — only for 3D templates.
+	if templateType == "3d" {
 		b.logger.Info("building game server", "worldID", cp.WorldID, "cpID", cp.ID)
 
 		serverCmd := exec.CommandContext(

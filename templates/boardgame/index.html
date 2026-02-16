@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Creative Mode - Board Game</title>
+    <link data-trunk rel="rust" data-bin="checkers-game" />
+    <style>
+        html, body { margin: 0; padding: 0; overflow: hidden; width: 100%; height: 100%; background: #111; }
+        canvas { width: 100%; height: 100%; display: block; touch-action: none; }
+    </style>
+</head>
+<body>
+<canvas id="bevy-canvas"></canvas>
+<script>
+// Prevent browser shortcuts from interfering with game keybinds.
+document.addEventListener('keydown', function(e) {
+  if (e.key.startsWith('F') && e.key.length <= 3) {
+    e.preventDefault();
+    return;
+  }
+  if (e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+    return;
+  }
+}, { capture: true });
+
+// Forward backtick to parent harness to toggle overlay.
+// Keyboard events in an iframe don't propagate to the parent window.
+document.addEventListener('keydown', function(e) {
+  if (e.code === 'Backquote' && !e.target.matches('input, textarea')) {
+    e.preventDefault();
+    window.parent.postMessage({ type: 'toggle-overlay' }, '*');
+  }
+});
+
+// Bridge postMessage from harness overlay to WASM.
+window.addEventListener('message', async (event) => {
+  // Debug query system: parent sends { type: 'debug-query', id: '...', query: {...} }
+  // We write to window.__debugRequest, poll __debugResponse, then postMessage back.
+  if (event.data?.type !== 'debug-query') return;
+
+  window.__debugRequest = JSON.stringify(event.data.query);
+
+  // Poll for response (WASM processes next frame, typically <16ms)
+  let response = null;
+  for (let i = 0; i < 20; i++) {
+    await new Promise(r => setTimeout(r, 16));
+    if (window.__debugResponse) {
+      response = JSON.parse(window.__debugResponse);
+      window.__debugResponse = null;
+      break;
+    }
+  }
+
+  window.parent.postMessage({
+    type: 'debug-response',
+    id: event.data.id,
+    response: response ?? { error: 'timeout' },
+  }, '*');
+});
+</script>
+</body>
+</html>

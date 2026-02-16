@@ -90,9 +90,9 @@ func (o *Orchestrator) HandlePrompt(
 		templateType = w.TemplateType
 	}
 
-	// Start dev server (cargo watch) — non-fatal if it fails. Skip for 2D.
+	// Start dev server (cargo watch) — non-fatal if it fails. Only for 3D.
 	var extraEnv []string
-	if templateType != "2d" {
+	if templateType == "3d" {
 		devSrv, devErr := o.worldManager.GameServers.ConnectDev(
 			worldID,
 			cp.ID,
@@ -211,7 +211,7 @@ func (o *Orchestrator) BuildCheckpoint(worldID, cpID string) {
 
 	// Start game server (3D only).
 	var serverPort int
-	if templateType != "2d" {
+	if templateType == "3d" {
 		// Stop old game servers for this world before starting the new one.
 		o.worldManager.GameServers.StopByWorldExcept(worldID, cpID)
 

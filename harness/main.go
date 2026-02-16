@@ -47,7 +47,7 @@ func main() {
 	}
 
 	templateDirs := map[string]string{}
-	for _, tmplType := range []string{"3d", "2d"} {
+	for _, tmplType := range []string{"3d", "2d", "boardgame"} {
 		dir, tmplErr := filepath.Abs(filepath.Join("..", "templates", tmplType))
 		if tmplErr != nil {
 			log.Fatalf("Failed to resolve %s template directory: %v", tmplType, tmplErr)

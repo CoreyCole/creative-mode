@@ -73,6 +73,7 @@ templ Page(user *sqlc.User, worlds []sqlc.World) {
 						<select name="template_type" class="h-9 rounded-md border border-input bg-background px-3 text-sm">
 							<option value="3d">3D World</option>
 							<option value="2d">2D Room World</option>
+							<option value="boardgame">Board Game</option>
 						</select>
 						@button.Button(button.ButtonArgs{
 							Attributes: templ.Attributes{

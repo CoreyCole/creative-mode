@@ -274,7 +274,8 @@ func (s *Server) handleCreateWorld(c echo.Context) error {
 	if req.TemplateType == "" {
 		req.TemplateType = "3d"
 	}
-	if req.TemplateType != "3d" && req.TemplateType != "2d" {
+	if req.TemplateType != "3d" && req.TemplateType != "2d" &&
+		req.TemplateType != "boardgame" {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid template type")
 	}
 

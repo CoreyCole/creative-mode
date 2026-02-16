@@ -1,9 +1,6 @@
 package pages
 
-import (
-	l "github.com/coreycole/creative-mode/site/layouts"
-	"github.com/starfederation/datastar-go/datastar"
-)
+import l "github.com/coreycole/creative-mode/site/layouts"
 
 templ MayorPage(rootArgs l.RootArgs, messages []ChatMessage, devMode bool) {
 	@l.Root(rootArgs) {
@@ -40,6 +37,67 @@ templ MayorPage(rootArgs l.RootArgs, messages []ChatMessage, devMode bool) {
 				<!-- World hatched card placeholder -->
 				<div id="mayor-signup"></div>
 			</div>
+			<!-- Input area -->
+			<div class="shrink-0 border-t border-border/40 px-4 py-3 relative">
+				<div class="mx-auto max-w-2xl">
+					<!-- Rate limit error -->
+					<div id="rate-limit-error"></div>
+					<form
+						id="chat-form"
+						enctype="multipart/form-data"
+						data-signals={ `{"mayor_input": "", "world_creating": false}` }
+						class="flex flex-col gap-2"
+					>
+						<input type="hidden" name="create_world" value="false" id="create-world-flag"/>
+						<div class="flex gap-2 items-end">
+							<label
+								title="Attach images (max 4, 5 MB each)"
+								class="self-end inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors border border-input bg-background text-muted-foreground hover:text-foreground hover:bg-muted h-10 w-10 shrink-0 cursor-pointer"
+							>
+								<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+									<rect width="18" height="18" x="3" y="3" rx="2" ry="2"></rect>
+									<circle cx="9" cy="9" r="2"></circle>
+									<path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"></path>
+								</svg>
+								<input type="file" name="images" multiple accept="image/jpeg,image/png,image/gif,image/webp" class="hidden"/>
+							</label>
+							<span id="image-count" class="hidden self-end text-xs text-muted-foreground pb-2.5 whitespace-nowrap"></span>
+							<textarea
+								name="mayor_input"
+								data-bind:mayor_input
+								data-on:keydown={ `evt.key === 'Enter' && !evt.shiftKey && (evt.preventDefault(), !$_sending && !$world_creating && $mayor_input.trim() !== '' && @post('/mayor/chat', {contentType: 'form'}))` }
+								data-attr:disabled="$_sending || $world_creating"
+								placeholder="Type your message... (Shift+Enter for new line)"
+								rows="1"
+								class="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 resize-none overflow-y-auto max-h-32"
+								autocomplete="off"
+							></textarea>
+							<button
+								type="button"
+								data-on:click={ `!$_sending && !$world_creating && $mayor_input.trim() !== '' && @post('/mayor/chat', {contentType: 'form'})` }
+								data-indicator:_sending
+								data-attr:disabled="$_sending || $world_creating"
+								class="self-end inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 disabled:opacity-50"
+							>
+								<span data-show="!$_sending">Send</span>
+								<span data-show="$_sending" class="flex items-center gap-1.5">
+									<span class="inline-block w-1.5 h-1.5 rounded-full bg-primary-foreground/70 animate-pulse"></span>
+									Sending
+								</span>
+							</button>
+						</div>
+					</form>
+				</div>
+				<button
+					type="button"
+					data-on:click={ `$world_creating = true; document.getElementById('create-world-flag').value = 'true'; @post('/mayor/chat', {contentType: 'form', selector: '#chat-form'})` }
+					data-indicator:_sending
+					data-attr:disabled="$_sending || $world_creating"
+					class="absolute right-4 bottom-3 inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors border border-border bg-background text-foreground hover:bg-muted h-9 px-4 disabled:opacity-50"
+				>
+					Create World
+				</button>
+			</div>
 			<script>
 				// Scroll to bottom on page load to show latest messages.
 				requestAnimationFrame(function () {
@@ -51,182 +109,49 @@ templ MayorPage(rootArgs l.RootArgs, messages []ChatMessage, devMode bool) {
 			</script>
 			<script>
 				// Auto-resize textarea as content grows.
-				(function() {
-					var ta = document.querySelector('textarea[data-bind\\:mayor_input]');
+				(function () {
+					var ta = document.querySelector("textarea[data-bind\\:mayor_input]");
 					if (!ta) return;
-					function resize() { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 128) + 'px'; }
-					ta.addEventListener('input', resize);
-					new MutationObserver(function() { if (!ta.value) { ta.style.height = 'auto'; } }).observe(ta, {attributes: true});
+					function resize() {
+						ta.style.height = "auto";
+						ta.style.height = Math.min(ta.scrollHeight, 128) + "px";
+					}
+					ta.addEventListener("input", resize);
+					new MutationObserver(function () {
+						if (!ta.value) {
+							ta.style.height = "auto";
+						}
+					}).observe(ta, { attributes: true });
 				})();
 			</script>
 			<script>
-				// Image upload handling.
-				(function() {
-					var fileInput = document.getElementById('image-file-input');
-					var uploadBtn = document.getElementById('image-upload-btn');
-					var previews = document.getElementById('image-previews');
-					var inputArea = document.getElementById('chat-input-area');
-					if (!fileInput || !uploadBtn || !previews || !inputArea) return;
-
-					var MAX_IMAGES = 4;
-					var MAX_SIZE = 5 * 1024 * 1024; // 5 MB
-
-					uploadBtn.addEventListener('click', function() { fileInput.click(); });
-
-					fileInput.addEventListener('change', function() {
-						if (fileInput.files) uploadFiles(fileInput.files);
-						fileInput.value = '';
-					});
-
-					// Drag and drop on input area.
-					inputArea.addEventListener('dragover', function(e) {
-						e.preventDefault();
-						inputArea.classList.add('ring-2', 'ring-primary', 'ring-offset-2');
-					});
-					inputArea.addEventListener('dragleave', function(e) {
-						e.preventDefault();
-						inputArea.classList.remove('ring-2', 'ring-primary', 'ring-offset-2');
-					});
-					inputArea.addEventListener('drop', function(e) {
-						e.preventDefault();
-						inputArea.classList.remove('ring-2', 'ring-primary', 'ring-offset-2');
-						if (e.dataTransfer && e.dataTransfer.files) uploadFiles(e.dataTransfer.files);
-					});
-
-					function uploadFiles(files) {
-						for (var i = 0; i < files.length; i++) {
-							var file = files[i];
-							if (!file.type.match(/^image\/(jpeg|png|gif|webp)$/)) {
-								alert('Unsupported image type. Use JPEG, PNG, GIF, or WebP.');
-								continue;
-							}
-							if (file.size > MAX_SIZE) {
-								alert('Image must be under 5 MB.');
-								continue;
-							}
-							if (previews.children.length >= MAX_IMAGES) {
-								alert('Maximum ' + MAX_IMAGES + ' images per message.');
-								break;
-							}
-							uploadFile(file);
+				// Image count indicator + form reset cleanup.
+				(function () {
+					var form = document.getElementById("chat-form");
+					var input = form && form.querySelector("input[name='images']");
+					var badge = document.getElementById("image-count");
+					var ta = document.querySelector("textarea[data-bind\\:mayor_input]");
+					if (!form || !input || !badge) return;
+					input.addEventListener("change", function () {
+						var n = input.files ? input.files.length : 0;
+						if (n > 0) {
+							badge.textContent = n + " image" + (n > 1 ? "s" : "");
+							badge.classList.remove("hidden");
+						} else {
+							badge.classList.add("hidden");
 						}
-					}
-
-					function uploadFile(file) {
-						var fd = new FormData();
-						fd.append('image', file);
-						var thumb = createThumb(file);
-						previews.appendChild(thumb);
-
-						fetch('/mayor/upload', { method: 'POST', body: fd })
-							.then(function(r) { return r.json(); })
-							.then(function(data) {
-								if (data.error) {
-									thumb.remove();
-									alert(data.error);
-									return;
-								}
-								thumb.dataset.imageId = data.id;
-								var img = thumb.querySelector('img');
-								if (img) img.src = data.url;
-								thumb.querySelector('.upload-spinner').remove();
-							})
-							.catch(function() {
-								thumb.remove();
-								alert('Upload failed. Please try again.');
+					});
+					form.addEventListener("reset", function () {
+						badge.classList.add("hidden");
+						badge.textContent = "";
+						if (ta) {
+							requestAnimationFrame(function () {
+								ta.style.height = "auto";
 							});
-					}
-
-					function createThumb(file) {
-						var div = document.createElement('div');
-						div.className = 'relative group';
-
-						var img = document.createElement('img');
-						img.className = 'w-16 h-16 rounded-lg object-cover border border-border/40';
-						img.src = URL.createObjectURL(file);
-						div.appendChild(img);
-
-						var spinner = document.createElement('div');
-						spinner.className = 'upload-spinner absolute inset-0 flex items-center justify-center bg-background/60 rounded-lg';
-						spinner.innerHTML = '<span class="inline-block w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>';
-						div.appendChild(spinner);
-
-						var removeBtn = document.createElement('button');
-						removeBtn.type = 'button';
-						removeBtn.className = 'absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-destructive text-destructive-foreground text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity';
-						removeBtn.textContent = '\u00d7';
-						removeBtn.addEventListener('click', function() {
-							var id = div.dataset.imageId;
-							if (id) {
-								fetch('/mayor/image/' + id, { method: 'DELETE' }).catch(function() {});
-							}
-							div.remove();
-						});
-						div.appendChild(removeBtn);
-
-						return div;
-					}
+						}
+					});
 				})();
 			</script>
-			<!-- Input area -->
-			<div class="shrink-0 border-t border-border/40 px-4 py-3 relative">
-				<div class="mx-auto max-w-2xl">
-					<!-- Rate limit error -->
-					<div id="rate-limit-error"></div>
-					<!-- Image previews -->
-					<div id="image-previews" class="flex flex-wrap gap-2 mb-2"></div>
-					<div
-						data-signals='{"mayor_input": "", "create_world": false, "world_creating": false}'
-						class="flex gap-2 items-end"
-						id="chat-input-area"
-					>
-						<!-- Hidden file input -->
-						<input type="file" id="image-file-input" accept="image/jpeg,image/png,image/gif,image/webp" multiple class="hidden"/>
-						<!-- Upload button -->
-						<button
-							type="button"
-							id="image-upload-btn"
-							title="Attach images"
-							class="self-end inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors border border-input bg-background text-muted-foreground hover:text-foreground hover:bg-muted h-10 w-10 shrink-0"
-						>
-							<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-								<rect width="18" height="18" x="3" y="3" rx="2" ry="2"></rect>
-								<circle cx="9" cy="9" r="2"></circle>
-								<path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"></path>
-							</svg>
-						</button>
-						<textarea
-							data-bind:mayor_input
-							data-on:keydown={ `evt.key === 'Enter' && !evt.shiftKey && (evt.preventDefault(), !$_sending && !$world_creating && $mayor_input.trim() !== '' && ` + string(datastar.PostSSE("/mayor/chat")) + `)` }
-							data-attr:disabled="$_sending || $world_creating"
-							placeholder="Type your message... (Shift+Enter for new line)"
-							rows="1"
-							class="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 resize-none overflow-y-auto max-h-32"
-							autocomplete="off"
-						></textarea>
-						<button
-							data-on:click={ `!$_sending && !$world_creating && $mayor_input.trim() !== '' && ` + string(datastar.PostSSE("/mayor/chat")) }
-							data-indicator:_sending
-							data-attr:disabled="$_sending || $world_creating"
-							class="self-end inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 disabled:opacity-50"
-						>
-							<span data-show="!$_sending">Send</span>
-							<span data-show="$_sending" class="flex items-center gap-1.5">
-								<span class="inline-block w-1.5 h-1.5 rounded-full bg-primary-foreground/70 animate-pulse"></span>
-								Sending
-							</span>
-						</button>
-					</div>
-				</div>
-				<button
-					data-on:click={ `$world_creating = true; $create_world = true; ` + string(datastar.PostSSE("/mayor/chat")) }
-					data-indicator:_sending
-					data-attr:disabled="$_sending || $world_creating"
-					class="absolute right-4 bottom-3 inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors border border-border bg-background text-foreground hover:bg-muted h-9 px-4 disabled:opacity-50"
-				>
-					Create World
-				</button>
-			</div>
 		</div>
 	}
 }

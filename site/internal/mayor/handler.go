@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -28,11 +30,10 @@ import (
 // scrollChatJS is the JS snippet that scrolls the chat container to the bottom.
 const scrollChatJS = "document.getElementById('chat-messages').scrollTop = document.getElementById('chat-messages').scrollHeight"
 
-// ChatSignals matches the client-side signals sent with @post.
-type ChatSignals struct {
-	MayorInput  string `json:"mayor_input"`
-	CreateWorld bool   `json:"create_world"`
-}
+const (
+	maxImageSize  = 5 << 20 // 5 MB
+	maxImageCount = 4
+)
 
 // Handler handles the mayor chat SSE endpoint.
 type Handler struct {
@@ -66,14 +67,52 @@ func (h *Handler) HandleChat(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 	}
 
-	// Read signals BEFORE creating SSE (critical — see memory notes).
-	var signals ChatSignals
-	if err := datastar.ReadSignals(c.Request(), &signals); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "failed to read signals")
+	// Read form values BEFORE creating SSE (critical — see memory notes).
+	content := strings.TrimSpace(c.FormValue("mayor_input"))
+	forceCreate := c.FormValue("create_world") == "true"
+
+	// Process uploaded images from the form.
+	var attachedImages []mayorchat.ImageAttachment
+	form, formErr := c.MultipartForm()
+	if formErr == nil && form != nil && form.File["images"] != nil {
+		for _, fh := range form.File["images"] {
+			if len(attachedImages) >= maxImageCount {
+				break
+			}
+			if fh.Size > maxImageSize {
+				continue
+			}
+			f, err := fh.Open()
+			if err != nil {
+				continue
+			}
+			data, err := io.ReadAll(io.LimitReader(f, maxImageSize+1))
+			_ = f.Close()
+			if err != nil || len(data) > maxImageSize {
+				continue
+			}
+			mimeType := http.DetectContentType(data)
+			switch mimeType {
+			case "image/jpeg", "image/png", "image/gif", "image/webp":
+			default:
+				continue
+			}
+			imageID := uuid.New().String()
+			ext := mayorchat.MimeToExt(mimeType)
+			uploadDir := filepath.Join(h.dataDir, "chat-uploads", session.DiscordID)
+			if err := os.MkdirAll(uploadDir, 0o750); err != nil {
+				continue
+			}
+			filePath := filepath.Join(uploadDir, imageID+ext)
+			if err := os.WriteFile(filePath, data, 0o600); err != nil {
+				continue
+			}
+			attachedImages = append(attachedImages, mayorchat.ImageAttachment{
+				ID: imageID, FilePath: filePath, MIMEType: mimeType, Filename: fh.Filename,
+			})
+		}
 	}
 
-	forceCreate := signals.CreateWorld
-	content := strings.TrimSpace(signals.MayorInput)
 	const maxMessageLen = 2000
 	if runes := []rune(content); len(runes) > maxMessageLen {
 		content = string(runes[:maxMessageLen])
@@ -94,33 +133,33 @@ func (h *Handler) HandleChat(c echo.Context) error {
 	// Add user message to conversation.
 	h.convMgr.AddMessage(session.DiscordID, "user", content)
 
-	// Attach any pending images to this message.
-	messages := h.convMgr.GetMessages(session.DiscordID)
-	messageIndex := len(messages) - 1 // index of the message we just added
-	attachedImages := h.convMgr.AttachPendingImages(session.DiscordID, messageIndex)
+	// Persist images to the image store.
+	if len(attachedImages) > 0 {
+		messages := h.convMgr.GetMessages(session.DiscordID)
+		messageIndex := len(messages) - 1
+		for _, img := range attachedImages {
+			_ = h.convMgr.AddImage(session.DiscordID, messageIndex, img)
+		}
+	}
 
-	// Re-fetch messages to include image attachments.
-	messages = h.convMgr.GetMessages(session.DiscordID)
+	// Fetch messages (with images merged) for Claude.
+	messages := h.convMgr.GetMessages(session.DiscordID)
 	anthropicMessages := mayorchat.BuildAnthropicMessages(messages)
 
 	// Start SSE stream.
 	sse := datastar.NewSSE(c.Response().Writer, c.Request())
 
-	// Clear input and reset create_world signal.
-	if err := sse.MarshalAndPatchSignals(map[string]any{"mayor_input": "", "create_world": false}); err != nil {
+	// Clear input signal and reset form (clears file input).
+	if err := sse.MarshalAndPatchSignals(map[string]any{"mayor_input": ""}); err != nil {
 		c.Logger().Errorf("Failed to clear input: %v", err)
+	}
+	if err := sse.ExecuteScript("document.getElementById('chat-form').reset()"); err != nil {
+		c.Logger().Errorf("Failed to reset form: %v", err)
 	}
 
 	// Clear any previous rate limit error.
 	if err := sse.PatchElementTempl(p.RateLimitClear()); err != nil {
 		c.Logger().Errorf("Failed to clear rate limit error: %v", err)
-	}
-
-	// Clear image previews if images were attached.
-	if len(attachedImages) > 0 {
-		if err := sse.PatchElements(`<div id="image-previews"></div>`); err != nil {
-			c.Logger().Errorf("Failed to clear image previews: %v", err)
-		}
 	}
 
 	// Append user message to chat — with images if any.
@@ -673,4 +712,15 @@ func (h *Handler) pinOnboardingConversation(c echo.Context, channelID string, se
 	}); err != nil {
 		c.Logger().Errorf("Failed to pin onboarding data: %v", err)
 	}
+}
+
+// HandleImageServe serves an uploaded image by its ID.
+// GET /mayor/image/:imageID
+func (h *Handler) HandleImageServe(c echo.Context) error {
+	imageID := c.Param("imageID")
+	filePath, _, ok := h.convMgr.GetImageByID(imageID)
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotFound, "image not found")
+	}
+	return c.File(filePath)
 }

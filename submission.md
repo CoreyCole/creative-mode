@@ -1,10 +1,1 @@
-Creative Mode is an OpenClaw-powered game world builder. Create multiplayer games through conversation with friends on a shared, secured server.
-
-**Impact:** Build multiplayer games with friends. Game development for everyone, not just developers, through conversation with a personalized mayor agent.
-
-**Opus 4.6:** Mayor agents use Opus to manage worlds, plan changes, generate assets, and spawn Claude Code Opus agents to build world forks. The president agent uses Opus to maintain the project as a whole.
-
-**Depth:** 87k+ lines of Go, Rust, and templ, directed by 43k+ lines of specs, plans, and review agent loops. Engineering through structured intent. 3-layers of agentic development with the president -> mayor -> claude code tmux architecture.
-
-**Demo:** A new user creates a 2D world, chats with their AI mayor, and watches it come to life — zero to playable in one session.
-
+Creative Mode is an OpenClaw-powered game world builder that lets you create multiplayer games simply by talking with friends on a shared, secure server. The idea is to make game development accessible to everyone, not just developers, through conversation with your own personalized AI mayor. Mayor agents use Opus 4.6 to manage worlds, plan changes, generate assets, and spawn Claude Code Opus agents to build world forks, while a president agent uses Opus to oversee the project as a whole. Under the hood, the system includes 87k+ lines of Go, Rust, and templ, guided by 43k+ lines of specs, plans, and review loops, structured intent driving real engineering, across three layers of agentic development (president → mayor → Claude Code tmux). In the demo, a non-technical user creates a 2D world, chats with their AI mayor, and watches it come alive, going from zero to playable in a single session.

@@ -34,31 +34,21 @@ type ImageRecord struct {
 	Filename     string
 }
 
-// PendingImage represents an uploaded image not yet attached to a message.
-type PendingImage struct {
-	ID       string
-	FilePath string
-	MIMEType string
-	Filename string
-}
-
 // transientState holds per-user state that intentionally resets on restart.
 type transientState struct {
-	LastMessage   time.Time
-	Scripted      bool
-	WorldReady    bool
-	Hatched       bool // true once hatching has started (prevents duplicate channels)
-	MayorName     string
-	WorldName     string
-	WorldSummary  string
-	TemplateType  string // "3d", "2d", "boardgame" — detected from conversation
-	Creature      string // optional personality: "rogue AI", "tree spirit", etc.
-	Vibe          string // optional personality: "snarky", "warm", "chaotic"
-	Emoji         string // optional personality: single emoji
-	CoverArtPath  string // disk path to pending cover art (NOT image bytes)
-	CoverArtMIME  string
-	PendingImages []PendingImage // uploaded but not yet sent with a message
-	ImageCount    int            // total images uploaded in this conversation
+	LastMessage  time.Time
+	Scripted     bool
+	WorldReady   bool
+	Hatched      bool // true once hatching has started (prevents duplicate channels)
+	MayorName    string
+	WorldName    string
+	WorldSummary string
+	TemplateType string // "3d", "2d", "boardgame" — detected from conversation
+	Creature     string // optional personality: "rogue AI", "tree spirit", etc.
+	Vibe         string // optional personality: "snarky", "warm", "chaotic"
+	Emoji        string // optional personality: single emoji
+	CoverArtPath string // disk path to pending cover art (NOT image bytes)
+	CoverArtMIME string
 }
 
 // ConversationManager manages per-user conversation state.
@@ -234,103 +224,16 @@ func (cm *ConversationManager) GetCoverArtPath(userID string) (path, mimeType st
 	return ts.CoverArtPath, ts.CoverArtMIME, true
 }
 
-// AddPendingImage adds an uploaded image to the user's pending list.
-func (cm *ConversationManager) AddPendingImage(userID string, img PendingImage) {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-	ts := cm.getOrCreate(userID)
-	ts.PendingImages = append(ts.PendingImages, img)
-	ts.ImageCount++
-}
-
-// GetPendingImages returns the pending images for a user.
-func (cm *ConversationManager) GetPendingImages(userID string) []PendingImage {
-	cm.mu.RLock()
-	defer cm.mu.RUnlock()
-	ts, ok := cm.transient[userID]
-	if !ok {
+// AddImage persists an image attachment to the image store.
+func (cm *ConversationManager) AddImage(userID string, messageIndex int, img ImageAttachment) error {
+	if cm.imageStore == nil {
 		return nil
 	}
-	result := make([]PendingImage, len(ts.PendingImages))
-	copy(result, ts.PendingImages)
-	return result
+	return cm.imageStore.AddImage(userID, messageIndex, img.ID, img.FilePath, img.MIMEType, img.Filename)
 }
 
-// RemovePendingImage removes a pending image by ID and returns its file path.
-func (cm *ConversationManager) RemovePendingImage(userID, imageID string) (filePath string, ok bool) {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-	ts, exists := cm.transient[userID]
-	if !exists {
-		return "", false
-	}
-	for i, img := range ts.PendingImages {
-		if img.ID == imageID {
-			filePath = img.FilePath
-			ts.PendingImages = append(ts.PendingImages[:i], ts.PendingImages[i+1:]...)
-			ts.ImageCount--
-			return filePath, true
-		}
-	}
-	return "", false
-}
-
-// GetImageCount returns the total number of images uploaded in this conversation.
-func (cm *ConversationManager) GetImageCount(userID string) int {
-	cm.mu.RLock()
-	defer cm.mu.RUnlock()
-	ts, ok := cm.transient[userID]
-	if !ok {
-		return 0
-	}
-	return ts.ImageCount
-}
-
-// AttachPendingImages persists all pending images to the image store for the given message index,
-// clears them from transient state, and returns the attached images.
-func (cm *ConversationManager) AttachPendingImages(userID string, messageIndex int) []ImageAttachment {
-	cm.mu.Lock()
-	pending := make([]PendingImage, 0)
-	if ts, ok := cm.transient[userID]; ok {
-		pending = append(pending, ts.PendingImages...)
-		ts.PendingImages = nil
-	}
-	cm.mu.Unlock()
-
-	if len(pending) == 0 || cm.imageStore == nil {
-		return nil
-	}
-
-	var attached []ImageAttachment
-	for _, p := range pending {
-		if err := cm.imageStore.AddImage(userID, messageIndex, p.ID, p.FilePath, p.MIMEType, p.Filename); err != nil {
-			continue
-		}
-		attached = append(attached, ImageAttachment{
-			ID:       p.ID,
-			FilePath: p.FilePath,
-			MIMEType: p.MIMEType,
-			Filename: p.Filename,
-		})
-	}
-	return attached
-}
-
-// GetImageByID looks up an image by ID, checking pending images first then the image store.
-func (cm *ConversationManager) GetImageByID(userID, imageID string) (filePath, mimeType string, ok bool) {
-	// Check pending images first.
-	cm.mu.RLock()
-	if ts, exists := cm.transient[userID]; exists {
-		for _, img := range ts.PendingImages {
-			if img.ID == imageID {
-				cm.mu.RUnlock()
-				return img.FilePath, img.MIMEType, true
-			}
-		}
-	}
-	cm.mu.RUnlock()
-
-	// Check image store.
+// GetImageByID looks up an image by ID in the image store.
+func (cm *ConversationManager) GetImageByID(imageID string) (filePath, mimeType string, ok bool) {
 	if cm.imageStore != nil {
 		rec, err := cm.imageStore.GetImageByID(imageID)
 		if err == nil && rec != nil {
@@ -372,10 +275,6 @@ func (cm *ConversationManager) ResetConversation(userID string) error {
 	if ts, ok := cm.transient[userID]; ok {
 		if ts.CoverArtPath != "" {
 			_ = os.Remove(ts.CoverArtPath)
-		}
-		// Clean up pending image files.
-		for _, img := range ts.PendingImages {
-			_ = os.Remove(img.FilePath)
 		}
 		delete(cm.transient, userID)
 	}
@@ -438,9 +337,6 @@ func (cm *ConversationManager) cleanupLoop() {
 			if time.Since(ts.LastMessage) > 24*time.Hour {
 				if ts.CoverArtPath != "" {
 					_ = os.Remove(ts.CoverArtPath)
-				}
-				for _, img := range ts.PendingImages {
-					_ = os.Remove(img.FilePath)
 				}
 				delete(cm.transient, id)
 			}

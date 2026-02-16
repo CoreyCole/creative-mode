@@ -93,7 +93,7 @@ func main() {
 		AllowOrigins: corsOrigins,
 		AllowMethods: []string{http.MethodGet, http.MethodPost},
 	}))
-	e.Use(middleware.BodyLimit("6M"))
+	e.Use(middleware.BodyLimit("22M")) // 4 images * 5 MB + form overhead
 	e.Use(middleware.SecureWithConfig(middleware.SecureConfig{
 		XSSProtection:         "1; mode=block",
 		ContentTypeNosniff:    "nosniff",
@@ -355,6 +355,7 @@ func main() {
 			Title:       "Creative Mode - Meet the Mayor",
 			CurrentPath: c.Request().URL.Path,
 			Commit:      commit,
+			HideFooter:  true,
 		}
 		return p.MayorPage(rootArgs, chatMessages, devMode).Render(c.Request().Context(), c.Response().Writer)
 	})
@@ -387,25 +388,11 @@ func main() {
 		return mayorHandler.HandleHatch(c)
 	})
 
-	mayorGroup.POST("/mayor/upload", func(c echo.Context) error {
-		if mayorHandler == nil {
-			return echo.NewHTTPError(http.StatusServiceUnavailable, "mayor not available")
-		}
-		return mayorHandler.HandleImageUpload(c)
-	})
-
 	mayorGroup.GET("/mayor/image/:imageID", func(c echo.Context) error {
 		if mayorHandler == nil {
 			return echo.NewHTTPError(http.StatusServiceUnavailable, "mayor not available")
 		}
 		return mayorHandler.HandleImageServe(c)
-	})
-
-	mayorGroup.DELETE("/mayor/image/:imageID", func(c echo.Context) error {
-		if mayorHandler == nil {
-			return echo.NewHTTPError(http.StatusServiceUnavailable, "mayor not available")
-		}
-		return mayorHandler.HandleImageDelete(c)
 	})
 
 	// Graceful shutdown on SIGINT/SIGTERM.

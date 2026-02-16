@@ -43,12 +43,19 @@ templ Page(messages []ChatMessage) {
 			</script>
 			<script>
 				// Auto-resize textarea as content grows.
-				(function() {
-					var ta = document.querySelector('textarea[data-bind\\:mayor_input]');
+				(function () {
+					var ta = document.querySelector("textarea[data-bind\\:mayor_input]");
 					if (!ta) return;
-					function resize() { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 128) + 'px'; }
-					ta.addEventListener('input', resize);
-					new MutationObserver(function() { if (!ta.value) { ta.style.height = 'auto'; } }).observe(ta, {attributes: true});
+					function resize() {
+						ta.style.height = "auto";
+						ta.style.height = Math.min(ta.scrollHeight, 128) + "px";
+					}
+					ta.addEventListener("input", resize);
+					new MutationObserver(function () {
+						if (!ta.value) {
+							ta.style.height = "auto";
+						}
+					}).observe(ta, { attributes: true });
 				})();
 			</script>
 			<!-- Input area -->

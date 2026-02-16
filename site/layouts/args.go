@@ -5,4 +5,5 @@ type RootArgs struct {
 	Title       string
 	CurrentPath string
 	Commit      string
+	HideFooter  bool
 }

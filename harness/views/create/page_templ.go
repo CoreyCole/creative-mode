@@ -63,14 +63,14 @@ func Page(messages []ChatMessage) templ.Component {
 					}
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<!-- World hatched card placeholder --><div id=\"mayor-signup\"></div></div><script>\n\t\t\t\t// Scroll to bottom on page load to show latest messages.\n\t\t\t\trequestAnimationFrame(function () {\n\t\t\t\t\tvar el = document.getElementById(\"chat-messages\");\n\t\t\t\t\tif (el) {\n\t\t\t\t\t\tel.scrollTop = el.scrollHeight;\n\t\t\t\t\t}\n\t\t\t\t});\n\t\t\t</script><script>\n\t\t\t\t// Auto-resize textarea as content grows.\n\t\t\t\t(function() {\n\t\t\t\t\tvar ta = document.querySelector('textarea[data-bind\\\\:mayor_input]');\n\t\t\t\t\tif (!ta) return;\n\t\t\t\t\tfunction resize() { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 128) + 'px'; }\n\t\t\t\t\tta.addEventListener('input', resize);\n\t\t\t\t\tnew MutationObserver(function() { if (!ta.value) { ta.style.height = 'auto'; } }).observe(ta, {attributes: true});\n\t\t\t\t})();\n\t\t\t</script><!-- Input area --><div class=\"shrink-0 border-t border-border/40 px-4 py-3 relative\"><div class=\"mx-auto max-w-2xl\"><!-- Rate limit error --><div id=\"rate-limit-error\"></div><div data-signals='{\"mayor_input\": \"\", \"create_world\": false}' class=\"flex gap-2 items-end\"><textarea data-bind:mayor_input data-on:keydown=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<!-- World hatched card placeholder --><div id=\"mayor-signup\"></div></div><script>\n\t\t\t\t// Scroll to bottom on page load to show latest messages.\n\t\t\t\trequestAnimationFrame(function () {\n\t\t\t\t\tvar el = document.getElementById(\"chat-messages\");\n\t\t\t\t\tif (el) {\n\t\t\t\t\t\tel.scrollTop = el.scrollHeight;\n\t\t\t\t\t}\n\t\t\t\t});\n\t\t\t</script><script>\n\t\t\t\t// Auto-resize textarea as content grows.\n\t\t\t\t(function () {\n\t\t\t\t\tvar ta = document.querySelector(\"textarea[data-bind\\\\:mayor_input]\");\n\t\t\t\t\tif (!ta) return;\n\t\t\t\t\tfunction resize() {\n\t\t\t\t\t\tta.style.height = \"auto\";\n\t\t\t\t\t\tta.style.height = Math.min(ta.scrollHeight, 128) + \"px\";\n\t\t\t\t\t}\n\t\t\t\t\tta.addEventListener(\"input\", resize);\n\t\t\t\t\tnew MutationObserver(function () {\n\t\t\t\t\t\tif (!ta.value) {\n\t\t\t\t\t\t\tta.style.height = \"auto\";\n\t\t\t\t\t\t}\n\t\t\t\t\t}).observe(ta, { attributes: true });\n\t\t\t\t})();\n\t\t\t</script><!-- Input area --><div class=\"shrink-0 border-t border-border/40 px-4 py-3 relative\"><div class=\"mx-auto max-w-2xl\"><!-- Rate limit error --><div id=\"rate-limit-error\"></div><div data-signals='{\"mayor_input\": \"\", \"create_world\": false}' class=\"flex gap-2 items-end\"><textarea data-bind:mayor_input data-on:keydown=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var3 string
 			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(`evt.key === 'Enter' && !evt.shiftKey && (evt.preventDefault(), !$_sending && $mayor_input.trim() !== '' && ` + string(datastar.PostSSE("/create/chat")) + `)`)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/create/page.templ`, Line: 65, Col: 183}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/create/page.templ`, Line: 72, Col: 183}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 			if templ_7745c5c3_Err != nil {
@@ -83,7 +83,7 @@ func Page(messages []ChatMessage) templ.Component {
 			var templ_7745c5c3_Var4 string
 			templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(`!$_sending && $mayor_input.trim() !== '' && ` + string(datastar.PostSSE("/create/chat")))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/create/page.templ`, Line: 73, Col: 112}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/create/page.templ`, Line: 80, Col: 112}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 			if templ_7745c5c3_Err != nil {
@@ -96,7 +96,7 @@ func Page(messages []ChatMessage) templ.Component {
 			var templ_7745c5c3_Var5 string
 			templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(`$create_world = true; ` + string(datastar.PostSSE("/create/chat")))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/create/page.templ`, Line: 87, Col: 88}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/create/page.templ`, Line: 94, Col: 88}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 			if templ_7745c5c3_Err != nil {

@@ -150,9 +150,11 @@ func (h *Handler) HandleChat(c echo.Context) error {
 	}
 
 	if forceCreate {
-		systemPrompt += "\n\nIMPORTANT: The user has clicked 'Create World'. Finalize NOW. " +
-			"Give a brief excited response about the world taking shape, then emit the WORLD_READY marker. " +
-			"Fill in any missing details (world name, mayor name, gameplay, setting) with your best creative judgment based on the conversation."
+		systemPrompt += "\n\nIMPORTANT: The user has clicked 'Create World'. " +
+			"If the user has NOT yet told you their preferred mayor name, you MUST ask for it now — " +
+			"do NOT invent a mayor name. Say something like: \"Almost there — but I still need a name. What should I go by?\" " +
+			"For all other missing details (world name, gameplay, setting), fill them in with your best creative judgment. " +
+			"Once you have the mayor name, give a brief response about the world taking shape, then emit the WORLD_READY marker."
 	}
 
 	// Stream from Claude.

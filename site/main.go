@@ -25,6 +25,7 @@ import (
 	"github.com/coreycole/creative-mode/site/internal/auth"
 	"github.com/coreycole/creative-mode/site/internal/db"
 	"github.com/coreycole/creative-mode/site/internal/mayor"
+	"github.com/coreycole/creative-mode/site/internal/monitor"
 	"github.com/coreycole/creative-mode/site/internal/webhook"
 	l "github.com/coreycole/creative-mode/site/layouts"
 	p "github.com/coreycole/creative-mode/site/pages"
@@ -167,6 +168,12 @@ func main() {
 	wh := webhook.New(logger, os.Getenv("WEBHOOK_SECRET"))
 	e.GET("/health", wh.HandleHealth)
 	e.POST("/webhook/github", wh.HandleGitHub)
+
+	// --- Monitor handler (public /status page) ---
+	monitorHandler := monitor.NewHandler(database, logger,
+		os.Getenv("HARNESS_URL"), os.Getenv("PRESIDENT_SECRET"), commit, wcClient)
+	e.GET("/status", monitorHandler.HandlePage)
+	e.GET("/status/events", monitorHandler.HandleEvents)
 
 	// --- Dev auth route (only in dev mode) ---
 	if devMode {

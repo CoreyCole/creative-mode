@@ -1,0 +1,57 @@
+package pages
+
+import (
+	"github.com/starfederation/datastar-go/datastar"
+
+	l "github.com/coreycole/creative-mode/site/layouts"
+)
+
+templ StatusPage(rootArgs l.RootArgs, showHarness bool, showWorlds bool) {
+	@l.Root(rootArgs) {
+		<section class="py-12 md:py-20">
+			<div
+				class="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8"
+				data-init={ datastar.GetSSE("/status/events") }
+				data-signals="{memTotal:'',memUsed:'',memUsedPercent:'',cpuPercent:'',uptime:''}"
+			>
+				<h1 class="text-3xl font-bold tracking-tight text-foreground mb-8">System Status</h1>
+				<!-- System Metrics -->
+				<div class="mb-8">
+					<h2 class="text-lg font-semibold text-foreground mb-4">System Metrics</h2>
+					<div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+						@metricCard("CPU", "$cpuPercent")
+						@metricCard("Memory Used", "$memUsed")
+						@metricCard("Memory %", "$memUsedPercent")
+						@metricCard("Total Memory", "$memTotal")
+						@metricCard("Uptime", "$uptime")
+					</div>
+				</div>
+				<!-- DB Health -->
+				<div class="mb-8" id="db-health">
+					@DBHealthCard("checking", "", 0)
+				</div>
+				<!-- Harness Health -->
+				if showHarness {
+					<div class="mb-8" id="harness-health">
+						@HarnessHealthCard("checking", "", "")
+					</div>
+				}
+				<!-- World Status -->
+				if showWorlds {
+					<div class="mb-8" id="world-status">
+						@WorldStatusTable(nil, "")
+					</div>
+				}
+			</div>
+		</section>
+	}
+}
+
+templ metricCard(label string, signalExpr string) {
+	<div class="rounded-lg border border-border bg-card p-4">
+		<p class="text-xs font-medium text-muted-foreground uppercase tracking-wider">{ label }</p>
+		<p class="mt-1 text-xl font-semibold text-foreground">
+			<span data-text={ signalExpr } class="tabular-nums">--</span>
+		</p>
+	</div>
+}

@@ -8,3 +8,15 @@ type ChatMessage struct {
 	Content     string // plain text (user messages)
 	AvatarURL   string // Discord avatar URL (user messages)
 }
+
+// WorldInfo holds world status data from the harness mayor-status API.
+type WorldInfo struct {
+	WorldID      string
+	WorldName    string
+	MayorName    string
+	TemplateType string
+	Checkpoints  int
+	LatestStatus string
+	GameRunning  bool
+	RecentBuilds int
+}

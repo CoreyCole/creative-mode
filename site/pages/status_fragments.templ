@@ -1,0 +1,118 @@
+package pages
+
+import "fmt"
+
+templ statusDot(status string) {
+	switch status {
+		case "ok":
+			<span class="inline-block h-2.5 w-2.5 rounded-full bg-green-500" title="Healthy"></span>
+		case "error":
+			<span class="inline-block h-2.5 w-2.5 rounded-full bg-red-500" title="Error"></span>
+		default:
+			<span class="inline-block h-2.5 w-2.5 rounded-full bg-yellow-500 animate-pulse" title="Checking"></span>
+	}
+}
+
+templ DBHealthCard(status string, latency string, sessionCount int) {
+	<div class="rounded-lg border border-border bg-card p-4">
+		<div class="flex items-center justify-between mb-3">
+			<h2 class="text-lg font-semibold text-foreground">Database</h2>
+			@statusDot(status)
+		</div>
+		if status == "checking" {
+			<p class="text-sm text-muted-foreground">Checking connection...</p>
+		} else if status == "ok" {
+			<div class="grid grid-cols-2 gap-4 text-sm">
+				<div>
+					<p class="text-muted-foreground">Ping</p>
+					<p class="font-medium text-foreground">{ latency }</p>
+				</div>
+				<div>
+					<p class="text-muted-foreground">Active Sessions</p>
+					<p class="font-medium text-foreground">{ fmt.Sprintf("%d", sessionCount) }</p>
+				</div>
+			</div>
+		} else {
+			<p class="text-sm text-destructive">Database unreachable</p>
+		}
+	</div>
+}
+
+templ HarnessHealthCard(status string, latency string, url string) {
+	<div class="rounded-lg border border-border bg-card p-4">
+		<div class="flex items-center justify-between mb-3">
+			<h2 class="text-lg font-semibold text-foreground">Harness</h2>
+			@statusDot(status)
+		</div>
+		if status == "checking" {
+			<p class="text-sm text-muted-foreground">Checking connection...</p>
+		} else if status == "ok" {
+			<div class="text-sm">
+				<p class="text-muted-foreground">Latency</p>
+				<p class="font-medium text-foreground">{ latency }</p>
+			</div>
+		} else {
+			<p class="text-sm text-destructive">Harness unreachable</p>
+			if url != "" {
+				<p class="text-xs text-muted-foreground mt-1">{ url }</p>
+			}
+		}
+	</div>
+}
+
+templ WorldStatusTable(worlds []WorldInfo, timestamp string) {
+	<div class="rounded-lg border border-border bg-card p-4">
+		<div class="flex items-center justify-between mb-4">
+			<h2 class="text-lg font-semibold text-foreground">Worlds</h2>
+			if timestamp != "" {
+				<span class="text-xs text-muted-foreground">{ timestamp }</span>
+			}
+		</div>
+		if len(worlds) == 0 {
+			<p class="text-sm text-muted-foreground">No worlds found</p>
+		} else {
+			<div class="overflow-x-auto">
+				<table class="w-full text-sm">
+					<thead>
+						<tr class="border-b border-border text-left">
+							<th class="pb-2 font-medium text-muted-foreground">World</th>
+							<th class="pb-2 font-medium text-muted-foreground">Mayor</th>
+							<th class="pb-2 font-medium text-muted-foreground">Type</th>
+							<th class="pb-2 font-medium text-muted-foreground">Game</th>
+							<th class="pb-2 font-medium text-muted-foreground text-right">Checkpoints</th>
+							<th class="pb-2 font-medium text-muted-foreground text-right">Builds</th>
+						</tr>
+					</thead>
+					<tbody>
+						for _, w := range worlds {
+							<tr class="border-b border-border/50 last:border-0">
+								<td class="py-2 font-medium text-foreground">{ w.WorldName }</td>
+								<td class="py-2 text-muted-foreground">{ w.MayorName }</td>
+								<td class="py-2 text-muted-foreground">{ w.TemplateType }</td>
+								<td class="py-2">
+									if w.GameRunning {
+										<span class="inline-block h-2 w-2 rounded-full bg-green-500" title="Running"></span>
+									} else {
+										<span class="inline-block h-2 w-2 rounded-full bg-gray-400" title="Stopped"></span>
+									}
+								</td>
+								<td class="py-2 text-muted-foreground text-right tabular-nums">{ fmt.Sprintf("%d", w.Checkpoints) }</td>
+								<td class="py-2 text-muted-foreground text-right tabular-nums">{ fmt.Sprintf("%d", w.RecentBuilds) }</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			</div>
+		}
+	</div>
+}
+
+templ WorldStatusError(reason string) {
+	<div class="rounded-lg border border-border bg-card p-4">
+		<div class="flex items-center justify-between mb-3">
+			<h2 class="text-lg font-semibold text-foreground">Worlds</h2>
+			@statusDot("error")
+		</div>
+		<p class="text-sm text-destructive">{ reason }</p>
+	</div>
+}

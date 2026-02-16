@@ -30,6 +30,7 @@ type OverlaySignals struct {
 	PlaceX              float64 `json:"place_x"`               //nolint:tagliatelle // Datastar signal names use snake_case
 	PlaceY              float64 `json:"place_y"`               //nolint:tagliatelle // Datastar signal names use snake_case
 	PlaceLabel          string  `json:"place_label"`           //nolint:tagliatelle // Datastar signal names use snake_case
+	ShowUpload          bool    `json:"show_upload"`           //nolint:tagliatelle // Datastar signal names use snake_case
 }
 
 // DefaultOverlaySignals returns the default signal state for a world overlay.

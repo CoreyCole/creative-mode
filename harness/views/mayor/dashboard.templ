@@ -23,6 +23,8 @@ type DashboardData struct {
 	Activity    []sqlc.MayorActivity
 	Messages    []sqlc.MayorMessage
 	Sessions    []sqlc.MayorSession
+	SoulHTML    string
+	MemoryHTML  string
 }
 
 type DashboardSignals struct {
@@ -69,17 +71,17 @@ templ Page(data DashboardData) {
 				<div data-show="$active_tab === 'overview'">
 					@OverviewTab(data)
 				</div>
-				<div data-show="$active_tab === 'builds'" style="display: none;">
+				<div id="mayor-builds-tab" data-show="$active_tab === 'builds'" style="display: none;">
 					@BuildsTab(data.Builds)
 				</div>
-				<div data-show="$active_tab === 'activity'" style="display: none;">
+				<div id="mayor-activity-tab" data-show="$active_tab === 'activity'" style="display: none;">
 					@ActivityTab(data.Activity)
 				</div>
-				<div data-show="$active_tab === 'messages'" style="display: none;">
+				<div id="mayor-messages-tab" data-show="$active_tab === 'messages'" style="display: none;">
 					@MessagesTab(data.Messages)
 				</div>
 				<div data-show="$active_tab === 'memory'" style="display: none;">
-					@MemoryTab(data.World)
+					@MemoryTab(data.SoulHTML, data.MemoryHTML)
 				</div>
 			</div>
 		</div>
@@ -245,24 +247,26 @@ func authorColor(authorType string) string {
 	}
 }
 
-templ MemoryTab(w sqlc.World) {
+templ MemoryTab(soulHTML, memoryHTML string) {
 	<div class="space-y-4">
 		<div>
 			<h3 class="text-sm font-semibold mb-2">SOUL.md</h3>
-			<div
-				id="mayor-soul-content"
-				class="rounded border border-border bg-card p-4 text-sm whitespace-pre-wrap font-mono max-h-96 overflow-y-auto"
-			>
-				Loading...
+			<div class="chat-message-content rounded border border-border bg-card p-4 text-sm max-h-96 overflow-y-auto">
+				if soulHTML != "" {
+					@templ.Raw(soulHTML)
+				} else {
+					<p class="text-muted-foreground">(file not found)</p>
+				}
 			</div>
 		</div>
 		<div>
 			<h3 class="text-sm font-semibold mb-2">MEMORY.md</h3>
-			<div
-				id="mayor-memory-content"
-				class="rounded border border-border bg-card p-4 text-sm whitespace-pre-wrap font-mono max-h-96 overflow-y-auto"
-			>
-				Loading...
+			<div class="chat-message-content rounded border border-border bg-card p-4 text-sm max-h-96 overflow-y-auto">
+				if memoryHTML != "" {
+					@templ.Raw(memoryHTML)
+				} else {
+					<p class="text-muted-foreground">(file not found)</p>
+				}
 			</div>
 		</div>
 	</div>

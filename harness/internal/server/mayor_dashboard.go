@@ -40,6 +40,22 @@ func (s *Server) handleMayorDashboard(c echo.Context) error {
 		WorldID: worldID, Limit: defaultQueryLimit,
 	})
 
+	// Read and render mayor workspace files for the Memory tab.
+	var soulHTML, memoryHTML string
+	openclawHome := os.Getenv("OPENCLAW_HOME")
+	if openclawHome == "" {
+		openclawHome = filepath.Join(s.DataDir, "openclaw")
+	}
+	wsDir := filepath.Join(openclawHome, "workspaces", "world-"+worldID)
+	p1 := filepath.Join(wsDir, "SOUL.md")
+	p2 := filepath.Join(wsDir, "MEMORY.md")
+	if b, err := os.ReadFile(p1); err == nil { //nolint:gosec // hardcoded filename
+		soulHTML = s.CreateMDRenderer.MarkdownBytesToHTML(b)
+	}
+	if b, err := os.ReadFile(p2); err == nil { //nolint:gosec // hardcoded filename
+		memoryHTML = s.CreateMDRenderer.MarkdownBytesToHTML(b)
+	}
+
 	data := mayorview.DashboardData{
 		World:       w,
 		Checkpoints: checkpoints,
@@ -47,6 +63,8 @@ func (s *Server) handleMayorDashboard(c echo.Context) error {
 		Activity:    activity,
 		Messages:    messages,
 		Sessions:    sessions,
+		SoulHTML:    soulHTML,
+		MemoryHTML:  memoryHTML,
 	}
 
 	return render(c, mayorview.Page(data))
@@ -65,7 +83,7 @@ func (s *Server) handleMayorDashboardSSE(c echo.Context) error {
 	for {
 		select {
 		case <-worldCh:
-			// Refresh builds and activity on any world event.
+			// Refresh builds, activity, and messages on any world event.
 			ctx := r.Context()
 			builds, _ := s.DB.GetMayorBuilds(ctx, sqlc.GetMayorBuildsParams{
 				WorldID: worldID, Limit: defaultQueryLimit,
@@ -73,6 +91,7 @@ func (s *Server) handleMayorDashboardSSE(c echo.Context) error {
 			activity, _ := s.DB.GetMayorActivity(ctx, sqlc.GetMayorActivityParams{
 				WorldID: worldID, Limit: defaultQueryLimit,
 			})
+			messages, _ := s.DB.GetMayorMessages(ctx, worldID)
 			if err := sse.PatchElementTempl(
 				mayorview.BuildsTab(builds),
 				datastar.WithSelectorID("mayor-builds-tab"),
@@ -82,6 +101,12 @@ func (s *Server) handleMayorDashboardSSE(c echo.Context) error {
 			if err := sse.PatchElementTempl(
 				mayorview.ActivityTab(activity),
 				datastar.WithSelectorID("mayor-activity-tab"),
+			); err != nil {
+				return nil
+			}
+			if err := sse.PatchElementTempl(
+				mayorview.MessagesTab(messages),
+				datastar.WithSelectorID("mayor-messages-tab"),
 			); err != nil {
 				return nil
 			}

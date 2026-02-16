@@ -31,6 +31,8 @@ type DashboardData struct {
 	Activity    []sqlc.MayorActivity
 	Messages    []sqlc.MayorMessage
 	Sessions    []sqlc.MayorSession
+	SoulHTML    string
+	MemoryHTML  string
 }
 
 type DashboardSignals struct {
@@ -81,7 +83,7 @@ func Page(data DashboardData) templ.Component {
 			var templ_7745c5c3_Var3 string
 			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(templ.JSONString(DefaultDashboardSignals()))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 40, Col: 61}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 42, Col: 61}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 			if templ_7745c5c3_Err != nil {
@@ -94,7 +96,7 @@ func Page(data DashboardData) templ.Component {
 			var templ_7745c5c3_Var4 string
 			templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(data.World.Name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 46, Col: 56}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 48, Col: 56}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 			if templ_7745c5c3_Err != nil {
@@ -112,7 +114,7 @@ func Page(data DashboardData) templ.Component {
 				var templ_7745c5c3_Var5 string
 				templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(data.World.MayorName.String)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 48, Col: 86}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 50, Col: 86}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 				if templ_7745c5c3_Err != nil {
@@ -130,7 +132,7 @@ func Page(data DashboardData) templ.Component {
 			var templ_7745c5c3_Var6 templ.SafeURL
 			templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL("/world/" + data.World.ID))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 52, Col: 52}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 54, Col: 52}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 			if templ_7745c5c3_Err != nil {
@@ -167,7 +169,7 @@ func Page(data DashboardData) templ.Component {
 			var templ_7745c5c3_Var7 string
 			templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(datastar.GetSSE(fmt.Sprintf("/mayor/%s/events", data.World.ID)))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 67, Col: 79}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 69, Col: 79}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 			if templ_7745c5c3_Err != nil {
@@ -181,7 +183,7 @@ func Page(data DashboardData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "</div><div data-show=\"$active_tab === 'builds'\" style=\"display: none;\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "</div><div id=\"mayor-builds-tab\" data-show=\"$active_tab === 'builds'\" style=\"display: none;\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -189,7 +191,7 @@ func Page(data DashboardData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "</div><div data-show=\"$active_tab === 'activity'\" style=\"display: none;\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "</div><div id=\"mayor-activity-tab\" data-show=\"$active_tab === 'activity'\" style=\"display: none;\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -197,7 +199,7 @@ func Page(data DashboardData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "</div><div data-show=\"$active_tab === 'messages'\" style=\"display: none;\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "</div><div id=\"mayor-messages-tab\" data-show=\"$active_tab === 'messages'\" style=\"display: none;\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -209,7 +211,7 @@ func Page(data DashboardData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = MemoryTab(data.World).Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Err = MemoryTab(data.SoulHTML, data.MemoryHTML).Render(ctx, templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -263,7 +265,7 @@ func tabButton(id, label string) templ.Component {
 			var templ_7745c5c3_Var10 string
 			templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(label)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 98, Col: 9}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 100, Col: 9}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 			if templ_7745c5c3_Err != nil {
@@ -393,7 +395,7 @@ func statCard(label, value string) templ.Component {
 		var templ_7745c5c3_Var13 string
 		templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(value)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 138, Col: 41}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 140, Col: 41}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
 		if templ_7745c5c3_Err != nil {
@@ -406,7 +408,7 @@ func statCard(label, value string) templ.Component {
 		var templ_7745c5c3_Var14 string
 		templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(label)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 139, Col: 52}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 141, Col: 52}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
 		if templ_7745c5c3_Err != nil {
@@ -515,7 +517,7 @@ func buildItem(b sqlc.MayorBuild) templ.Component {
 		var templ_7745c5c3_Var19 string
 		templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(b.Status)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 158, Col: 14}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 160, Col: 14}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 		if templ_7745c5c3_Err != nil {
@@ -528,7 +530,7 @@ func buildItem(b sqlc.MayorBuild) templ.Component {
 		var templ_7745c5c3_Var20 string
 		templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(fmtTime(b.StartedAt))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 160, Col: 69}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 162, Col: 69}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
 		if templ_7745c5c3_Err != nil {
@@ -541,7 +543,7 @@ func buildItem(b sqlc.MayorBuild) templ.Component {
 		var templ_7745c5c3_Var21 string
 		templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(b.Prompt)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 162, Col: 31}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 164, Col: 31}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
 		if templ_7745c5c3_Err != nil {
@@ -559,7 +561,7 @@ func buildItem(b sqlc.MayorBuild) templ.Component {
 			var templ_7745c5c3_Var22 string
 			templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinStringErrs(b.ErrorMessage.String)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 164, Col: 67}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 166, Col: 67}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var22))
 			if templ_7745c5c3_Err != nil {
@@ -664,7 +666,7 @@ func activityItem(a sqlc.MayorActivity) templ.Component {
 		var templ_7745c5c3_Var25 string
 		templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(a.ActivityType)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 195, Col: 69}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 197, Col: 69}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var25))
 		if templ_7745c5c3_Err != nil {
@@ -682,7 +684,7 @@ func activityItem(a sqlc.MayorActivity) templ.Component {
 			var templ_7745c5c3_Var26 string
 			templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.JoinStringErrs(a.Detail.String)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 198, Col: 40}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 200, Col: 40}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var26))
 			if templ_7745c5c3_Err != nil {
@@ -700,7 +702,7 @@ func activityItem(a sqlc.MayorActivity) templ.Component {
 		var templ_7745c5c3_Var27 string
 		templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(fmtTime(a.CreatedAt))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 201, Col: 86}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 203, Col: 86}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var27))
 		if templ_7745c5c3_Err != nil {
@@ -827,7 +829,7 @@ func messageItem(msg sqlc.MayorMessage) templ.Component {
 		var templ_7745c5c3_Var34 string
 		templ_7745c5c3_Var34, templ_7745c5c3_Err = templ.JoinStringErrs(msg.AuthorName)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 219, Col: 88}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 221, Col: 88}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var34))
 		if templ_7745c5c3_Err != nil {
@@ -840,7 +842,7 @@ func messageItem(msg sqlc.MayorMessage) templ.Component {
 		var templ_7745c5c3_Var35 string
 		templ_7745c5c3_Var35, templ_7745c5c3_Err = templ.JoinStringErrs(fmtTime(msg.CreatedAt))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 220, Col: 71}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 222, Col: 71}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var35))
 		if templ_7745c5c3_Err != nil {
@@ -853,7 +855,7 @@ func messageItem(msg sqlc.MayorMessage) templ.Component {
 		var templ_7745c5c3_Var36 string
 		templ_7745c5c3_Var36, templ_7745c5c3_Err = templ.JoinStringErrs(msg.Content)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 222, Col: 34}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `views/mayor/dashboard.templ`, Line: 224, Col: 34}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var36))
 		if templ_7745c5c3_Err != nil {
@@ -889,7 +891,7 @@ func authorColor(authorType string) string {
 	}
 }
 
-func MemoryTab(w sqlc.World) templ.Component {
+func MemoryTab(soulHTML, memoryHTML string) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
 		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
@@ -910,7 +912,37 @@ func MemoryTab(w sqlc.World) templ.Component {
 			templ_7745c5c3_Var37 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 55, "<div class=\"space-y-4\"><div><h3 class=\"text-sm font-semibold mb-2\">SOUL.md</h3><div id=\"mayor-soul-content\" class=\"rounded border border-border bg-card p-4 text-sm whitespace-pre-wrap font-mono max-h-96 overflow-y-auto\">Loading...</div></div><div><h3 class=\"text-sm font-semibold mb-2\">MEMORY.md</h3><div id=\"mayor-memory-content\" class=\"rounded border border-border bg-card p-4 text-sm whitespace-pre-wrap font-mono max-h-96 overflow-y-auto\">Loading...</div></div></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 55, "<div class=\"space-y-4\"><div><h3 class=\"text-sm font-semibold mb-2\">SOUL.md</h3><div class=\"chat-message-content rounded border border-border bg-card p-4 text-sm max-h-96 overflow-y-auto\">")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		if soulHTML != "" {
+			templ_7745c5c3_Err = templ.Raw(soulHTML).Render(ctx, templ_7745c5c3_Buffer)
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+		} else {
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 56, "<p class=\"text-muted-foreground\">(file not found)</p>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 57, "</div></div><div><h3 class=\"text-sm font-semibold mb-2\">MEMORY.md</h3><div class=\"chat-message-content rounded border border-border bg-card p-4 text-sm max-h-96 overflow-y-auto\">")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		if memoryHTML != "" {
+			templ_7745c5c3_Err = templ.Raw(memoryHTML).Render(ctx, templ_7745c5c3_Buffer)
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+		} else {
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 58, "<p class=\"text-muted-foreground\">(file not found)</p>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 59, "</div></div></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

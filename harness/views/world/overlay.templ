@@ -47,6 +47,9 @@ templ OverlayTopBar(w sqlc.World) {
 				@button.Button(button.ButtonArgs{Size: "sm", Variant: "outline", Attributes: templ.Attributes{"data-on:click": OE.ToggleTree()}}) {
 					Tree
 				}
+				@button.Button(button.ButtonArgs{Size: "sm", Variant: "outline", Attributes: templ.Attributes{"data-on:click": "$show_upload = !$show_upload"}}) {
+					Upload
+				}
 				@button.Button(button.ButtonArgs{Size: "sm", Variant: "outline", Attributes: templ.Attributes{"data-on:click": "var f=document.getElementById('game-frame');if(f){f.src=f.src;}"}}) {
 					Reload
 				}
@@ -56,6 +59,20 @@ templ OverlayTopBar(w sqlc.World) {
 			</div>
 		</div>
 		<div class="text-muted-foreground text-[13px]">{ w.Name }</div>
+		<div data-show="$show_upload" style="display: none;" class="flex items-center gap-2 py-1">
+			<form
+				id="upload-form"
+				enctype="multipart/form-data"
+				class="flex items-center gap-2 flex-1"
+			>
+				<input type="file" name="file" required class="text-sm text-muted-foreground file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-sm file:bg-muted file:text-foreground flex-1"/>
+				<input type="hidden" name="folder" value="rooms"/>
+				@button.Button(button.ButtonArgs{Size: "sm", Variant: "default", Attributes: templ.Attributes{"type": "button", "data-on:click": "window.__uploadAsset()"}}) {
+					Send
+				}
+			</form>
+			<span id="upload-status" class="text-xs text-muted-foreground"></span>
+		</div>
 	</div>
 }
 

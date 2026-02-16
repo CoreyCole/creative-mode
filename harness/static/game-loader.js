@@ -36,8 +36,39 @@ window.focusGameFrame = function() {
 };
 
 // loadCheckpoint navigates to a checkpoint's world page.
+// First updates the user's position via the checkpoint API, then navigates.
 window.loadCheckpoint = function(worldID, checkpointID) {
-    window.location.href = '/world/' + worldID;
+    fetch('/world/' + worldID + '/checkpoint/' + checkpointID)
+        .then(function() {
+            window.location.href = '/world/' + worldID;
+        })
+        .catch(function() {
+            // Fallback: navigate anyway (server will use whatever position is stored)
+            window.location.href = '/world/' + worldID;
+        });
+};
+
+// Upload asset from overlay form.
+window.__uploadAsset = function() {
+    var form = document.getElementById('upload-form');
+    if (!form) return;
+    var status = document.getElementById('upload-status');
+    var data = new FormData(form);
+
+    if (status) status.textContent = 'Uploading...';
+
+    fetch('/api/assets/upload', { method: 'POST', body: data })
+        .then(function(r) {
+            if (!r.ok) throw new Error('Upload failed: ' + r.status);
+            return r.json();
+        })
+        .then(function(result) {
+            if (status) status.textContent = 'Uploaded: ' + (result.path || 'ok');
+            form.reset();
+        })
+        .catch(function(err) {
+            if (status) status.textContent = err.message;
+        });
 };
 
 // loadLineage fetches the checkpoint ancestry and renders it into the lineage view.

@@ -108,10 +108,7 @@ Browser → Route 53 → EC2 Elastic IP → Caddy:443 (TLS) → localhost:3000
    sudo systemctl enable --now creative-mode-site
    ```
 
-**Updating**:
-```bash
-cd ~/creative-mode/site && git pull && just build && sudo cp site-linux /usr/local/bin/creative-mode-site && sudo systemctl restart creative-mode-site
-```
+**Auto-deploy**: Pushes to `main` trigger automatic deployment via a GitHub webhook (`POST /webhook/github`). The handler pulls the latest code, rebuilds the binary, copies it to `/usr/local/bin/creative-mode-site`, and sends itself SIGTERM. Systemd restarts the service with the new binary. No manual deploy steps needed.
 
 **Logs**: `just deploy-logs` or `journalctl -u creative-mode-site -f`
 
@@ -120,3 +117,4 @@ cd ~/creative-mode/site && git pull && just build && sudo cp site-linux /usr/loc
 **Key files**:
 - `creative-mode-site.service` — systemd unit (runs as `ubuntu` user, listens on port 3000 behind Caddy)
 - `site.env.example` — env var template (Discord OAuth, bot token, Anthropic key, invite codes)
+- `internal/webhook/` — GitHub push webhook handler for self-rebuild

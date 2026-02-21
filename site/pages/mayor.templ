@@ -8,23 +8,9 @@ templ MayorPage(rootArgs l.RootArgs, messages []ChatMessage, devMode bool, world
 			html,
 			body {
 				overflow: hidden !important;
-				overscroll-behavior: none !important;
-				position: fixed !important;
-				width: 100% !important;
-				height: 100% !important;
-			}
-			/* Override wrapper min-h-screen (100vh = large viewport on mobile, taller than visible area) */
-			body > div:first-child {
-				height: 100% !important;
-				min-height: 0 !important;
-				overflow: hidden !important;
-			}
-			body > div:first-child > main {
-				min-height: 0 !important;
-				overflow: hidden !important;
 			}
 		</style>
-		<div id="mayor-container" class="relative flex flex-col h-full" data-signals={ mayorPageSignals(worldName, mayorName) }>
+		<div id="mayor-container" class="fixed top-14 left-0 right-0 bottom-0 flex flex-col bg-background" data-signals={ mayorPageSignals(worldName, mayorName) }>
 			<div id="drop-overlay" class="hidden absolute inset-0 z-50 bg-primary/10 border-2 border-dashed border-primary rounded-lg flex items-center justify-center pointer-events-none">
 				<span class="text-primary font-medium text-lg">Drop images here</span>
 			</div>
@@ -130,12 +116,15 @@ templ MayorPage(rootArgs l.RootArgs, messages []ChatMessage, devMode bool, world
 				});
 			</script>
 			<script>
-				// Keyboard fallback: shrink body to visual viewport so the
-				// height: 100% chain keeps the input above the keyboard.
+				// Keyboard fallback for browsers that don't support
+				// interactive-widget=resizes-content: resize the fixed
+				// container to match the visual viewport.
 				(function () {
-					if (!window.visualViewport) return;
+					var c = document.getElementById("mayor-container");
+					if (!c || !window.visualViewport) return;
 					function update() {
-						document.body.style.height = window.visualViewport.height + "px";
+						c.style.height = window.visualViewport.height + "px";
+						c.style.bottom = "auto";
 					}
 					window.visualViewport.addEventListener("resize", update);
 				})();

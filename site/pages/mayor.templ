@@ -39,7 +39,7 @@ templ MayorPage(rootArgs l.RootArgs, messages []ChatMessage, devMode bool, world
 			<!-- Confirmation dialog -->
 			@CreateWorldConfirmDialog(worldName, mayorName)
 			<!-- Chat messages -->
-			<div id="chat-messages" class="flex-1 min-h-0 overflow-y-auto overscroll-y-contain space-y-3 px-4 py-4">
+			<div id="chat-messages" class="flex-1 min-h-0 overflow-y-auto overscroll-y-contain touch-pan-y space-y-3 px-4 py-4">
 				for _, msg := range messages {
 					if msg.Role == "assistant" {
 						@MayorMessageComplete(msg.ID, msg.HTMLContent)

@@ -74,7 +74,7 @@ func MayorPage(rootArgs l.RootArgs, messages []ChatMessage, devMode bool, worldN
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "<!-- Chat messages --><div id=\"chat-messages\" class=\"flex-1 min-h-0 overflow-y-auto overscroll-y-contain space-y-3 px-4 py-4\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "<!-- Chat messages --><div id=\"chat-messages\" class=\"flex-1 min-h-0 overflow-y-auto overscroll-y-contain touch-pan-y space-y-3 px-4 py-4\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}

@@ -73,6 +73,56 @@ The chat uses Datastar's SSE protocol:
 - `data-on:keydown` / `data-on:click` to POST via `datastar.PostSSE`
 - Server patches DOM elements via `sse.PatchElementTempl` and clears input via `sse.MarshalAndPatchSignals`
 
+## Mobile Layout Patterns
+
+### Fixed-Viewport Chat UIs
+
+The mayor chat page uses `ChatLayout` (in `layouts/chat.templ`) — a purpose-built layout for full-screen chat that prevents document-level scrolling.
+
+**Key rules:**
+- **Never use `position: fixed` or `overflow: hidden` on `<body>` or `<html>` alone** — Android Chromium ignores them. This is a [documented browser behavior](https://github.com/whatwg/compat/issues/79), not a bug.
+- **Use `overflow: clip` instead of `overflow: hidden`** on html/body — `clip` forbids all scrolling (including programmatic), while `hidden` still creates a scroll container.
+- **Use `position: fixed; inset: 0` on a wrapper div** — removes all content from document flow so the body has nothing to scroll.
+- **Use `touch-action` to control scrolling at the compositor level** — `touch-action: none` on the wrapper, `touch-action: pan-y` on the scrollable area.
+
+**The proven pattern** — layered defense:
+
+```html
+<html class="overflow-clip">
+<body class="overflow-clip overscroll-none">
+  <div class="fixed inset-0 flex flex-col overflow-hidden touch-none">
+    <header class="shrink-0">nav</header>
+    <div class="flex-1 min-h-0 flex flex-col overflow-hidden">
+      <div class="shrink-0">pinned banner</div>
+      <div class="flex-1 min-h-0 overflow-y-auto overscroll-y-contain touch-pan-y">scrollable content</div>
+      <div class="shrink-0">pinned input</div>
+    </div>
+  </div>
+</body>
+```
+
+Why each layer matters:
+
+| Technique | Purpose |
+|-----------|---------|
+| `overflow-clip` on html + body | Stronger than `hidden` — forbids all document-level scrolling |
+| `fixed inset-0` on wrapper | Removes content from document flow — nothing to scroll |
+| `overflow-hidden` on wrapper | Clips any overflow within the fixed container |
+| `touch-none` on wrapper | Tells compositor: no touch scrolling on wrapper |
+| `touch-pan-y` on messages | Allows vertical scroll only in the messages area |
+| `overscroll-y-contain` on messages | Prevents scroll chaining to parent when hitting top/bottom |
+| `min-h-0` on flex children | Essential — without it, flex children can't shrink below content size |
+| `interactive-widget=resizes-content` viewport meta | Layout viewport shrinks when virtual keyboard opens |
+
+**What does NOT work** (tried and failed on Android Brave):
+- `position: fixed` or `overflow: hidden` on body/html alone
+- `h-[100svh]` wrapper without `position: fixed` (browser still scrolls the document)
+- Inline `style` attributes mixed with Tailwind classes
+
+### Tailwind-Only Styling
+
+Use Tailwind classes exclusively for layout — no inline `style` attributes. Mixing `style="position:fixed;..."` with Tailwind classes creates specificity confusion and makes debugging harder. If Tailwind doesn't have a utility for what you need, use arbitrary values like `h-[100svh]`.
+
 ## Running
 
 ### Local dev (Docker)

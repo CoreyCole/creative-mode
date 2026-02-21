@@ -1,0 +1,43 @@
+package layouts
+
+import "path/filepath"
+
+templ Head(args RootArgs) {
+	{{
+		// Find the hashed CSS file
+		cssFile := "/css/out.css" // fallback
+		if files, err := filepath.Glob("static/css/out.*.css"); err == nil && len(files) > 0 {
+			fileName := filepath.Base(files[0])
+			cssFile = "/css/" + fileName
+		}
+	}}
+	<head>
+		<title>{ args.Title }</title>
+		<meta charset="UTF-8"/>
+		<link rel="icon" type="image/png" sizes="32x32" href="/img/favicon.png"/>
+		<meta http-equiv="X-UA-Compatible" content="IE=edge"/>
+		if args.FixedViewport {
+			<meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content"/>
+		} else {
+			<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+		}
+		<meta name="description" content="Meet the Mayor — your AI game dev assistant. Create multiplayer worlds from Discord."/>
+		<!-- Tailwind CSS -->
+		<link rel="stylesheet" href={ cssFile }/>
+		<!-- Theme initialization -->
+		<script>
+			function initTheme() {
+				const theme =
+					localStorage.getItem("theme") ||
+					(window.matchMedia("(prefers-color-scheme: dark)").matches
+						? "dark"
+						: "light");
+				document.documentElement.classList.toggle("dark", theme === "dark");
+				return theme;
+			}
+			initTheme();
+		</script>
+		<!-- Datastar -->
+		<script type="module" src="https://cdn.jsdelivr.net/gh/starfederation/datastar@v1.0.0-RC.7/bundles/datastar.js"></script>
+	</head>
+}

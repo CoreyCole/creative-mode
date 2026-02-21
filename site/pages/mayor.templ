@@ -3,24 +3,7 @@ package pages
 import l "github.com/coreycole/creative-mode/site/layouts"
 
 templ MayorPage(rootArgs l.RootArgs, messages []ChatMessage, devMode bool, worldName string, mayorName string) {
-	@l.Root(rootArgs) {
-		<style>
-			html,
-			body {
-				overflow: hidden !important;
-				overscroll-behavior: none !important;
-				position: fixed !important;
-				width: 100% !important;
-				height: 100% !important;
-			}
-			/* Override min-h-screen (100vh = "large viewport" on Android,
-			   taller than visible area). 100svh = small viewport. */
-			body > div:first-child {
-				min-height: 100svh !important;
-				max-height: 100svh !important;
-				overflow: hidden !important;
-			}
-		</style>
+	@l.ChatLayout(rootArgs) {
 		<div id="mayor-container" class="fixed top-14 left-0 right-0 bottom-0 flex flex-col overflow-hidden bg-background" data-signals={ mayorPageSignals(worldName, mayorName) }>
 			<div id="drop-overlay" class="hidden absolute inset-0 z-50 bg-primary/10 border-2 border-dashed border-primary rounded-lg flex items-center justify-center pointer-events-none">
 				<span class="text-primary font-medium text-lg">Drop images here</span>

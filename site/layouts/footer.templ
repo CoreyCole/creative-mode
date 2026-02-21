@@ -1,0 +1,41 @@
+package layouts
+
+import (
+	"github.com/coreycole/creative-mode/site/internal/ui/tooltip"
+	"github.com/coreycole/creative-mode/site/internal/ui/utils"
+)
+
+templ Footer(args RootArgs) {
+	<footer class="border-t border-border/40 py-6">
+		<div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+			<!-- Mobile-only nav links (hidden in header on small screens) -->
+			<div class="flex sm:hidden items-center justify-center gap-4 mb-3">
+				<a href="/status" class="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground">
+					Status
+				</a>
+				<a
+					href="https://github.com/coreycole/creative-mode"
+					target="_blank"
+					rel="noreferrer"
+					class="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+				>
+					GitHub
+				</a>
+			</div>
+			<p class="text-center text-sm text-muted-foreground">
+				@tooltip.TooltipTrigger(tooltip.TooltipTriggerArgs{TooltipID: "commit-hash", Class: "inline"}) {
+					Built
+				}
+				@tooltip.TooltipContent(tooltip.TooltipContentArgs{ID: "commit-hash", UseAnchor: true, Side: utils.AnchorSideTop}) {
+					{ args.Commit }
+				}
+				&nbsp;with
+				<a href="https://bevyengine.org" target="_blank" rel="noreferrer" class="underline underline-offset-4 hover:text-foreground">Bevy</a>,
+				<a href="https://go.dev" target="_blank" rel="noreferrer" class="underline underline-offset-4 hover:text-foreground">Go</a>
+				<a href="https://data-star.dev" target="_blank" rel="noreferrer" class="underline underline-offset-4 hover:text-foreground">Datastar</a>, and <a href="https://datastar-ui.com/" target="_blank" rel="noreferrer" class="underline underline-offset-4 hover:text-foreground">DatastarUI</a>
+				Open source on
+				<a href="https://github.com/coreycole/creative-mode" target="_blank" rel="noreferrer" class="underline underline-offset-4 hover:text-foreground">GitHub</a>.
+			</p>
+		</div>
+	</footer>
+}

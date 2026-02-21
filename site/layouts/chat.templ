@@ -1,0 +1,16 @@
+package layouts
+
+templ ChatLayout(args RootArgs) {
+	<!DOCTYPE html>
+	<html lang="en">
+		@Head(args)
+		<body
+			class="bg-background font-sans antialiased overflow-hidden overscroll-none"
+			style="position:fixed;width:100%;height:100%;"
+			data-signals="{theme: initTheme()}"
+		>
+			@Header(args)
+			{ children... }
+		</body>
+	</html>
+}

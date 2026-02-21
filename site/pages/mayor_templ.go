@@ -43,14 +43,14 @@ func MayorPage(rootArgs l.RootArgs, messages []ChatMessage, devMode bool, worldN
 				}()
 			}
 			ctx = templ.InitializeContext(ctx)
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<style>\n\t\t\thtml,\n\t\t\tbody {\n\t\t\t\toverflow: hidden !important;\n\t\t\t\toverscroll-behavior: none !important;\n\t\t\t\tposition: fixed !important;\n\t\t\t\twidth: 100% !important;\n\t\t\t\theight: 100% !important;\n\t\t\t}\n\t\t</style> <div id=\"mayor-container\" class=\"fixed top-14 left-0 right-0 bottom-0 flex flex-col bg-background\" data-signals=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<style>\n\t\t\thtml,\n\t\t\tbody {\n\t\t\t\toverflow: hidden !important;\n\t\t\t\toverscroll-behavior: none !important;\n\t\t\t\tposition: fixed !important;\n\t\t\t\twidth: 100% !important;\n\t\t\t\theight: 100% !important;\n\t\t\t}\n\t\t\t/* Override min-h-screen (100vh = \"large viewport\" on Android,\n\t\t\t   taller than visible area). 100svh = small viewport. */\n\t\t\tbody > div:first-child {\n\t\t\t\tmin-height: 100svh !important;\n\t\t\t\tmax-height: 100svh !important;\n\t\t\t\toverflow: hidden !important;\n\t\t\t}\n\t\t</style> <div id=\"mayor-container\" class=\"fixed top-14 left-0 right-0 bottom-0 flex flex-col overflow-hidden bg-background\" data-signals=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var3 string
 			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(mayorPageSignals(worldName, mayorName))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages/mayor.templ`, Line: 17, Col: 154}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages/mayor.templ`, Line: 24, Col: 170}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 			if templ_7745c5c3_Err != nil {
@@ -101,9 +101,9 @@ func MayorPage(rootArgs l.RootArgs, messages []ChatMessage, devMode bool, worldN
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var4 string
-			templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(`evt.key === 'Enter' && !evt.shiftKey && (evt.preventDefault(), !$_sending && !$world_creating && $mayor_input.trim() !== '' && @post('/mayor/chat', {contentType: 'form'}))`)
+			templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(`evt.key === 'Enter' && !evt.shiftKey && !('ontouchstart' in window) && (evt.preventDefault(), !$_sending && !$world_creating && $mayor_input.trim() !== '' && @post('/mayor/chat', {contentType: 'form'}))`)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages/mayor.templ`, Line: 92, Col: 199}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages/mayor.templ`, Line: 99, Col: 230}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 			if templ_7745c5c3_Err != nil {
@@ -116,7 +116,7 @@ func MayorPage(rootArgs l.RootArgs, messages []ChatMessage, devMode bool, worldN
 			var templ_7745c5c3_Var5 string
 			templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(`!$_sending && !$world_creating && $mayor_input.trim() !== '' && @post('/mayor/chat', {contentType: 'form'})`)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages/mayor.templ`, Line: 101, Col: 133}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages/mayor.templ`, Line: 108, Col: 133}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 			if templ_7745c5c3_Err != nil {

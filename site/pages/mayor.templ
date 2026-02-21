@@ -4,7 +4,17 @@ import l "github.com/coreycole/creative-mode/site/layouts"
 
 templ MayorPage(rootArgs l.RootArgs, messages []ChatMessage, devMode bool, worldName string, mayorName string) {
 	@l.Root(rootArgs) {
-		<div id="mayor-container" class="relative flex flex-col h-full" data-signals={ mayorPageSignals(worldName, mayorName) }>
+		<style>
+			html,
+			body {
+				overflow: hidden !important;
+				overscroll-behavior: none !important;
+				position: fixed !important;
+				width: 100% !important;
+				height: 100% !important;
+			}
+		</style>
+		<div id="mayor-container" class="relative flex flex-col h-[calc(100svh-3.5rem)]" data-signals={ mayorPageSignals(worldName, mayorName) }>
 			<div id="drop-overlay" class="hidden absolute inset-0 z-50 bg-primary/10 border-2 border-dashed border-primary rounded-lg flex items-center justify-center pointer-events-none">
 				<span class="text-primary font-medium text-lg">Drop images here</span>
 			</div>
@@ -39,7 +49,7 @@ templ MayorPage(rootArgs l.RootArgs, messages []ChatMessage, devMode bool, world
 			<!-- Confirmation dialog -->
 			@CreateWorldConfirmDialog(worldName, mayorName)
 			<!-- Chat messages -->
-			<div id="chat-messages" class="flex-1 min-h-0 overflow-y-auto space-y-3 px-4 py-4">
+			<div id="chat-messages" class="flex-1 min-h-0 overflow-y-auto overscroll-y-contain space-y-3 px-4 py-4">
 				for _, msg := range messages {
 					if msg.Role == "assistant" {
 						@MayorMessageComplete(msg.ID, msg.HTMLContent)
@@ -108,6 +118,17 @@ templ MayorPage(rootArgs l.RootArgs, messages []ChatMessage, devMode bool, world
 						el.scrollTop = el.scrollHeight;
 					}
 				});
+			</script>
+			<script>
+				// iOS keyboard fallback: resize container to visual viewport.
+				(function () {
+					var container = document.getElementById("mayor-container");
+					if (!container || !window.visualViewport) return;
+					function update() {
+						container.style.height = window.visualViewport.height + "px";
+					}
+					window.visualViewport.addEventListener("resize", update);
+				})();
 			</script>
 			<script>
 				// Auto-resize textarea as content grows.

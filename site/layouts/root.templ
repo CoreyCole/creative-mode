@@ -15,28 +15,19 @@ templ Root(args RootArgs) {
 			fileName := filepath.Base(files[0])
 			cssFile = "/css/" + fileName
 		}
-
-		// Fixed viewport mode: lock body to 100dvh for chat-style pages
-		// so mobile browser chrome changes don't cause layout shift.
-		htmlClass := ""
-		bodyClass := "min-h-screen bg-background font-sans antialiased"
-		wrapperClass := "relative flex min-h-screen flex-col bg-background"
-		mainClass := "flex-1"
-		if args.FixedViewport {
-			htmlClass = "overflow-hidden"
-			bodyClass = "h-dvh overflow-hidden bg-background font-sans antialiased"
-			wrapperClass = "flex h-full flex-col bg-background"
-			mainClass = "flex-1 min-h-0"
-		}
 	}}
 	<!DOCTYPE html>
-	<html lang="en" class={ htmlClass }>
+	<html lang="en">
 		<head>
 			<title>{ args.Title }</title>
 			<meta charset="UTF-8"/>
 			<link rel="icon" type="image/png" sizes="32x32" href="/img/favicon.png"/>
 			<meta http-equiv="X-UA-Compatible" content="IE=edge"/>
-			<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+			if args.FixedViewport {
+				<meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content"/>
+			} else {
+				<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+			}
 			<meta name="description" content="Meet the Mayor — your AI game dev assistant. Create multiplayer worlds from Discord."/>
 			<!-- Tailwind CSS -->
 			<link rel="stylesheet" href={ cssFile }/>
@@ -56,8 +47,8 @@ templ Root(args RootArgs) {
 			<!-- Datastar -->
 			<script type="module" src="https://cdn.jsdelivr.net/gh/starfederation/datastar@v1.0.0-RC.7/bundles/datastar.js"></script>
 		</head>
-		<body class={ bodyClass } data-signals="{theme: initTheme()}">
-			<div class={ wrapperClass }>
+		<body class="min-h-screen bg-background font-sans antialiased" data-signals="{theme: initTheme()}">
+			<div class="relative flex min-h-screen flex-col bg-background">
 				<!-- Header -->
 				<header class="sticky top-0 z-50 w-full border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
 					<div class="mx-auto flex h-14 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
@@ -124,7 +115,7 @@ templ Root(args RootArgs) {
 					</div>
 				</header>
 				<!-- Main content -->
-				<main class={ mainClass }>
+				<main class="flex-1">
 					{ children... }
 				</main>
 				<!-- Footer -->

@@ -96,7 +96,7 @@ templ MayorPage(rootArgs l.RootArgs, messages []ChatMessage, devMode bool, world
 							<textarea
 								name="mayor_input"
 								data-bind:mayor_input
-								data-on:keydown={ `evt.key === 'Enter' && !evt.shiftKey && !('ontouchstart' in window) && (evt.preventDefault(), !$_sending && !$world_creating && $mayor_input.trim() !== '' && @post('/mayor/chat', {contentType: 'form'}))` }
+								data-on:keydown={ `evt.key === 'Enter' && !evt.shiftKey && navigator.maxTouchPoints === 0 && (evt.preventDefault(), !$_sending && !$world_creating && $mayor_input.trim() !== '' && @post('/mayor/chat', {contentType: 'form'}))` }
 								data-attr:disabled="$_sending || $world_creating"
 								placeholder="Type your message..."
 								rows="1"

@@ -43,14 +43,14 @@ func MayorPage(rootArgs l.RootArgs, messages []ChatMessage, devMode bool, worldN
 				}()
 			}
 			ctx = templ.InitializeContext(ctx)
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div id=\"mayor-container\" class=\"relative flex flex-col h-[calc(100dvh-3.5rem)]\" data-signals=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div id=\"mayor-container\" class=\"relative flex flex-col h-full\" data-signals=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var3 string
 			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(mayorPageSignals(worldName, mayorName))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages/mayor.templ`, Line: 7, Col: 136}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages/mayor.templ`, Line: 7, Col: 119}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 			if templ_7745c5c3_Err != nil {

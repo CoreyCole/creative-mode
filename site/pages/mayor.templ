@@ -4,7 +4,7 @@ import l "github.com/coreycole/creative-mode/site/layouts"
 
 templ MayorPage(rootArgs l.RootArgs, messages []ChatMessage, devMode bool, worldName string, mayorName string) {
 	@l.Root(rootArgs) {
-		<div id="mayor-container" class="relative flex flex-col h-[calc(100dvh-3.5rem)]" data-signals={ mayorPageSignals(worldName, mayorName) }>
+		<div id="mayor-container" class="relative flex flex-col h-full" data-signals={ mayorPageSignals(worldName, mayorName) }>
 			<div id="drop-overlay" class="hidden absolute inset-0 z-50 bg-primary/10 border-2 border-dashed border-primary rounded-lg flex items-center justify-center pointer-events-none">
 				<span class="text-primary font-medium text-lg">Drop images here</span>
 			</div>

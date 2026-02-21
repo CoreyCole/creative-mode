@@ -344,11 +344,12 @@ func main() {
 		}
 
 		rootArgs := l.RootArgs{
-			Title:        "Creative Mode - Meet the Mayor",
-			CurrentPath:  c.Request().URL.Path,
-			Commit:       commit,
-			HideFooter:   true,
-			HideMayorCTA: true,
+			Title:         "Creative Mode - Meet the Mayor",
+			CurrentPath:   c.Request().URL.Path,
+			Commit:        commit,
+			HideFooter:    true,
+			HideMayorCTA:  true,
+			FixedViewport: true,
 		}
 
 		// Check if world is ready (names available from previous WORLD_READY).

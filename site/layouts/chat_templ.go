@@ -37,7 +37,7 @@ func ChatLayout(args RootArgs) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<body class=\"bg-background font-sans antialiased overflow-hidden overscroll-none\" style=\"position:fixed;width:100%;height:100%;\" data-signals=\"{theme: initTheme()}\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<body class=\"bg-background font-sans antialiased overflow-hidden overscroll-none\" style=\"position:fixed;width:100%;height:100svh;display:flex;flex-direction:column;\" data-signals=\"{theme: initTheme()}\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

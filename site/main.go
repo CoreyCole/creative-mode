@@ -306,16 +306,8 @@ func main() {
 
 		session := c.Get("session").(*auth.Session)
 
-		// Fetch taken mayor names and build system prompt.
-		var takenNames []string
-		if wcClient != nil {
-			var err error
-			takenNames, err = wcClient.ListExistingMayors()
-			if err != nil {
-				c.Logger().Errorf("Failed to list existing mayors: %v", err)
-			}
-		}
-		systemPrompt := mayor.BuildSystemPrompt(session.DiscordUsername, takenNames)
+		// Build system prompt.
+		systemPrompt := mayor.BuildSystemPrompt(session.DiscordUsername)
 		sessionMgr.SetSystemPrompt(session.ID, systemPrompt)
 
 		// Seed greeting into conversation only if conversation is empty.
@@ -352,12 +344,21 @@ func main() {
 		}
 
 		rootArgs := l.RootArgs{
-			Title:       "Creative Mode - Meet the Mayor",
-			CurrentPath: c.Request().URL.Path,
-			Commit:      commit,
-			HideFooter:  true,
+			Title:        "Creative Mode - Meet the Mayor",
+			CurrentPath:  c.Request().URL.Path,
+			Commit:       commit,
+			HideFooter:   true,
+			HideMayorCTA: true,
 		}
-		return p.MayorPage(rootArgs, chatMessages, devMode).Render(c.Request().Context(), c.Response().Writer)
+
+		// Check if world is ready (names available from previous WORLD_READY).
+		var worldName, mayorName string
+		if info, ok := convMgr.GetWorldReady(session.DiscordID); ok {
+			worldName = info.WorldName
+			mayorName = info.MayorName
+		}
+
+		return p.MayorPage(rootArgs, chatMessages, devMode, worldName, mayorName).Render(c.Request().Context(), c.Response().Writer)
 	})
 
 	mayorGroup.POST("/mayor/chat", func(c echo.Context) error {

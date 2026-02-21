@@ -1,5 +1,15 @@
 package pages
 
+import "fmt"
+
+// mayorPageSignals returns the initial data-signals JSON for the mayor page.
+// When worldName and mayorName are set (world is ready), world_creating starts
+// as true so the dialog opens and inputs are disabled without flicker.
+func mayorPageSignals(worldName, mayorName string) string {
+	worldCreating := worldName != "" && mayorName != ""
+	return fmt.Sprintf(`{"mayor_input": "", "world_creating": %t}`, worldCreating)
+}
+
 // ChatMessage represents a pre-rendered chat message for the mayor page template.
 type ChatMessage struct {
 	ID          string   // unique DOM element ID

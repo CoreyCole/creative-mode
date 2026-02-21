@@ -133,7 +133,7 @@ func (h *Handler) handleScriptedForceCreate(c echo.Context, sse *datastar.Server
 		return nil
 	}
 
-	// Stage 3+: have mayor name — hatch.
+	// Stage 3+: have mayor name — show confirmation dialog.
 	mayorName, worldName, worldSummary := mayorchat.ScriptedExtractWorldInfo(messages, stage)
 
 	responseMD := fmt.Sprintf("**%s**, mayor of **%s**. I like the sound of that. Let's get this place built.", mayorName, worldName)
@@ -149,9 +149,15 @@ func (h *Handler) handleScriptedForceCreate(c echo.Context, sse *datastar.Server
 	}
 
 	if mayorName != "" && worldName != "" {
-		h.prepareCoverArtAndHatch(c, sse, session, &mayorchat.WorldReadyInfo{
+		h.convMgr.SetWorldReady(session.DiscordID, &mayorchat.WorldReadyInfo{
 			MayorName: mayorName, WorldName: worldName, WorldSummary: worldSummary,
 		})
+		if err := sse.PatchElementTempl(p.CreateWorldConfirmDialog(worldName, mayorName)); err != nil {
+			c.Logger().Errorf("Failed to patch confirmation dialog: %v", err)
+		}
+		if err := sse.MarshalAndPatchSignals(map[string]any{"world_creating": false}); err != nil {
+			c.Logger().Errorf("Failed to patch world_creating signal: %v", err)
+		}
 	}
 
 	return nil

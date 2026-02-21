@@ -1,6 +1,9 @@
 package pages
 
-import "github.com/starfederation/datastar-go/datastar"
+import (
+	"github.com/coreycole/creative-mode/site/internal/ui/dialog"
+	"github.com/starfederation/datastar-go/datastar"
+)
 
 // MayorMessageComplete renders a completed assistant message with pre-rendered HTML.
 templ MayorMessageComplete(msgID string, htmlContent string) {
@@ -260,4 +263,85 @@ templ RateLimitError() {
 // RateLimitClear clears any existing rate limit error.
 templ RateLimitClear() {
 	<div id="rate-limit-error"></div>
+}
+
+// CreateWorldConfirmDialog shows a confirmation dialog.
+// When worldName/mayorName are empty: generic pre-create prompt, confirm POSTs forceCreate.
+// When names are set: shows names, confirm POSTs /mayor/hatch to finalize.
+templ CreateWorldConfirmDialog(worldName, mayorName string) {
+	<div id="create-world-dialog">
+		if worldName != "" && mayorName != "" {
+			@dialog.Dialog(dialog.DialogArgs{ID: "create_world_dialog", DefaultOpen: true}) {
+				@dialog.DialogHeader(dialog.DialogHeaderArgs{}) {
+					@dialog.DialogTitle(dialog.DialogTitleArgs{}) {
+						Create { worldName }?
+					}
+					@dialog.DialogDescription(dialog.DialogDescriptionArgs{}) {
+						This conversation will become the mayor's personality and the seed for your world.
+					}
+				}
+				@dialog.DialogContent(dialog.DialogContentArgs{}) {
+					<div class="rounded-md bg-muted p-4 space-y-2">
+						<div class="flex items-center gap-2 text-sm">
+							<span class="text-muted-foreground">World:</span>
+							<span class="font-medium">{ worldName }</span>
+						</div>
+						<div class="flex items-center gap-2 text-sm">
+							<span class="text-muted-foreground">Mayor:</span>
+							<span class="font-medium">{ mayorName }</span>
+						</div>
+					</div>
+				}
+				@dialog.DialogFooter(dialog.DialogFooterArgs{Class: "pt-4"}) {
+					<button
+						type="button"
+						data-on:click="$create_world_dialog.open = false"
+						class="inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 h-10 px-4 py-2 border border-input bg-background text-foreground hover:bg-accent hover:text-accent-foreground"
+					>
+						Cancel
+					</button>
+					<button
+						type="button"
+						data-on:click={ datastar.PostSSE("/mayor/hatch") }
+						data-indicator:_hatching
+						data-attr:disabled="$_hatching"
+						class="inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 h-10 px-4 py-2 bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+					>
+						<span data-show="!$_hatching">Create World</span>
+						<span data-show="$_hatching" class="flex items-center gap-1.5">
+							<span class="inline-block w-1.5 h-1.5 rounded-full bg-primary-foreground/70 animate-pulse"></span>
+							Creating...
+						</span>
+					</button>
+				}
+			}
+		} else {
+			@dialog.Dialog(dialog.DialogArgs{ID: "create_world_dialog"}) {
+				@dialog.DialogHeader(dialog.DialogHeaderArgs{}) {
+					@dialog.DialogTitle(dialog.DialogTitleArgs{}) {
+						Create your world?
+					}
+					@dialog.DialogDescription(dialog.DialogDescriptionArgs{}) {
+						This conversation will become the mayor's personality and the seed for your world.
+					}
+				}
+				@dialog.DialogFooter(dialog.DialogFooterArgs{Class: "pt-4"}) {
+					<button
+						type="button"
+						data-on:click="$create_world_dialog.open = false"
+						class="inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 h-10 px-4 py-2 border border-input bg-background text-foreground hover:bg-accent hover:text-accent-foreground"
+					>
+						Cancel
+					</button>
+					<button
+						type="button"
+						data-on:click={ `$create_world_dialog.open = false; $world_creating = true; document.getElementById('create-world-flag').value = 'true'; @post('/mayor/chat', {contentType: 'form', selector: '#chat-form'})` }
+						class="inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 h-10 px-4 py-2 bg-primary text-primary-foreground hover:bg-primary/90"
+					>
+						Create World
+					</button>
+				}
+			}
+		}
+	</div>
 }

@@ -14,7 +14,7 @@ templ statusDot(status string) {
 }
 
 templ DBHealthCard(status string, latency string, sessionCount int) {
-	<div class="grid grid-cols-3 gap-4">
+	<div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
 		<div class="rounded-lg border border-border bg-card p-4">
 			<p class="text-xs font-medium text-muted-foreground uppercase tracking-wider">Status</p>
 			<div class="mt-1 flex items-center gap-2">
@@ -123,7 +123,7 @@ templ WorldStatusTable(worlds []WorldInfo, timestamp string) {
 }
 
 templ StatsOverview(totalVisits int64, uniqueVisitors int64, discordMembers int, worldsHatched int) {
-	<div class="grid grid-cols-4 gap-4">
+	<div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
 		<div class="rounded-lg border border-border bg-card p-4">
 			<p class="text-xs font-medium text-muted-foreground uppercase tracking-wider">Page Views</p>
 			<p class="mt-1 text-xl font-semibold text-foreground tabular-nums">

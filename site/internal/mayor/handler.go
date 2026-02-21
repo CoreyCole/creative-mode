@@ -208,7 +208,7 @@ func (h *Handler) HandleChat(c echo.Context) error {
 	// Get the system prompt stored on the session (built at page load).
 	systemPrompt := session.SystemPrompt
 	if systemPrompt == "" {
-		systemPrompt = BuildSystemPrompt(session.DiscordUsername, nil)
+		systemPrompt = BuildSystemPrompt(session.DiscordUsername)
 	}
 
 	if forceCreate {
@@ -327,13 +327,19 @@ func (h *Handler) HandleChat(c echo.Context) error {
 		c.Logger().Errorf("Failed to scroll: %v", err)
 	}
 
-	// Create Discord channel if world is ready.
+	// Show confirmation dialog with names if world is ready.
 	if worldInfo != nil {
-		// Keep button disabled — world hatching is in progress.
-		if err := sse.MarshalAndPatchSignals(map[string]any{"world_creating": true}); err != nil {
+		h.convMgr.SetWorldReady(session.DiscordID, worldInfo)
+		if err := sse.PatchElementTempl(p.CreateWorldConfirmDialog(worldInfo.WorldName, worldInfo.MayorName)); err != nil {
+			c.Logger().Errorf("Failed to patch confirmation dialog: %v", err)
+		}
+		// Re-enable chat so user can keep talking while dialog is open.
+		if err := sse.MarshalAndPatchSignals(map[string]any{"world_creating": false}); err != nil {
 			c.Logger().Errorf("Failed to patch world_creating signal: %v", err)
 		}
-		h.prepareCoverArtAndHatch(c, sse, session, worldInfo)
+		if err := sse.ExecuteScript(scrollChatJS); err != nil {
+			c.Logger().Errorf("Failed to scroll: %v", err)
+		}
 	} else if forceCreate {
 		// Claude didn't emit WORLD_READY despite force-create — re-enable the button.
 		if err := sse.MarshalAndPatchSignals(map[string]any{"world_creating": false}); err != nil {
@@ -431,29 +437,15 @@ func (h *Handler) prepareCoverArtAndHatch(c echo.Context, sse *datastar.ServerSe
 // hatchWorldWithCover creates the Discord channel and optionally includes cover art
 // in the harness webhook.
 func (h *Handler) hatchWorldWithCover(c echo.Context, sse *datastar.ServerSentEventGenerator, session *auth.Session, mayorName, worldName, worldSummary string, coverArtData []byte, coverArtMIME string) {
-	// Silent race-condition safety net: if name was taken since page load,
-	// append a roman numeral suffix.
-	finalMayorName := mayorName
-	if err := h.wcClient.CheckMayorNameUnique(finalMayorName); err != nil {
-		suffixes := []string{"II", "III", "IV", "V"}
-		for _, suffix := range suffixes {
-			candidate := mayorName + " " + suffix
-			if checkErr := h.wcClient.CheckMayorNameUnique(candidate); checkErr == nil {
-				finalMayorName = candidate
-				break
-			}
-		}
-	}
-
 	result, err := h.wcClient.CreateChannel(worldchannel.CreateChannelParams{
 		WorldName:        worldName,
-		MayorName:        finalMayorName,
+		MayorName:        mayorName,
 		WorldSummary:     worldSummary,
 		CreatorDiscordID: session.DiscordID,
 	})
 	if err != nil {
 		c.Logger().Errorf("Channel creation failed: %v", err)
-		if patchErr := sse.PatchElementTempl(p.WorldSummaryCard(worldName, finalMayorName, worldSummary)); patchErr != nil {
+		if patchErr := sse.PatchElementTempl(p.WorldSummaryCard(worldName, mayorName, worldSummary)); patchErr != nil {
 			c.Logger().Errorf("Failed to patch summary card: %v", patchErr)
 		}
 		if err := sse.ExecuteScript(scrollChatJS); err != nil {
@@ -465,7 +457,7 @@ func (h *Handler) hatchWorldWithCover(c echo.Context, sse *datastar.ServerSentEv
 	// Send welcome message.
 	if err := h.wcClient.SendWelcomeMessage(result.ChannelID, worldchannel.WelcomeMessageParams{
 		CreatorDiscordID: session.DiscordID,
-		MayorName:        finalMayorName,
+		MayorName:        mayorName,
 		WorldName:        worldName,
 	}); err != nil {
 		c.Logger().Errorf("Failed to send welcome message: %v", err)
@@ -480,10 +472,10 @@ func (h *Handler) hatchWorldWithCover(c echo.Context, sse *datastar.ServerSentEv
 	}
 
 	// Persist onboarding conversation for future OpenClaw agent bootstrap.
-	h.pinOnboardingConversation(c, result.ChannelID, session, finalMayorName, worldName, worldSummary, creature, vibe, emoji)
+	h.pinOnboardingConversation(c, result.ChannelID, session, mayorName, worldName, worldSummary, creature, vibe, emoji)
 
 	// Notify harness (with cover art if available).
-	go h.notifyHarnessWorldHatchedWithCover(result.ChannelID, worldName, finalMayorName, session.DiscordID, session.DiscordUsername, coverArtData, coverArtMIME)
+	go h.notifyHarnessWorldHatchedWithCover(result.ChannelID, worldName, mayorName, session.DiscordID, session.DiscordUsername, coverArtData, coverArtMIME)
 
 	// Clear world-ready state (also removes pending cover art file).
 	h.convMgr.ClearWorldReady(session.DiscordID)
@@ -492,7 +484,7 @@ func (h *Handler) hatchWorldWithCover(c echo.Context, sse *datastar.ServerSentEv
 	channelURL := fmt.Sprintf("https://discord.com/channels/%s/%s",
 		h.wcClient.Config().GuildID, result.ChannelID)
 	if err := sse.PatchElementTempl(p.WorldHatched(
-		worldName, finalMayorName, channelURL,
+		worldName, mayorName, channelURL,
 		session.DiscordUsername, session.DiscordAvatar,
 		h.HarnessURL,
 	)); err != nil {
@@ -500,6 +492,11 @@ func (h *Handler) hatchWorldWithCover(c echo.Context, sse *datastar.ServerSentEv
 	}
 	if err := sse.ExecuteScript(scrollChatJS); err != nil {
 		c.Logger().Errorf("Failed to scroll: %v", err)
+	}
+
+	// Redirect to Discord channel.
+	if err := sse.ExecuteScript(fmt.Sprintf("window.location.href = '%s'", channelURL)); err != nil {
+		c.Logger().Errorf("Failed to redirect to Discord: %v", err)
 	}
 }
 
@@ -594,7 +591,8 @@ func (h *Handler) HandleGenerateCover(c echo.Context) error {
 	return nil
 }
 
-// HandleHatch reads pending cover art from disk and hatches the world.
+// HandleHatch handles the "Create World" confirmation from the dialog,
+// or the "Hatch World" button from the cover art preview.
 // POST /mayor/hatch
 func (h *Handler) HandleHatch(c echo.Context) error {
 	session, ok := c.Get("session").(*auth.Session)
@@ -607,32 +605,25 @@ func (h *Handler) HandleHatch(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "no world ready to hatch")
 	}
 
-	mayorName := worldInfo.MayorName
-	worldName := worldInfo.WorldName
-	worldSummary := worldInfo.WorldSummary
-
-	// Prevent duplicate hatch attempts from concurrent requests.
-	if !h.convMgr.SetHatched(session.DiscordID) {
-		h.logger.Warn("duplicate hatch attempt blocked (HandleHatch)", "user", session.DiscordID)
-		return echo.NewHTTPError(http.StatusConflict, "world is already being hatched")
-	}
-
 	sse := datastar.NewSSE(c.Response().Writer, c.Request())
 
-	// Read cover art from disk (if available).
-	var coverData []byte
-	var coverMIME string
-	if artPath, mime, ok := h.convMgr.GetCoverArtPath(session.DiscordID); ok {
+	// If cover art already exists on disk (user clicked "Hatch World" from preview),
+	// read it and hatch directly. SetHatched was already called by prepareCoverArtAndHatch.
+	if artPath, mime, hasCoverArt := h.convMgr.GetCoverArtPath(session.DiscordID); hasCoverArt {
+		var coverData []byte
 		data, err := os.ReadFile(artPath)
 		if err != nil {
 			h.logger.Warn("failed to read pending cover art, hatching without", "error", err)
 		} else {
 			coverData = data
-			coverMIME = mime
 		}
+		h.hatchWorldWithCover(c, sse, session, worldInfo.MayorName, worldInfo.WorldName, worldInfo.WorldSummary, coverData, mime)
+		return nil
 	}
 
-	h.hatchWorldWithCover(c, sse, session, mayorName, worldName, worldSummary, coverData, coverMIME)
+	// No cover art — this is from the confirmation dialog.
+	// Start the full cover art + hatch pipeline (handles SetHatched internally).
+	h.prepareCoverArtAndHatch(c, sse, session, worldInfo)
 	return nil
 }
 

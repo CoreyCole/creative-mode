@@ -54,14 +54,14 @@ templ Root(args RootArgs) {
 						</a>
 						<!-- Right: Nav links -->
 						<nav class="flex items-center gap-4">
-							<a href="/status" class="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground">
+							<a href="/status" class="hidden sm:inline text-sm font-medium text-muted-foreground transition-colors hover:text-foreground">
 								Status
 							</a>
 							<a
 								href="https://github.com/coreycole/creative-mode"
 								target="_blank"
 								rel="noreferrer"
-								class="inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground h-9 w-9"
+								class="hidden sm:inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground h-9 w-9"
 							>
 								<svg viewBox="0 0 438.549 438.549" class="h-4 w-4">
 									<path
@@ -99,12 +99,14 @@ templ Root(args RootArgs) {
 								</svg>
 								<span class="sr-only">Toggle theme</span>
 							</button>
-							<a
-								href="/mayor"
-								class="inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground hover:bg-primary/90 h-9 px-4"
-							>
-								Meet the Mayor
-							</a>
+							if !args.HideMayorCTA {
+								<a
+									href="/mayor"
+									class="inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground hover:bg-primary/90 h-9 px-4"
+								>
+									Meet the Mayor
+								</a>
+							}
 						</nav>
 					</div>
 				</header>
@@ -116,6 +118,20 @@ templ Root(args RootArgs) {
 				if !args.HideFooter {
 					<footer class="border-t border-border/40 py-6">
 						<div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+							<!-- Mobile-only nav links (hidden in header on small screens) -->
+							<div class="flex sm:hidden items-center justify-center gap-4 mb-3">
+								<a href="/status" class="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground">
+									Status
+								</a>
+								<a
+									href="https://github.com/coreycole/creative-mode"
+									target="_blank"
+									rel="noreferrer"
+									class="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+								>
+									GitHub
+								</a>
+							</div>
 							<p class="text-center text-sm text-muted-foreground">
 								@tooltip.TooltipTrigger(tooltip.TooltipTriggerArgs{TooltipID: "commit-hash", Class: "inline"}) {
 									Built

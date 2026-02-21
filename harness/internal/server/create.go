@@ -234,14 +234,7 @@ func (s *Server) handleCreateChat(c echo.Context) error {
 	}
 
 	// Build system prompt with template type detection.
-	var takenNames []string
-	if s.MayorManager != nil {
-		wcClient := s.MayorManager.WorldChannelClient()
-		if wcClient != nil {
-			takenNames, _ = wcClient.ListExistingMayors()
-		}
-	}
-	systemPrompt := mayorchat.BuildSystemPrompt(user.DiscordUsername, takenNames, true)
+	systemPrompt := mayorchat.BuildSystemPrompt(user.DiscordUsername, true)
 
 	if forceCreate {
 		systemPrompt += mayorchat.ForceCreatePromptSuffix

@@ -73,7 +73,7 @@ func DBHealthCard(status string, latency string, sessionCount int) templ.Compone
 			templ_7745c5c3_Var2 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "<div class=\"grid grid-cols-3 gap-4\"><div class=\"rounded-lg border border-border bg-card p-4\"><p class=\"text-xs font-medium text-muted-foreground uppercase tracking-wider\">Status</p><div class=\"mt-1 flex items-center gap-2\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "<div class=\"grid grid-cols-1 sm:grid-cols-3 gap-4\"><div class=\"rounded-lg border border-border bg-card p-4\"><p class=\"text-xs font-medium text-muted-foreground uppercase tracking-wider\">Status</p><div class=\"mt-1 flex items-center gap-2\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -416,7 +416,7 @@ func StatsOverview(totalVisits int64, uniqueVisitors int64, discordMembers int, 
 			templ_7745c5c3_Var15 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 40, "<div class=\"grid grid-cols-4 gap-4\"><div class=\"rounded-lg border border-border bg-card p-4\"><p class=\"text-xs font-medium text-muted-foreground uppercase tracking-wider\">Page Views</p><p class=\"mt-1 text-xl font-semibold text-foreground tabular-nums\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 40, "<div class=\"grid grid-cols-2 sm:grid-cols-4 gap-4\"><div class=\"rounded-lg border border-border bg-card p-4\"><p class=\"text-xs font-medium text-muted-foreground uppercase tracking-wider\">Page Views</p><p class=\"mt-1 text-xl font-semibold text-foreground tabular-nums\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

@@ -1,0 +1,221 @@
+package dialog
+
+import "github.com/coreycole/creative-mode/site/internal/ui/utils"
+
+// DialogSignals defines the signal structure for dialog components
+type DialogSignals struct {
+	Open bool `json:"open"`
+}
+
+// Dialog container - pure Datastar signal-based modal using data-show
+templ Dialog(args DialogArgs) {
+	{{
+		// Create signals using the new structured system with proper initial state
+		signals := utils.Signals(args.ID, DialogSignals{
+			Open: args.DefaultOpen,
+		})
+
+		// Dialog backdrop overlay
+		backdropClasses := "fixed inset-0 z-50 bg-black/50 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
+
+		// Dialog positioning classes - centered on screen
+		dialogClasses := "fixed left-[50%] top-[50%] z-50 w-full max-w-lg translate-x-[-50%] translate-y-[-50%] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
+
+		// Generate the CSS classes for the inner dialog content container using our variant system
+		containerClasses := DialogVariants(args)
+
+		// Create dialog handler for clean expressions
+		dialogHandler := NewDialogHandler(signals)
+		backdropClickHandler := dialogHandler.BuildBackdropClickHandler()
+		escapeHandler := dialogHandler.BuildEscapeHandler()
+	}}
+	<div data-signals={ signals.DataSignals }>
+		<!-- Dialog backdrop overlay -->
+		<div
+			data-show={ signals.Signal("open") }
+			class={ backdropClasses }
+			data-on-click={ backdropClickHandler }
+			data-on-keydown__window={ escapeHandler }
+			if !args.DefaultOpen {
+				style="display: none;"
+			}
+		>
+			<!-- Dialog content container -->
+			<div
+				id={ args.ID }
+				class={ dialogClasses }
+				role="dialog"
+				aria-modal="true"
+				tabindex="-1"
+				data-on-click="evt.stopPropagation()"
+				data-on-mount="evt.target.focus()"
+			>
+				<div class={ containerClasses }>
+					{ children... }
+				</div>
+			</div>
+		</div>
+	</div>
+}
+
+// DialogTrigger - button or element that opens the dialog using Datastar signals
+templ DialogTrigger(args DialogTriggerArgs) {
+	{{
+		// Create signals manager for the target dialog
+		signals := utils.Signals(args.DialogID, DialogSignals{})
+		clickHandler := signals.Set("open", "true")
+	}}
+	if args.AsChild {
+		// When AsChild is true, we apply the click handler to the child element
+		<div
+			data-on-click={ clickHandler }
+			{ args.Attributes... }
+			class={ args.Class }
+		>
+			{ children... }
+		</div>
+	} else {
+		<button
+			type="button"
+			data-on-click={ clickHandler }
+			{ args.Attributes... }
+			class={ args.Class }
+		>
+			{ children... }
+		</button>
+	}
+}
+
+// DialogContent - content section of the dialog
+templ DialogContent(args DialogContentArgs) {
+	{{
+		// Generate the CSS classes using our variant system
+		classes := DialogContentVariants(args)
+	}}
+	<div
+		data-slot="dialog-content"
+		class={ classes }
+		{ args.Attributes... }
+	>
+		{ children... }
+	</div>
+}
+
+// DialogOverlay - backdrop overlay (for styling compatibility)
+templ DialogOverlay(args DialogOverlayArgs) {
+	<div
+		id={ args.ID }
+		class={ DialogOverlayVariants(args) }
+		{ args.Attributes... }
+	></div>
+}
+
+// DialogHeader - header section of the dialog
+templ DialogHeader(args DialogHeaderArgs) {
+	{{
+		// Generate the CSS classes using our variant system
+		classes := DialogHeaderVariants(args)
+	}}
+	<div
+		data-slot="dialog-header"
+		class={ classes }
+		{ args.Attributes... }
+	>
+		{ children... }
+	</div>
+}
+
+// DialogFooter - footer section of the dialog
+templ DialogFooter(args DialogFooterArgs) {
+	{{
+		// Generate the CSS classes using our variant system
+		classes := DialogFooterVariants(args)
+	}}
+	<div
+		data-slot="dialog-footer"
+		class={ classes }
+		{ args.Attributes... }
+	>
+		{ children... }
+	</div>
+}
+
+// DialogTitle - title element in the dialog header
+templ DialogTitle(args DialogTitleArgs) {
+	{{
+		// Generate the CSS classes using our variant system
+		classes := DialogTitleVariants(args)
+	}}
+	<h2
+		data-slot="dialog-title"
+		class={ classes }
+		{ args.Attributes... }
+	>
+		{ children... }
+	</h2>
+}
+
+// DialogDescription - description element in the dialog header
+templ DialogDescription(args DialogDescriptionArgs) {
+	{{
+		// Generate the CSS classes using our variant system
+		classes := DialogDescriptionVariants(args)
+	}}
+	<p
+		data-slot="dialog-description"
+		class={ classes }
+		{ args.Attributes... }
+	>
+		{ children... }
+	</p>
+}
+
+// DialogClose - button that closes the dialog using Datastar signals
+templ DialogClose(args DialogCloseArgs) {
+	{{
+		// Create signals manager for the target dialog
+		signals := utils.Signals(args.DialogID, DialogSignals{})
+
+		// Create dialog handler for clean expressions
+		dialogHandler := NewDialogHandler(signals)
+		clickHandler := dialogHandler.BuildCloseHandler(args.ReturnValue)
+
+		// Default button classes matching the Button component design
+		baseClasses := "inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 h-10 px-4 py-2"
+
+		// Add variant-specific classes based on args.Variant (default to "default")
+		variant := args.Variant
+		if variant == "" {
+			variant = "default"
+		}
+
+		var variantClasses string
+		switch variant {
+		case "destructive":
+			variantClasses = "bg-destructive text-destructive-foreground hover:bg-destructive/90"
+		case "outline":
+			variantClasses = "border border-input bg-background text-foreground hover:bg-accent hover:text-accent-foreground"
+		case "secondary":
+			variantClasses = "bg-secondary text-secondary-foreground hover:bg-secondary/80"
+		case "ghost":
+			variantClasses = "text-foreground hover:bg-accent hover:text-accent-foreground"
+		case "link":
+			variantClasses = "text-primary underline-offset-4 hover:underline"
+		default: // "default"
+			variantClasses = "bg-primary text-primary-foreground hover:bg-primary/90"
+		}
+
+		buttonClasses := baseClasses + " " + variantClasses
+		if args.Class != "" {
+			buttonClasses += " " + args.Class
+		}
+	}}
+	<button
+		type="button"
+		data-on-click={ clickHandler }
+		{ args.Attributes... }
+		class={ buttonClasses }
+	>
+		{ children... }
+	</button>
+}

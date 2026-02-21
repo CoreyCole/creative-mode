@@ -10,7 +10,7 @@ import templruntime "github.com/a-h/templ/runtime"
 
 import l "github.com/coreycole/creative-mode/site/layouts"
 
-func MayorPage(rootArgs l.RootArgs, messages []ChatMessage, devMode bool) templ.Component {
+func MayorPage(rootArgs l.RootArgs, messages []ChatMessage, devMode bool, worldName string, mayorName string) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
 		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
@@ -43,17 +43,38 @@ func MayorPage(rootArgs l.RootArgs, messages []ChatMessage, devMode bool) templ.
 				}()
 			}
 			ctx = templ.InitializeContext(ctx)
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div id=\"mayor-container\" class=\"relative flex flex-col h-[calc(100dvh-3.5rem)]\"><div id=\"drop-overlay\" class=\"hidden absolute inset-0 z-50 bg-primary/10 border-2 border-dashed border-primary rounded-lg flex items-center justify-center pointer-events-none\"><span class=\"text-primary font-medium text-lg\">Drop images here</span></div><!-- Compact header bar --><div class=\"shrink-0 border-b border-border/40 px-4 py-3\"><div class=\"mx-auto max-w-2xl\"><div class=\"flex items-center justify-between\"><h1 class=\"text-lg font-semibold\">Meet the Mayor</h1>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div id=\"mayor-container\" class=\"relative flex flex-col h-[calc(100dvh-3.5rem)]\" data-signals=\"")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var3 string
+			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(mayorPageSignals(worldName, mayorName))
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages/mayor.templ`, Line: 7, Col: 136}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "\"><div id=\"drop-overlay\" class=\"hidden absolute inset-0 z-50 bg-primary/10 border-2 border-dashed border-primary rounded-lg flex items-center justify-center pointer-events-none\"><span class=\"text-primary font-medium text-lg\">Drop images here</span></div><!-- Compact header bar --><div class=\"shrink-0 border-b border-border/40 px-4 py-3\"><div class=\"mx-auto max-w-2xl\"><div class=\"flex items-center justify-between\"><h1 class=\"text-lg font-semibold\">Meet the Mayor</h1><div class=\"flex items-center gap-3\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			if devMode {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<form action=\"/dev/reset-conversation\" method=\"POST\"><button type=\"submit\" class=\"text-xs text-muted-foreground hover:text-foreground underline\">Start Over (dev)</button></form>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "<form action=\"/dev/reset-conversation\" method=\"POST\"><button type=\"submit\" class=\"text-xs text-muted-foreground hover:text-foreground underline\">Start Over (dev)</button></form>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "</div><p class=\"text-sm text-muted-foreground\">Tell the Mayor about your dream world. When it's ready, we'll create it for you.</p></div></div><!-- Chat messages --><div id=\"chat-messages\" class=\"flex-1 min-h-0 overflow-y-auto space-y-3 px-4 py-4\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "<button type=\"button\" data-on:click=\"$create_world_dialog.open = true\" data-attr:disabled=\"$_sending || $world_creating\" class=\"inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors border border-border bg-background text-foreground hover:bg-muted h-8 px-3 disabled:opacity-50\">Create World</button></div></div><p class=\"text-sm text-muted-foreground\">Tell the Mayor about your dream world. When it's ready, we'll create it for you.</p></div></div><!-- Confirmation dialog -->")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = CreateWorldConfirmDialog(worldName, mayorName).Render(ctx, templ_7745c5c3_Buffer)
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "<!-- Chat messages --><div id=\"chat-messages\" class=\"flex-1 min-h-0 overflow-y-auto space-y-3 px-4 py-4\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -75,59 +96,33 @@ func MayorPage(rootArgs l.RootArgs, messages []ChatMessage, devMode bool) templ.
 					}
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "<!-- World hatched card placeholder --><div id=\"mayor-signup\"></div></div><!-- Input area --><div class=\"shrink-0 border-t border-border/40 px-4 py-3 relative\"><div class=\"mx-auto max-w-2xl\"><!-- Rate limit error --><div id=\"rate-limit-error\"></div><form id=\"chat-form\" enctype=\"multipart/form-data\" data-signals=\"")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			var templ_7745c5c3_Var3 string
-			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(`{"mayor_input": "", "world_creating": false}`)
-			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages/mayor.templ`, Line: 51, Col: 67}
-			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "\" class=\"flex flex-col gap-2\"><input type=\"hidden\" name=\"create_world\" value=\"false\" id=\"create-world-flag\"><div class=\"flex gap-2 items-end\"><label title=\"Attach images (max 4, 5 MB each)\" class=\"self-end inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors border border-input bg-background text-muted-foreground hover:text-foreground hover:bg-muted h-10 w-10 shrink-0 cursor-pointer\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" ry=\"2\"></rect> <circle cx=\"9\" cy=\"9\" r=\"2\"></circle> <path d=\"m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21\"></path></svg> <input type=\"file\" name=\"images\" multiple accept=\"image/jpeg,image/png,image/gif,image/webp\" class=\"hidden\"></label> <span id=\"image-count\" class=\"hidden self-end text-xs text-muted-foreground pb-2.5 whitespace-nowrap\"></span> <textarea name=\"mayor_input\" data-bind:mayor_input data-on:keydown=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "<!-- World hatched card placeholder --><div id=\"mayor-signup\"></div></div><!-- Input area --><div class=\"shrink-0 border-t border-border/40 px-4 py-3\"><div class=\"mx-auto max-w-2xl\"><!-- Rate limit error --><div id=\"rate-limit-error\"></div><form id=\"chat-form\" enctype=\"multipart/form-data\" class=\"flex flex-col gap-2\"><input type=\"hidden\" name=\"create_world\" value=\"false\" id=\"create-world-flag\"><div class=\"flex gap-2 items-end\"><label title=\"Attach images (max 4, 5 MB each)\" class=\"self-end inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors border border-input bg-background text-muted-foreground hover:text-foreground hover:bg-muted h-10 w-10 shrink-0 cursor-pointer\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" ry=\"2\"></rect> <circle cx=\"9\" cy=\"9\" r=\"2\"></circle> <path d=\"m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21\"></path></svg> <input type=\"file\" name=\"images\" multiple accept=\"image/jpeg,image/png,image/gif,image/webp\" class=\"hidden\"></label> <span id=\"image-count\" class=\"hidden self-end text-xs text-muted-foreground pb-2.5 whitespace-nowrap\"></span> <textarea name=\"mayor_input\" data-bind:mayor_input data-on:keydown=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var4 string
 			templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(`evt.key === 'Enter' && !evt.shiftKey && (evt.preventDefault(), !$_sending && !$world_creating && $mayor_input.trim() !== '' && @post('/mayor/chat', {contentType: 'form'}))`)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages/mayor.templ`, Line: 71, Col: 199}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages/mayor.templ`, Line: 82, Col: 199}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "\" data-attr:disabled=\"$_sending || $world_creating\" placeholder=\"Type your message... (Shift+Enter for new line)\" rows=\"1\" class=\"flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 resize-none overflow-y-auto max-h-32\" autocomplete=\"off\"></textarea> <button type=\"button\" data-on:click=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "\" data-attr:disabled=\"$_sending || $world_creating\" placeholder=\"Type your message...\" rows=\"1\" class=\"flex-1 min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 resize-none overflow-y-auto max-h-32\" autocomplete=\"off\"></textarea> <button type=\"button\" data-on:click=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var5 string
 			templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(`!$_sending && !$world_creating && $mayor_input.trim() !== '' && @post('/mayor/chat', {contentType: 'form'})`)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages/mayor.templ`, Line: 80, Col: 133}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages/mayor.templ`, Line: 91, Col: 133}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "\" data-indicator:_sending data-attr:disabled=\"$_sending || $world_creating\" class=\"self-end inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 disabled:opacity-50\"><span data-show=\"!$_sending\">Send</span> <span data-show=\"$_sending\" class=\"flex items-center gap-1.5\"><span class=\"inline-block w-1.5 h-1.5 rounded-full bg-primary-foreground/70 animate-pulse\"></span> Sending</span></button></div></form></div><button type=\"button\" data-on:click=\"")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			var templ_7745c5c3_Var6 string
-			templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(`$world_creating = true; document.getElementById('create-world-flag').value = 'true'; @post('/mayor/chat', {contentType: 'form', selector: '#chat-form'})`)
-			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages/mayor.templ`, Line: 96, Col: 175}
-			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "\" data-indicator:_sending data-attr:disabled=\"$_sending || $world_creating\" class=\"absolute right-4 bottom-3 inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors border border-border bg-background text-foreground hover:bg-muted h-9 px-4 disabled:opacity-50\">Create World</button></div><script>\n\t\t\t\t// Scroll to bottom on page load to show latest messages.\n\t\t\t\trequestAnimationFrame(function () {\n\t\t\t\t\tvar el = document.getElementById(\"chat-messages\");\n\t\t\t\t\tif (el) {\n\t\t\t\t\t\tel.scrollTop = el.scrollHeight;\n\t\t\t\t\t}\n\t\t\t\t});\n\t\t\t</script><script>\n\t\t\t\t// Auto-resize textarea as content grows.\n\t\t\t\t(function () {\n\t\t\t\t\tvar ta = document.querySelector(\"textarea[data-bind\\\\:mayor_input]\");\n\t\t\t\t\tif (!ta) return;\n\t\t\t\t\tfunction resize() {\n\t\t\t\t\t\tta.style.height = \"auto\";\n\t\t\t\t\t\tta.style.height = Math.min(ta.scrollHeight, 128) + \"px\";\n\t\t\t\t\t}\n\t\t\t\t\tta.addEventListener(\"input\", resize);\n\t\t\t\t\tnew MutationObserver(function () {\n\t\t\t\t\t\tif (!ta.value) {\n\t\t\t\t\t\t\tta.style.height = \"auto\";\n\t\t\t\t\t\t}\n\t\t\t\t\t}).observe(ta, { attributes: true });\n\t\t\t\t})();\n\t\t\t</script><script>\n\t\t\t\t// Image count indicator + form reset cleanup.\n\t\t\t\t(function () {\n\t\t\t\t\tvar form = document.getElementById(\"chat-form\");\n\t\t\t\t\tvar input = form && form.querySelector(\"input[name='images']\");\n\t\t\t\t\tvar badge = document.getElementById(\"image-count\");\n\t\t\t\t\tvar ta = document.querySelector(\"textarea[data-bind\\\\:mayor_input]\");\n\t\t\t\t\tif (!form || !input || !badge) return;\n\t\t\t\t\tinput.addEventListener(\"change\", function () {\n\t\t\t\t\t\tvar n = input.files ? input.files.length : 0;\n\t\t\t\t\t\tif (n > 0) {\n\t\t\t\t\t\t\tbadge.textContent = n + \" image\" + (n > 1 ? \"s\" : \"\");\n\t\t\t\t\t\t\tbadge.classList.remove(\"hidden\");\n\t\t\t\t\t\t} else {\n\t\t\t\t\t\t\tbadge.classList.add(\"hidden\");\n\t\t\t\t\t\t}\n\t\t\t\t\t});\n\t\t\t\t\tform.addEventListener(\"reset\", function () {\n\t\t\t\t\t\tbadge.classList.add(\"hidden\");\n\t\t\t\t\t\tbadge.textContent = \"\";\n\t\t\t\t\t\tif (ta) {\n\t\t\t\t\t\t\trequestAnimationFrame(function () {\n\t\t\t\t\t\t\t\tta.style.height = \"auto\";\n\t\t\t\t\t\t\t});\n\t\t\t\t\t\t}\n\t\t\t\t\t});\n\t\t\t\t})();\n\t\t\t</script><script>\n\t\t\t\t// Drag-and-drop image upload.\n\t\t\t\t(function () {\n\t\t\t\t\tvar container = document.getElementById(\"mayor-container\");\n\t\t\t\t\tvar overlay = document.getElementById(\"drop-overlay\");\n\t\t\t\t\tvar input = document.querySelector(\"#chat-form input[name='images']\");\n\t\t\t\t\tvar badge = document.getElementById(\"image-count\");\n\t\t\t\t\tif (!container || !overlay || !input) return;\n\t\t\t\t\tvar dragCounter = 0;\n\t\t\t\t\tvar MAX_IMAGES = 4;\n\t\t\t\t\tcontainer.addEventListener(\"dragenter\", function (e) {\n\t\t\t\t\t\te.preventDefault();\n\t\t\t\t\t\tdragCounter++;\n\t\t\t\t\t\toverlay.classList.remove(\"hidden\");\n\t\t\t\t\t});\n\t\t\t\t\tcontainer.addEventListener(\"dragleave\", function (e) {\n\t\t\t\t\t\te.preventDefault();\n\t\t\t\t\t\tdragCounter--;\n\t\t\t\t\t\tif (dragCounter <= 0) {\n\t\t\t\t\t\t\tdragCounter = 0;\n\t\t\t\t\t\t\toverlay.classList.add(\"hidden\");\n\t\t\t\t\t\t}\n\t\t\t\t\t});\n\t\t\t\t\tcontainer.addEventListener(\"dragover\", function (e) {\n\t\t\t\t\t\te.preventDefault();\n\t\t\t\t\t});\n\t\t\t\t\tcontainer.addEventListener(\"drop\", function (e) {\n\t\t\t\t\t\te.preventDefault();\n\t\t\t\t\t\tdragCounter = 0;\n\t\t\t\t\t\toverlay.classList.add(\"hidden\");\n\t\t\t\t\t\tvar files = e.dataTransfer.files;\n\t\t\t\t\t\tif (!files || files.length === 0) return;\n\t\t\t\t\t\tvar dt = new DataTransfer();\n\t\t\t\t\t\tfor (\n\t\t\t\t\t\t\tvar i = 0;\n\t\t\t\t\t\t\ti < files.length && dt.items.length < MAX_IMAGES;\n\t\t\t\t\t\t\ti++\n\t\t\t\t\t\t) {\n\t\t\t\t\t\t\tif (files[i].type.startsWith(\"image/\")) {\n\t\t\t\t\t\t\t\tdt.items.add(files[i]);\n\t\t\t\t\t\t\t}\n\t\t\t\t\t\t}\n\t\t\t\t\t\tif (dt.files.length === 0) return;\n\t\t\t\t\t\tinput.files = dt.files;\n\t\t\t\t\t\tvar n = dt.files.length;\n\t\t\t\t\t\tif (badge) {\n\t\t\t\t\t\t\tbadge.textContent = n + \" image\" + (n > 1 ? \"s\" : \"\");\n\t\t\t\t\t\t\tbadge.classList.remove(\"hidden\");\n\t\t\t\t\t\t}\n\t\t\t\t\t});\n\t\t\t\t})();\n\t\t\t</script></div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "\" data-indicator:_sending data-attr:disabled=\"$_sending || $world_creating\" class=\"self-end inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-3 sm:px-4 disabled:opacity-50\">Send</button></div><span class=\"text-xs text-muted-foreground hidden sm:inline\">Shift+Enter for new line</span></form></div></div><script>\n\t\t\t\t// Scroll to bottom on page load to show latest messages.\n\t\t\t\trequestAnimationFrame(function () {\n\t\t\t\t\tvar el = document.getElementById(\"chat-messages\");\n\t\t\t\t\tif (el) {\n\t\t\t\t\t\tel.scrollTop = el.scrollHeight;\n\t\t\t\t\t}\n\t\t\t\t});\n\t\t\t</script><script>\n\t\t\t\t// Auto-resize textarea as content grows.\n\t\t\t\t(function () {\n\t\t\t\t\tvar ta = document.querySelector(\"textarea[data-bind\\\\:mayor_input]\");\n\t\t\t\t\tif (!ta) return;\n\t\t\t\t\tfunction resize() {\n\t\t\t\t\t\tta.style.height = \"auto\";\n\t\t\t\t\t\tta.style.height = Math.min(ta.scrollHeight, 128) + \"px\";\n\t\t\t\t\t}\n\t\t\t\t\tta.addEventListener(\"input\", resize);\n\t\t\t\t\tnew MutationObserver(function () {\n\t\t\t\t\t\tif (!ta.value) {\n\t\t\t\t\t\t\tta.style.height = \"auto\";\n\t\t\t\t\t\t}\n\t\t\t\t\t}).observe(ta, { attributes: true });\n\t\t\t\t})();\n\t\t\t</script><script>\n\t\t\t\t// Image count indicator + form reset cleanup.\n\t\t\t\t(function () {\n\t\t\t\t\tvar form = document.getElementById(\"chat-form\");\n\t\t\t\t\tvar input = form && form.querySelector(\"input[name='images']\");\n\t\t\t\t\tvar badge = document.getElementById(\"image-count\");\n\t\t\t\t\tvar ta = document.querySelector(\"textarea[data-bind\\\\:mayor_input]\");\n\t\t\t\t\tif (!form || !input || !badge) return;\n\t\t\t\t\tinput.addEventListener(\"change\", function () {\n\t\t\t\t\t\tvar n = input.files ? input.files.length : 0;\n\t\t\t\t\t\tif (n > 0) {\n\t\t\t\t\t\t\tbadge.textContent = n + \" image\" + (n > 1 ? \"s\" : \"\");\n\t\t\t\t\t\t\tbadge.classList.remove(\"hidden\");\n\t\t\t\t\t\t} else {\n\t\t\t\t\t\t\tbadge.classList.add(\"hidden\");\n\t\t\t\t\t\t}\n\t\t\t\t\t});\n\t\t\t\t\tform.addEventListener(\"reset\", function () {\n\t\t\t\t\t\tbadge.classList.add(\"hidden\");\n\t\t\t\t\t\tbadge.textContent = \"\";\n\t\t\t\t\t\tif (ta) {\n\t\t\t\t\t\t\trequestAnimationFrame(function () {\n\t\t\t\t\t\t\t\tta.style.height = \"auto\";\n\t\t\t\t\t\t\t});\n\t\t\t\t\t\t}\n\t\t\t\t\t});\n\t\t\t\t})();\n\t\t\t</script><script>\n\t\t\t\t// Drag-and-drop image upload.\n\t\t\t\t(function () {\n\t\t\t\t\tvar container = document.getElementById(\"mayor-container\");\n\t\t\t\t\tvar overlay = document.getElementById(\"drop-overlay\");\n\t\t\t\t\tvar input = document.querySelector(\"#chat-form input[name='images']\");\n\t\t\t\t\tvar badge = document.getElementById(\"image-count\");\n\t\t\t\t\tif (!container || !overlay || !input) return;\n\t\t\t\t\tvar dragCounter = 0;\n\t\t\t\t\tvar MAX_IMAGES = 4;\n\t\t\t\t\tcontainer.addEventListener(\"dragenter\", function (e) {\n\t\t\t\t\t\te.preventDefault();\n\t\t\t\t\t\tdragCounter++;\n\t\t\t\t\t\toverlay.classList.remove(\"hidden\");\n\t\t\t\t\t});\n\t\t\t\t\tcontainer.addEventListener(\"dragleave\", function (e) {\n\t\t\t\t\t\te.preventDefault();\n\t\t\t\t\t\tdragCounter--;\n\t\t\t\t\t\tif (dragCounter <= 0) {\n\t\t\t\t\t\t\tdragCounter = 0;\n\t\t\t\t\t\t\toverlay.classList.add(\"hidden\");\n\t\t\t\t\t\t}\n\t\t\t\t\t});\n\t\t\t\t\tcontainer.addEventListener(\"dragover\", function (e) {\n\t\t\t\t\t\te.preventDefault();\n\t\t\t\t\t});\n\t\t\t\t\tcontainer.addEventListener(\"drop\", function (e) {\n\t\t\t\t\t\te.preventDefault();\n\t\t\t\t\t\tdragCounter = 0;\n\t\t\t\t\t\toverlay.classList.add(\"hidden\");\n\t\t\t\t\t\tvar files = e.dataTransfer.files;\n\t\t\t\t\t\tif (!files || files.length === 0) return;\n\t\t\t\t\t\tvar dt = new DataTransfer();\n\t\t\t\t\t\tfor (\n\t\t\t\t\t\t\tvar i = 0;\n\t\t\t\t\t\t\ti < files.length && dt.items.length < MAX_IMAGES;\n\t\t\t\t\t\t\ti++\n\t\t\t\t\t\t) {\n\t\t\t\t\t\t\tif (files[i].type.startsWith(\"image/\")) {\n\t\t\t\t\t\t\t\tdt.items.add(files[i]);\n\t\t\t\t\t\t\t}\n\t\t\t\t\t\t}\n\t\t\t\t\t\tif (dt.files.length === 0) return;\n\t\t\t\t\t\tinput.files = dt.files;\n\t\t\t\t\t\tvar n = dt.files.length;\n\t\t\t\t\t\tif (badge) {\n\t\t\t\t\t\t\tbadge.textContent = n + \" image\" + (n > 1 ? \"s\" : \"\");\n\t\t\t\t\t\t\tbadge.classList.remove(\"hidden\");\n\t\t\t\t\t\t}\n\t\t\t\t\t});\n\t\t\t\t})();\n\t\t\t</script></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}

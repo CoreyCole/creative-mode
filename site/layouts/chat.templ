@@ -2,15 +2,13 @@ package layouts
 
 templ ChatLayout(args RootArgs) {
 	<!DOCTYPE html>
-	<html lang="en" style="height:100svh;overflow:hidden;">
+	<html lang="en">
 		@Head(args)
-		<body
-			class="bg-background font-sans antialiased overflow-hidden overscroll-none"
-			style="position:fixed;width:100%;height:100svh;display:flex;flex-direction:column;"
-			data-signals="{theme: initTheme()}"
-		>
-			@Header(args)
-			{ children... }
+		<body class="bg-background font-sans antialiased overscroll-none" data-signals="{theme: initTheme()}">
+			<div class="fixed inset-0 flex flex-col overflow-hidden bg-background">
+				@Header(args)
+				{ children... }
+			</div>
 		</body>
 	</html>
 }

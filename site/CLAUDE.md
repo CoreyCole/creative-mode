@@ -104,13 +104,13 @@ Browser → Route 53 → EC2 Elastic IP → Caddy:443 (TLS) → localhost:3000
    ```bash
    cd ~/creative-mode/site
    just install && just build
-   cp site-linux /tmp/creative-mode-site
+   sudo cp site-linux /usr/local/bin/creative-mode-site
    sudo systemctl enable --now creative-mode-site
    ```
 
 **Updating**:
 ```bash
-cd ~/creative-mode/site && git pull && just build && cp site-linux /tmp/creative-mode-site && sudo systemctl restart creative-mode-site
+cd ~/creative-mode/site && git pull && just build && sudo cp site-linux /usr/local/bin/creative-mode-site && sudo systemctl restart creative-mode-site
 ```
 
 **Logs**: `just deploy-logs` or `journalctl -u creative-mode-site -f`

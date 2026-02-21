@@ -9,7 +9,7 @@ User=ubuntu
 Group=ubuntu
 Environment=PATH=/home/ubuntu/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
 WorkingDirectory=/home/ubuntu/creative-mode/site
-ExecStart=/tmp/creative-mode-site
+ExecStart=/usr/local/bin/creative-mode-site
 EnvironmentFile=/home/ubuntu/.config/creative-mode/site.env
 Restart=always
 RestartSec=1

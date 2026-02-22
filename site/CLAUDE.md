@@ -159,7 +159,7 @@ Browser → Route 53 → EC2 Elastic IP → Caddy:443 (TLS) → localhost:3000
    sudo systemctl enable --now creative-mode-site
    ```
 
-**Auto-deploy**: Pushes to `main` trigger automatic deployment via a GitHub webhook (`POST /webhook/github`). The handler pulls the latest code, rebuilds the binary, copies it to `/usr/local/bin/creative-mode-site`, and sends itself SIGTERM. Systemd restarts the service with the new binary. No manual deploy steps needed.
+**Auto-deploy**: Pushes to `main` trigger automatic deployment via a GitHub webhook (`POST /webhook/github`). The handler pulls the latest code, runs `templ generate`, builds Tailwind CSS, rebuilds the binary, and replaces `~/bin/creative-mode-site` (unlink + rename to avoid ETXTBSY on the running executable). Then it sends itself SIGTERM so systemd restarts with the new binary. No manual deploy steps needed.
 
 **Logs**: `just deploy-logs` or `journalctl -u creative-mode-site -f`
 

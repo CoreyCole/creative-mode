@@ -197,8 +197,16 @@ func (h *Handler) rebuild() {
 		return
 	}
 
-	// 5. Atomic rename to the path systemd runs
-	if err := os.Rename("/tmp/site-next", "/home/ubuntu/bin/creative-mode-site"); err != nil {
+	// 5. Replace running binary: unlink old, then rename new into place.
+	// Direct os.Rename over a running executable can fail with ETXTBSY.
+	// os.Remove unlinks the directory entry while the kernel keeps the inode
+	// alive for the running process, freeing the path for the rename.
+	binPath := "/home/ubuntu/bin/creative-mode-site"
+	if err := os.Remove(binPath); err != nil && !os.IsNotExist(err) {
+		h.logger.Error("webhook: remove old binary failed", "error", err)
+		return
+	}
+	if err := os.Rename("/tmp/site-next", binPath); err != nil {
 		h.logger.Error("webhook: rename failed", "error", err)
 		return
 	}

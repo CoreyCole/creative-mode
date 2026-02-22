@@ -5,7 +5,7 @@ templ ChatLayout(args RootArgs) {
 	<html lang="en" class="overflow-clip">
 		@Head(args)
 		<body class="bg-background font-sans antialiased overflow-clip overscroll-none" data-signals="{theme: initTheme()}">
-			<div class="fixed inset-0 flex flex-col overflow-hidden touch-none bg-background">
+			<div class="fixed inset-0 flex flex-col overflow-clip bg-background">
 				@Header(args)
 				{ children... }
 			</div>

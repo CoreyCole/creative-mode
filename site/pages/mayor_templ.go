@@ -66,7 +66,7 @@ func MayorPage(rootArgs l.RootArgs, messages []ChatMessage, devMode bool, worldN
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "<button type=\"button\" data-on:click=\"$create_world_dialog.open = true\" data-attr:disabled=\"$_sending || $world_creating\" class=\"inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors border border-border bg-background text-foreground hover:bg-muted h-8 px-3 disabled:opacity-50\">Create World</button></div></div><p class=\"text-sm text-muted-foreground\">Tell the Mayor about your dream world. When it's ready, we'll create it for you.</p></div></div><!-- Confirmation dialog -->")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "<button type=\"button\" data-on:click=\"$create_world_dialog.open = true\" data-attr:disabled=\"$_sending || $world_creating\" class=\"inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors border border-border bg-background text-foreground hover:bg-muted h-8 px-3 disabled:opacity-50\">Create World</button></div></div><p class=\"text-sm text-muted-foreground\">Tell the Mayor about your dream world. When it's ready, we'll create it for you.</p></div></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -103,7 +103,7 @@ func MayorPage(rootArgs l.RootArgs, messages []ChatMessage, devMode bool, worldN
 			var templ_7745c5c3_Var4 string
 			templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(`evt.key === 'Enter' && !evt.shiftKey && navigator.maxTouchPoints === 0 && (evt.preventDefault(), !$_sending && !$world_creating && $mayor_input.trim() !== '' && @post('/mayor/chat', {contentType: 'form'}))`)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages/mayor.templ`, Line: 82, Col: 233}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages/mayor.templ`, Line: 81, Col: 233}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 			if templ_7745c5c3_Err != nil {
@@ -116,7 +116,7 @@ func MayorPage(rootArgs l.RootArgs, messages []ChatMessage, devMode bool, worldN
 			var templ_7745c5c3_Var5 string
 			templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(`!$_sending && !$world_creating && $mayor_input.trim() !== '' && @post('/mayor/chat', {contentType: 'form'})`)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages/mayor.templ`, Line: 91, Col: 133}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `pages/mayor.templ`, Line: 90, Col: 133}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 			if templ_7745c5c3_Err != nil {

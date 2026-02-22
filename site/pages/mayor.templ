@@ -100,13 +100,21 @@ templ MayorPage(rootArgs l.RootArgs, messages []ChatMessage, devMode bool, world
 				</div>
 			</div>
 			<script>
-				// Scroll to bottom on page load to show latest messages.
-				requestAnimationFrame(function () {
+				// Scroll to bottom on page load and when virtual keyboard opens/closes.
+				(function () {
 					var el = document.getElementById("chat-messages");
-					if (el) {
+					if (!el) return;
+					function scrollToBottom() {
 						el.scrollTop = el.scrollHeight;
 					}
-				});
+					requestAnimationFrame(scrollToBottom);
+					// On mobile, interactive-widget=resizes-content causes the layout
+					// viewport to shrink when the keyboard opens. Listen for that resize
+					// and re-scroll so the latest message stays visible.
+					if (window.visualViewport) {
+						window.visualViewport.addEventListener("resize", scrollToBottom);
+					}
+				})();
 			</script>
 			<script>
 				// Auto-resize textarea as content grows.

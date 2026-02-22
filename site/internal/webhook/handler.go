@@ -197,8 +197,8 @@ func (h *Handler) rebuild() {
 		return
 	}
 
-	// 5. Atomic rename
-	if err := os.Rename("/tmp/site-next", "/tmp/creative-mode-site"); err != nil {
+	// 5. Atomic rename to the path systemd runs
+	if err := os.Rename("/tmp/site-next", "/home/ubuntu/bin/creative-mode-site"); err != nil {
 		h.logger.Error("webhook: rename failed", "error", err)
 		return
 	}

@@ -153,8 +153,9 @@ Browser → Route 53 → EC2 Elastic IP → Caddy:443 (TLS) → localhost:3000
 5. Build and start:
    ```bash
    cd ~/creative-mode/site
+   mkdir -p ~/bin
    just install && just build
-   sudo cp site-linux /usr/local/bin/creative-mode-site
+   cp site-linux ~/bin/creative-mode-site
    sudo systemctl enable --now creative-mode-site
    ```
 

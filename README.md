@@ -139,4 +139,4 @@ Creative Mode is experimental software built on top of other experimental softwa
 
 **Make backups.** Take VM snapshots before major changes. Keep your `.env` file and database backups somewhere safe and not included in your mayor's default context. The bootstrap script sets up daily SQLite backups, but that only covers the database — your VM itself is your responsibility.
 
-Large language models are probabilistic and can make mistakes. Your mileage may vary. Creative Mode will continue to improve, but it will be an even more unreal experience with the Opus released 6 months from now.
+Large language models are probabilistic and can make mistakes. Your mileage may vary. Creative Mode will continue to improve, your usage and feedback make the system better at game dev over time.

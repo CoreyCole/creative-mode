@@ -9,6 +9,7 @@ tags: [research, codebase, chat, mobile, onboarding, anthropic-api, sse, datasta
 status: complete
 last_updated: 2026-02-27
 last_updated_by: Corey Cole
+last_updated_note: "Added SQLite database setup, schema, store code, and conversation manager details"
 ---
 
 # Context Document: Building a Standalone Chat App from Creative Mode's Chat Interface
@@ -561,6 +562,137 @@ data-on:click="!$_sending && $mayor_input.trim() !== '' &&
 
 ```html
 <script type="module" src="https://cdn.jsdelivr.net/gh/starfederation/datastar@v1.0.0-RC.7/bundles/datastar.js"></script>
+```
+
+---
+
+## SQLite Database Setup
+
+The site uses **hand-written SQL** with Go's `database/sql` -- no ORM, no sqlc. The schema is created on startup via `CREATE TABLE IF NOT EXISTS` statements.
+
+### Database Initialization (`internal/db/db.go`)
+
+```go
+import _ "modernc.org/sqlite" // pure-Go SQLite driver (no CGO)
+
+func New(dbPath string) (*sql.DB, error) {
+    os.MkdirAll(filepath.Dir(dbPath), 0o755)
+    db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(on)")
+    db.SetMaxOpenConns(4)
+    db.SetMaxIdleConns(4)
+    createTables(db)
+    return db, nil
+}
+```
+
+Key DSN pragmas:
+- `journal_mode(WAL)` -- Write-Ahead Logging for concurrent reads during writes
+- `busy_timeout(5000)` -- Wait up to 5s for locks instead of failing immediately
+- `foreign_keys(on)` -- Enable FK constraints
+
+### Schema (chat-relevant tables only)
+
+```sql
+-- Conversation messages (one row per chat message)
+CREATE TABLE IF NOT EXISTS conversation_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    discord_id TEXT NOT NULL,       -- user identifier (replace with your user ID)
+    role TEXT NOT NULL,             -- "user" or "assistant"
+    content TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_conv_messages_discord_id ON conversation_messages(discord_id);
+
+-- Image attachments (linked to messages by user ID + message index)
+CREATE TABLE IF NOT EXISTS conversation_images (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    discord_id TEXT NOT NULL,       -- user identifier
+    message_index INTEGER NOT NULL, -- position in conversation (0-based)
+    image_id TEXT NOT NULL,         -- UUID for serving via /image/:imageID
+    file_path TEXT NOT NULL,        -- disk path to saved file
+    mime_type TEXT NOT NULL,
+    original_filename TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_conv_images_discord_id ON conversation_images(discord_id);
+CREATE INDEX IF NOT EXISTS idx_conv_images_image_id ON conversation_images(image_id);
+
+-- Sessions (replace with your auth system)
+CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    discord_id TEXT NOT NULL,
+    discord_username TEXT NOT NULL,
+    discord_avatar TEXT NOT NULL DEFAULT '',
+    guild_member_verified INTEGER NOT NULL DEFAULT 0,
+    invite_code_verified INTEGER NOT NULL DEFAULT 0,
+    system_prompt TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_discord_id ON sessions(discord_id);
+```
+
+### Message Store (`internal/mayor/store.go`)
+
+The store implements two interfaces from `pkg/mayorchat/`:
+
+```go
+type SQLiteMessageStore struct {
+    db *sql.DB
+}
+
+// Core CRUD operations:
+func (s *SQLiteMessageStore) AddMessage(userID, role, content string) error
+func (s *SQLiteMessageStore) GetMessages(userID string) ([]mayorchat.Message, error)
+func (s *SQLiteMessageStore) DeleteUserMessages(userID string) error
+func (s *SQLiteMessageStore) DeleteOlderThan(d time.Duration) error
+
+// Image operations:
+func (s *SQLiteMessageStore) AddImage(discordID string, messageIndex int, imageID, filePath, mimeType, filename string) error
+func (s *SQLiteMessageStore) GetImages(discordID string) ([]mayorchat.ImageRecord, error)
+func (s *SQLiteMessageStore) GetImageByID(imageID string) (*mayorchat.ImageRecord, error)
+func (s *SQLiteMessageStore) DeleteImages(discordID string) error
+func (s *SQLiteMessageStore) DeleteImagesOlderThan(d time.Duration) ([]string, error)
+```
+
+All queries are plain `db.Exec` / `db.Query` / `db.QueryRow` -- no query builder or ORM. Messages are ordered by autoincrement `id` (insertion order). Images are linked to messages by `(discord_id, message_index)` pair.
+
+### Conversation Manager (`pkg/mayorchat/conversation.go`)
+
+The `ConversationManager` wraps the store with in-memory transient state:
+
+```go
+type ConversationManager struct {
+    store      MessageStore  // SQLite-backed persistence
+    imageStore ImageStore    // SQLite-backed image persistence
+    mu         sync.RWMutex
+    transient  map[string]*transientState // keyed by user ID
+}
+```
+
+**Persisted** (survives restart): messages and images in SQLite.
+**Transient** (in-memory, lost on restart): rate limit timestamps, scripted mode flag, world-ready state, hatched flag, cover art path. Cleaned up hourly for entries older than 24 hours.
+
+### Cleanup
+
+An hourly goroutine deletes messages and images older than 24 hours:
+
+```go
+func (cm *ConversationManager) cleanupLoop(ctx context.Context) {
+    ticker := time.NewTicker(1 * time.Hour)
+    for {
+        select {
+        case <-ctx.Done(): return
+        case <-ticker.C:
+            cm.store.DeleteOlderThan(24 * time.Hour)
+            paths, _ := cm.imageStore.DeleteImagesOlderThan(24 * time.Hour)
+            for _, p := range paths {
+                os.Remove(p) // clean up files on disk
+            }
+        }
+    }
+}
 ```
 
 ---

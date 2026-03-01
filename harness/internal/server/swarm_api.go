@@ -6,11 +6,15 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"creative-mode/harness/internal/db/sqlc"
 	"creative-mode/harness/internal/swarm"
 	"creative-mode/harness/internal/swarmorch"
 )
+
+const defaultLearningsLimit = 50
 
 // handleSwarmStart creates a new swarm workflow and spawns the first session.
 func (s *Server) handleSwarmStart(c echo.Context) error {
@@ -235,4 +239,125 @@ func (s *Server) handleSwarmSessionStatus(c echo.Context) error {
 		"completed_at":     session.CompletedAt.String,
 		"context_pressure": ctxPressure,
 	})
+}
+
+// handleSwarmLearnings returns filtered learnings.
+func (s *Server) handleSwarmLearnings(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	// Filter by ticket if provided.
+	if ticketID := c.QueryParam("ticket"); ticketID != "" {
+		learnings, err := s.DB.ListSwarmLearningsByTicket(ctx, ticketID)
+		if err != nil {
+			return echo.NewHTTPError(
+				http.StatusInternalServerError,
+				"failed to list learnings",
+			)
+		}
+
+		return c.JSON(http.StatusOK, learnings)
+	}
+
+	// Filter by phase if provided.
+	if phase := c.QueryParam("phase"); phase != "" {
+		learnings, err := s.DB.ListTopSwarmLearningsByPhase(
+			ctx,
+			sqlc.ListTopSwarmLearningsByPhaseParams{
+				Phase: sql.NullString{String: phase, Valid: true},
+				Limit: defaultLearningsLimit,
+			},
+		)
+		if err != nil {
+			return echo.NewHTTPError(
+				http.StatusInternalServerError,
+				"failed to list learnings",
+			)
+		}
+
+		return c.JSON(http.StatusOK, learnings)
+	}
+
+	// Default: recent learnings.
+	learnings, err := s.DB.ListRecentSwarmLearnings(ctx, "")
+	if err != nil {
+		return echo.NewHTTPError(
+			http.StatusInternalServerError,
+			"failed to list learnings",
+		)
+	}
+
+	return c.JSON(http.StatusOK, learnings)
+}
+
+// handleSwarmCreateLearning creates a new learning from a skill session.
+func (s *Server) handleSwarmCreateLearning(c echo.Context) error {
+	var req struct {
+		TicketID   string `json:"ticket_id"` //nolint:tagliatelle // API field name
+		Category   string `json:"category"`
+		Phase      string `json:"phase"`
+		Severity   string `json:"severity"`
+		Title      string `json:"title"`
+		Content    string `json:"content"`
+		WorkflowID string `json:"workflow_id"` //nolint:tagliatelle // API field name
+		SessionID  string `json:"session_id"`  //nolint:tagliatelle // API field name
+	}
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
+	}
+	if req.TicketID == "" || req.Category == "" || req.Title == "" {
+		return echo.NewHTTPError(
+			http.StatusBadRequest,
+			"ticket_id, category, and title are required",
+		)
+	}
+
+	if req.Severity == "" {
+		req.Severity = string(swarm.SeverityInfo)
+	}
+
+	id := uuid.New().String()[:8]
+
+	if err := s.DB.CreateSwarmLearning(
+		c.Request().Context(),
+		sqlc.CreateSwarmLearningParams{
+			ID: id,
+			SourceWorkflowID: sql.NullString{
+				String: req.WorkflowID,
+				Valid:  req.WorkflowID != "",
+			},
+			SourceSessionID: sql.NullString{
+				String: req.SessionID,
+				Valid:  req.SessionID != "",
+			},
+			TicketID: req.TicketID,
+			Category: swarm.LearningCategory(req.Category),
+			Phase:    sql.NullString{String: req.Phase, Valid: req.Phase != ""},
+			Severity: swarm.LearningSeverity(req.Severity),
+			Title:    req.Title,
+			Content:  req.Content,
+		},
+	); err != nil {
+		s.Logger.Error("failed to create learning", "error", err)
+
+		return echo.NewHTTPError(
+			http.StatusInternalServerError,
+			"failed to create learning",
+		)
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"id": id, "status": "created"})
+}
+
+// handleSwarmLatestDigest returns the most recent learning digest.
+func (s *Server) handleSwarmLatestDigest(c echo.Context) error {
+	digest, err := s.DB.GetLatestSwarmLearningDigest(c.Request().Context())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return echo.NewHTTPError(http.StatusNotFound, "no digests available")
+		}
+
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get digest")
+	}
+
+	return c.JSON(http.StatusOK, digest)
 }

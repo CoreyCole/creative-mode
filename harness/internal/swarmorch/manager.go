@@ -30,6 +30,11 @@ const (
 	resultFilePrefix     = "swarm-result-"
 	learningFilePrefix   = "swarm-learning-"
 	promptFilePrefix     = "swarm-prompt-"
+
+	// Maintenance intervals.
+	stallCheckInterval = 2 * time.Minute
+	decayInterval      = time.Hour
+	digestInterval     = 24 * time.Hour
 )
 
 // Manager orchestrates swarm workflows: starting workflows, spawning Claude
@@ -56,6 +61,12 @@ type Manager struct {
 	// JSONL log writers keyed by sessionID; closed on session completion.
 	jsonlMu      sync.RWMutex
 	jsonlWriters map[string]*JSONLWriter
+
+	// Alerts manager for Discord notifications.
+	alertMgr *AlertManager
+
+	// Maintenance loop cancellation.
+	maintenanceCancel context.CancelFunc
 }
 
 // NewManager creates a new swarm orchestrator.
@@ -389,6 +400,22 @@ func (m *Manager) watchSession(
 			m.logger.Info("session ended (tmux fallback)",
 				"session", sessionName,
 				"duration", time.Since(startedAt).Round(time.Second))
+
+			if m.alertMgr != nil {
+				// Look up session to get ticket/phase for the alert.
+				if sess, sessErr := m.db.GetSwarmSession(
+					context.Background(),
+					sessionID,
+				); sessErr == nil {
+					if wf, wfErr := m.db.GetSwarmWorkflow(
+						context.Background(),
+						sess.WorkflowID,
+					); wfErr == nil {
+						m.alertMgr.FireCrashRecovery(wf.TicketID, sess.Phase)
+					}
+				}
+			}
+
 			m.handleSessionComplete(context.Background(), sessionID)
 
 			return
@@ -611,6 +638,10 @@ func (m *Manager) advanceWorkflow(
 			wf.Phase,
 			result.Summary,
 		)
+
+		if m.alertMgr != nil {
+			m.alertMgr.FireTerminalFailure(wf.TicketID, result.Summary)
+		}
 
 		return
 	}
@@ -935,6 +966,86 @@ func (m *Manager) IncrementContextPressure(sessionID string) int {
 // GetContextPressure returns the current compact count for a session.
 func (m *Manager) GetContextPressure(sessionID string) int {
 	return m.ctxPressure.Get(sessionID)
+}
+
+// SetAlertManager configures the alert manager for Discord notifications.
+func (m *Manager) SetAlertManager(alertMgr *AlertManager) {
+	m.alertMgr = alertMgr
+}
+
+// StartMaintenance launches periodic background tasks: stall detection (2min),
+// relevance decay (1hr), and digest generation (24hr). Call StopMaintenance to
+// cancel.
+func (m *Manager) StartMaintenance() {
+	ctx, cancel := context.WithCancel(context.Background())
+	m.maintenanceCancel = cancel
+
+	go m.maintenanceLoop(ctx)
+}
+
+// StopMaintenance cancels the periodic maintenance loop.
+func (m *Manager) StopMaintenance() {
+	if m.maintenanceCancel != nil {
+		m.maintenanceCancel()
+	}
+}
+
+func (m *Manager) maintenanceLoop(ctx context.Context) {
+	stallTicker := time.NewTicker(stallCheckInterval)
+	decayTicker := time.NewTicker(decayInterval)
+	digestTicker := time.NewTicker(digestInterval)
+
+	defer stallTicker.Stop()
+	defer decayTicker.Stop()
+	defer digestTicker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+
+		case <-stallTicker.C:
+			m.detectAndAlertStalls(ctx)
+
+		case <-decayTicker.C:
+			if err := swarm.DecayLearningRelevance(ctx, m.db.SQLDB()); err != nil {
+				m.logger.Error("decay learning relevance", "error", err)
+			}
+
+		case <-digestTicker.C:
+			if err := GenerateDigest(ctx, m.db, m.baseDir); err != nil {
+				m.logger.Error("generate digest", "error", err)
+			}
+		}
+	}
+}
+
+// detectAndAlertStalls checks for stalled workflows and fires alerts.
+func (m *Manager) detectAndAlertStalls(ctx context.Context) {
+	health, err := m.GetHealth(ctx)
+	if err != nil {
+		m.logger.Error("stall detection health check", "error", err)
+
+		return
+	}
+
+	for _, wf := range health.ActiveWorkflows {
+		if !wf.Stalled {
+			continue
+		}
+
+		m.emitEvent(ctx, wf.WorkflowID, "", wf.TicketID,
+			swarm.EventStallDetected, swarm.Phase(wf.Phase),
+			fmt.Sprintf("no progress for %d+ minutes", stallCheckMinutes))
+
+		if m.alertMgr != nil {
+			m.alertMgr.FireStallDetected(
+				wf.TicketID,
+				swarm.Phase(wf.Phase),
+				stallCheckMinutes,
+			)
+		}
+	}
 }
 
 // LogsDir returns the logs directory path.

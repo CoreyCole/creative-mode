@@ -101,6 +101,17 @@ CREATE TABLE IF NOT EXISTS swarm_ticket_comments (
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     synced_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS swarm_learning_digests (
+    id              TEXT PRIMARY KEY,
+    digest_type     TEXT NOT NULL,
+    period_start    TEXT NOT NULL,
+    period_end      TEXT NOT NULL,
+    learning_count  INTEGER NOT NULL DEFAULT 0,
+    summary         TEXT NOT NULL DEFAULT '',
+    action_items    TEXT,
+    doc_path        TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `
 
 // newManagerTestDB creates an in-memory SQLite DB with the full swarm schema

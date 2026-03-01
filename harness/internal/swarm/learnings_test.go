@@ -337,6 +337,107 @@ func TestGetLearningContextIncrementsReferences(t *testing.T) {
 	}
 }
 
+func TestDecayLearningRelevance(t *testing.T) {
+	t.Parallel()
+
+	db := newTestDB(t)
+	ctx := t.Context()
+
+	// Insert a learning with relevance_score = 1.0.
+	_ = CapturePlanIssue(ctx, db, "", "", "TKT-DECAY", "decay test")
+
+	if err := DecayLearningRelevance(ctx, db); err != nil {
+		t.Fatalf("DecayLearningRelevance: %v", err)
+	}
+
+	var score float64
+	if err := db.QueryRowContext(ctx,
+		"SELECT relevance_score FROM swarm_learnings WHERE ticket_id = 'TKT-DECAY'",
+	).Scan(&score); err != nil {
+		t.Fatalf("query score: %v", err)
+	}
+
+	want := 0.95
+	if score < want-0.001 || score > want+0.001 {
+		t.Errorf("relevance_score = %f, want ~%f", score, want)
+	}
+}
+
+func TestDecayLearningRelevanceSkipsLowScore(t *testing.T) {
+	t.Parallel()
+
+	db := newTestDB(t)
+	ctx := t.Context()
+
+	_, err := db.ExecContext(
+		ctx,
+		`INSERT INTO swarm_learnings (id, ticket_id, category, severity, title, content, relevance_score) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		"l-low",
+		"TKT-LOW",
+		"code_bug",
+		"info",
+		"low score",
+		"content",
+		0.05,
+	)
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	if decayErr := DecayLearningRelevance(ctx, db); decayErr != nil {
+		t.Fatalf("DecayLearningRelevance: %v", decayErr)
+	}
+
+	var score float64
+	if err := db.QueryRowContext(ctx,
+		"SELECT relevance_score FROM swarm_learnings WHERE id = 'l-low'",
+	).Scan(&score); err != nil {
+		t.Fatalf("query score: %v", err)
+	}
+
+	if score != 0.05 {
+		t.Errorf("score = %f, want 0.05 (unchanged below threshold)", score)
+	}
+}
+
+func TestDecayLearningRelevanceArchivesOld(t *testing.T) {
+	t.Parallel()
+
+	db := newTestDB(t)
+	ctx := t.Context()
+
+	_, err := db.ExecContext(
+		ctx,
+		`INSERT INTO swarm_learnings (id, ticket_id, category, severity, title, content, relevance_score, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', '-90 days'))`,
+		"l-old",
+		"TKT-OLD",
+		"pattern",
+		"info",
+		"old pattern",
+		"old content",
+		0.05,
+	)
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	if decayErr := DecayLearningRelevance(ctx, db); decayErr != nil {
+		t.Fatalf("DecayLearningRelevance: %v", decayErr)
+	}
+
+	var archivedAt sql.NullString
+	if err := db.QueryRowContext(ctx,
+		"SELECT archived_at FROM swarm_learnings WHERE id = 'l-old'",
+	).Scan(&archivedAt); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+
+	if !archivedAt.Valid {
+		t.Error("expected old low-relevance learning to be archived")
+	}
+}
+
 func TestExtractTitle(t *testing.T) {
 	t.Parallel()
 

@@ -284,6 +284,30 @@ func toNullString(s string) sql.NullString {
 	return sql.NullString{String: s, Valid: true}
 }
 
+// archiveOldLowRelevanceSQL archives learnings older than 60 days with low relevance.
+const archiveOldLowRelevanceSQL = `UPDATE swarm_learnings
+	SET archived_at = datetime('now'), updated_at = datetime('now')
+	WHERE archived_at IS NULL
+	  AND relevance_score < 0.1
+	  AND created_at < datetime('now', '-60 days')`
+
+// DecayLearningRelevance applies a 0.95 multiplier to all active learning
+// relevance scores, then archives old low-relevance entries.
+func DecayLearningRelevance(ctx context.Context, db DBTX) error {
+	if _, err := db.ExecContext(
+		ctx,
+		`UPDATE swarm_learnings SET relevance_score = relevance_score * 0.95, updated_at = datetime('now') WHERE archived_at IS NULL AND relevance_score > 0.1`,
+	); err != nil {
+		return fmt.Errorf("decay relevance: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, archiveOldLowRelevanceSQL); err != nil {
+		return fmt.Errorf("archive old learnings: %w", err)
+	}
+
+	return nil
+}
+
 func formatLearning(l learningRow) string {
 	return fmt.Sprintf(
 		"- **[%s] %s** (%s): %s\n",

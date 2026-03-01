@@ -20,6 +20,7 @@ import (
 	"creative-mode/harness/internal/db"
 	"creative-mode/harness/internal/db/sqlc"
 	"creative-mode/harness/internal/events"
+	"creative-mode/harness/internal/linear"
 	"creative-mode/harness/internal/swarm"
 )
 
@@ -35,6 +36,9 @@ const (
 	stallCheckInterval = 2 * time.Minute
 	decayInterval      = time.Hour
 	digestInterval     = 24 * time.Hour
+
+	// Linear API call timeout.
+	linearTimeout = 30 * time.Second
 )
 
 // Manager orchestrates swarm workflows: starting workflows, spawning Claude
@@ -64,6 +68,9 @@ type Manager struct {
 
 	// Alerts manager for Discord notifications.
 	alertMgr *AlertManager
+
+	// Linear client for ticket management (nil when LINEAR_API_KEY is not set).
+	linearClient *linear.Client
 
 	// Temporal runtime (nil when CM_SWARM_TEMPORAL=false).
 	temporalRuntime *TemporalRuntime
@@ -155,6 +162,15 @@ func (m *Manager) StartWorkflow(
 			"workflow_type": string(workflowType),
 		})
 	}
+
+	m.linearComment(
+		ticketID,
+		fmt.Sprintf(
+			"🤖 Swarm workflow started\n- **Type:** %s\n- **Workflow:** `%s`\n- **Phase:** research",
+			workflowType,
+			wfID,
+		),
+	)
 
 	// Temporal mode: trigger heartbeat to pick up new workflow; don't spawn directly.
 	if m.temporalRuntime != nil {
@@ -617,6 +633,16 @@ func (m *Manager) advanceWorkflow(
 		hadRetries := wf.Attempt > 1
 		_ = swarm.CaptureSuccessPattern(ctx, m.db.SQLDB(), wf.ID, wf.TicketID, hadRetries)
 
+		m.linearComment(
+			wf.TicketID,
+			fmt.Sprintf(
+				"✅ Workflow `%s` completed\n- **Summary:** %s",
+				wf.ID,
+				result.Summary,
+			),
+		)
+		m.linearUpdateStatus(wf.TicketID, "Done")
+
 		return
 	}
 
@@ -667,6 +693,10 @@ func (m *Manager) advanceWorkflow(
 			m.alertMgr.FireTerminalFailure(wf.TicketID, result.Summary)
 		}
 
+		m.linearComment(wf.TicketID,
+			fmt.Sprintf("❌ Workflow `%s` failed at phase `%s`\n- **Reason:** %s",
+				wf.ID, wf.Phase, result.Summary))
+
 		return
 	}
 
@@ -705,6 +735,26 @@ func (m *Manager) advanceWorkflow(
 		transition.NextPhase,
 		"",
 	)
+
+	if transition.Retry {
+		m.linearComment(
+			wf.TicketID,
+			fmt.Sprintf(
+				"🔄 Phase `%s` retry (attempt %d)",
+				transition.NextPhase,
+				newAttempt,
+			),
+		)
+	} else {
+		m.linearComment(
+			wf.TicketID,
+			fmt.Sprintf(
+				"➡️ Phase transition: `%s` → `%s`",
+				wf.Phase,
+				transition.NextPhase,
+			),
+		)
+	}
 
 	// Temporal mode: trigger heartbeat to spawn next session; don't spawn directly.
 	if m.temporalRuntime != nil {
@@ -988,6 +1038,72 @@ func (m *Manager) emitEvent(
 	}
 }
 
+// linearComment posts a comment to the Linear ticket associated with a workflow.
+// Non-blocking — errors are logged but do not affect workflow progression.
+func (m *Manager) linearComment(ticketID, body string) {
+	if m.linearClient == nil {
+		return
+	}
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), linearTimeout)
+		defer cancel()
+
+		// Resolve the ticket's Linear issue ID from its identifier.
+		ticket, err := m.linearClient.GetTicket(ctx, ticketID)
+		if err != nil {
+			m.logger.Debug("linear comment skip: ticket not found", "ticket", ticketID)
+
+			return
+		}
+
+		if commentErr := m.linearClient.PostComment(
+			ctx,
+			ticket.ID,
+			body,
+		); commentErr != nil {
+			m.logger.Warn(
+				"linear comment failed",
+				"ticket",
+				ticketID,
+				"error",
+				commentErr,
+			)
+		}
+	}()
+}
+
+// linearUpdateStatus updates the Linear ticket status. Non-blocking.
+func (m *Manager) linearUpdateStatus(ticketID, status string) {
+	if m.linearClient == nil {
+		return
+	}
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), linearTimeout)
+		defer cancel()
+
+		ticket, err := m.linearClient.GetTicket(ctx, ticketID)
+		if err != nil {
+			return
+		}
+
+		if updateErr := m.linearClient.UpdateStatus(
+			ctx,
+			ticket.ID,
+			status,
+		); updateErr != nil {
+			m.logger.Warn(
+				"linear status update failed",
+				"ticket",
+				ticketID,
+				"error",
+				updateErr,
+			)
+		}
+	}()
+}
+
 // closeJSONLWriter closes and removes the JSONL writer for a session.
 func (m *Manager) closeJSONLWriter(sessionID string) {
 	m.jsonlMu.Lock()
@@ -1034,6 +1150,11 @@ func (m *Manager) GetContextPressure(sessionID string) int {
 // SetAlertManager configures the alert manager for Discord notifications.
 func (m *Manager) SetAlertManager(alertMgr *AlertManager) {
 	m.alertMgr = alertMgr
+}
+
+// SetLinearClient configures the Linear API client for ticket management.
+func (m *Manager) SetLinearClient(lc *linear.Client) {
+	m.linearClient = lc
 }
 
 // SetTemporalRuntime configures the Temporal runtime for durable orchestration.

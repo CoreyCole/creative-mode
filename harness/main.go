@@ -26,6 +26,7 @@ import (
 	discordlistener "creative-mode/harness/internal/discord"
 	"creative-mode/harness/internal/events"
 	"creative-mode/harness/internal/gemini"
+	"creative-mode/harness/internal/linear"
 	"creative-mode/harness/internal/logging"
 	"creative-mode/harness/internal/mayor"
 	"creative-mode/harness/internal/president"
@@ -268,6 +269,16 @@ func main() {
 	} else {
 		// Wire alert manager without Discord — alerts are logged only.
 		swarmManager.SetAlertManager(swarmorch.NewAlertManager(nil, "", logger))
+	}
+
+	// Set up Linear client for swarm ticket management (optional — requires LINEAR_API_KEY).
+	if linearKey := os.Getenv("LINEAR_API_KEY"); linearKey != "" {
+		linearTeam := os.Getenv("LINEAR_TEAM_KEY")
+		if linearTeam == "" {
+			linearTeam = "CM"
+		}
+		swarmManager.SetLinearClient(linear.NewClient(linearKey, linearTeam, logger))
+		logger.Info("Swarm Linear integration enabled", "team", linearTeam)
 	}
 
 	// Set up Temporal runtime for durable swarm orchestration (optional).

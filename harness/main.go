@@ -422,10 +422,12 @@ func initPresidentManager(
 		return nil
 	}
 
+	hookSecret := os.Getenv("CM_HOOK_SECRET")
+
 	openclawHome, openclawBin := resolveOpenclawPaths(dataDir)
 	mgr := president.NewManager(
 		openclawHome, openclawBin, baseURL,
-		presidentSecret, presidentChannelID,
+		presidentSecret, hookSecret, presidentChannelID,
 		database, logger,
 	)
 
@@ -434,5 +436,11 @@ func initPresidentManager(
 	} else {
 		logger.Info("President agent ready", "channel_id", presidentChannelID)
 	}
+
+	// Ensure skills are up-to-date (writes new skills even for existing workspaces).
+	if err := mgr.EnsureSkills(); err != nil {
+		logger.Error("failed to ensure president skills", "error", err)
+	}
+
 	return mgr
 }

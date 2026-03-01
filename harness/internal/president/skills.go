@@ -7,7 +7,9 @@ import (
 )
 
 // writePresidentSkills creates the skills directory and files for the president.
-func writePresidentSkills(workspaceDir, presidentSecret, harnessURL string) error {
+func writePresidentSkills(
+	workspaceDir, presidentSecret, hookSecret, harnessURL string,
+) error {
 	skills := map[string]string{
 		"mayor-status": fmt.Sprintf(`---
 name: mayor-status
@@ -68,6 +70,8 @@ Runs the build pipeline and restarts the harness systemd service.
 
 %s
 `, "```bash\ncurl -s -X POST \""+harnessURL+"/api/president/deploy\" \\\n  -H \"X-President-Secret: "+presidentSecret+"\"\n```"),
+
+		"swarm-learnings": swarmLearningsSkill(hookSecret, harnessURL),
 	}
 
 	for name, content := range skills {
@@ -85,4 +89,44 @@ Runs the build pipeline and restarts the harness systemd service.
 	}
 
 	return nil
+}
+
+func swarmLearningsSkill(hookSecret, harnessURL string) string {
+	return `---
+name: swarm-learnings
+description: Query swarm learnings, health, metrics, and digests
+metadata: |
+  {"skillKey": "swarm-learnings"}
+---
+# Swarm Learnings
+
+Query the swarm agent system for learnings, health status, aggregate metrics, and daily digests.
+Use this to understand what the swarm has learned, identify recurring issues, and monitor system health.
+
+## Endpoints
+
+### Recent Learnings
+
+Returns recent learnings, optionally filtered by ticket or phase.
+
+` + "```bash\n# All recent learnings\ncurl -s \"" + harnessURL + "/api/swarm/learnings\" \\\n  -H \"X-Hook-Secret: " + hookSecret + "\"\n\n# Filter by ticket\ncurl -s \"" + harnessURL + "/api/swarm/learnings?ticket=ENG-1234\" \\\n  -H \"X-Hook-Secret: " + hookSecret + "\"\n\n# Filter by phase\ncurl -s \"" + harnessURL + "/api/swarm/learnings?phase=verify\" \\\n  -H \"X-Hook-Secret: " + hookSecret + "\"\n```" + `
+
+### System Health
+
+Returns health status (healthy/degraded/unhealthy), active sessions, capacity, stalled workflows, and recent completions.
+
+` + "```bash\ncurl -s \"" + harnessURL + "/api/swarm/health\" \\\n  -H \"X-Hook-Secret: " + hookSecret + "\"\n```" + `
+
+### Aggregate Metrics
+
+Returns workflow completion rates, phase durations, retry rates, and learning counts. Period: 24h, 7d, 30d, or all.
+
+` + "```bash\ncurl -s \"" + harnessURL + "/api/swarm/metrics?period=24h\" \\\n  -H \"X-Hook-Secret: " + hookSecret + "\"\n```" + `
+
+### Latest Digest
+
+Returns the most recent daily learning digest with pattern-detected action items.
+
+` + "```bash\ncurl -s \"" + harnessURL + "/api/swarm/learnings/digest/latest\" \\\n  -H \"X-Hook-Secret: " + hookSecret + "\"\n```" + `
+`
 }

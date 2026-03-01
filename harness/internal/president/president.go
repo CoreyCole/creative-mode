@@ -21,6 +21,7 @@ type Manager struct {
 	openclawBin     string
 	harnessURL      string
 	presidentSecret string
+	hookSecret      string // CM_HOOK_SECRET for swarm API calls
 	channelID       string // Discord channel ID for #creative-mode-dev
 	db              *db.DB
 	logger          *slog.Logger
@@ -28,7 +29,7 @@ type Manager struct {
 
 // NewManager creates a new president Manager.
 func NewManager(
-	openclawHome, openclawBin, harnessURL, presidentSecret, channelID string,
+	openclawHome, openclawBin, harnessURL, presidentSecret, hookSecret, channelID string,
 	database *db.DB,
 	logger *slog.Logger,
 ) *Manager {
@@ -37,6 +38,7 @@ func NewManager(
 		openclawBin:     openclawBin,
 		harnessURL:      harnessURL,
 		presidentSecret: presidentSecret,
+		hookSecret:      hookSecret,
 		channelID:       channelID,
 		db:              database,
 		logger:          logger,
@@ -88,6 +90,7 @@ func (m *Manager) Provision() error {
 	if err := writePresidentSkills(
 		workspaceDir,
 		m.presidentSecret,
+		m.hookSecret,
 		m.harnessURL,
 	); err != nil {
 		return fmt.Errorf("writing skills: %w", err)
@@ -124,6 +127,19 @@ func (m *Manager) Provision() error {
 		"channel_id", m.channelID,
 	)
 	return nil
+}
+
+// EnsureSkills writes all president skill files, even for already-provisioned
+// workspaces. This allows new skills to be added on restart without deleting
+// the workspace.
+func (m *Manager) EnsureSkills() error {
+	workspaceDir := filepath.Join(m.openclawHome, "workspaces", presidentAgentID)
+	return writePresidentSkills(
+		workspaceDir,
+		m.presidentSecret,
+		m.hookSecret,
+		m.harnessURL,
+	)
 }
 
 // bindToChannel binds the president agent to its Discord channel.

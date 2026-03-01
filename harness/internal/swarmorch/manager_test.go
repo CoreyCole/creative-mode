@@ -112,6 +112,24 @@ CREATE TABLE IF NOT EXISTS swarm_learning_digests (
     doc_path        TEXT,
     created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS swarm_project_milestones (
+    id           TEXT PRIMARY KEY,
+    workflow_id  TEXT NOT NULL REFERENCES swarm_workflows(id),
+    project_id   TEXT,
+    name         TEXT NOT NULL,
+    criteria     TEXT NOT NULL,
+    status       TEXT NOT NULL CHECK(status IN ('pending', 'passed', 'failed')),
+    verified_at  TEXT,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS swarm_ticket_dependencies (
+    id                   TEXT PRIMARY KEY,
+    ticket_id            TEXT NOT NULL,
+    depends_on_ticket_id TEXT NOT NULL,
+    project_id           TEXT NOT NULL,
+    created_at           TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(ticket_id, depends_on_ticket_id)
+);
 `
 
 // newManagerTestDB creates an in-memory SQLite DB with the full swarm schema

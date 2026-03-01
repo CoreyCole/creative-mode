@@ -70,6 +70,11 @@ func HeartbeatWorkflow(ctx workflow.Context) error {
 		workflow.GetLogger(ctx).Warn("GenerateDigest failed", "error", err)
 	}
 
+	if err := workflow.ExecuteActivity(opsCtx, "CheckProjectProgress").
+		Get(ctx, nil); err != nil {
+		workflow.GetLogger(ctx).Warn("CheckProjectProgress failed", "error", err)
+	}
+
 	// Read pending work and spawn child workflows.
 	var spawns []SpawnRequest
 	if err := workflow.ExecuteActivity(opsCtx, "ReadTicketQueue").

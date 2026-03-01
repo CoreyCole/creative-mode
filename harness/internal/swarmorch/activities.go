@@ -123,6 +123,12 @@ func (a *Activities) ReadTicketQueue(ctx context.Context) ([]SpawnRequest, error
 			continue
 		}
 
+		// Skip project_verify — handled by CheckProjectProgress which waits
+		// for all child tickets to complete before spawning the verify session.
+		if wf.Phase == swarm.PhaseProjectVerify {
+			continue
+		}
+
 		session, sessionErr := a.mgr.db.GetLatestSwarmSession(ctx, wf.ID)
 		if sessionErr != nil {
 			// No session yet — needs one spawned.
@@ -207,6 +213,13 @@ func (a *Activities) ReapSessions(ctx context.Context) error {
 		a.mgr.emitEvent(ctx, "", "", ticketID,
 			swarm.EventSessionReaped, "", sessionName)
 	}
+
+	return nil
+}
+
+// CheckProjectProgress checks project workflows and advances child ticket waves.
+func (a *Activities) CheckProjectProgress(ctx context.Context) error {
+	a.mgr.CheckProjectProgress(ctx)
 
 	return nil
 }

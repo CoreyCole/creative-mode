@@ -22,6 +22,7 @@ type Querier interface {
 	CreateMessage(ctx context.Context, arg CreateMessageParams) error
 	CreatePromptHistory(ctx context.Context, arg CreatePromptHistoryParams) error
 	CreateSession(ctx context.Context, arg CreateSessionParams) error
+	CreateSwarmDependency(ctx context.Context, arg CreateSwarmDependencyParams) error
 	// swarm_events
 	CreateSwarmEvent(ctx context.Context, arg CreateSwarmEventParams) error
 	// swarm_learnings
@@ -42,6 +43,7 @@ type Querier interface {
 	DeletePromptHistoryByUserID(ctx context.Context, userID string) error
 	DeleteSession(ctx context.Context, id string) error
 	DeleteSessionsByUserID(ctx context.Context, userID string) error
+	DeleteSwarmDependenciesByProject(ctx context.Context, projectID string) error
 	DeleteUser(ctx context.Context, id string) error
 	DeleteUserPositionsByUserID(ctx context.Context, userID string) error
 	DeleteWorldInvite(ctx context.Context, arg DeleteWorldInviteParams) error
@@ -86,6 +88,8 @@ type Querier interface {
 	ListRecentSwarmEvents(ctx context.Context, limit int64) ([]SwarmEvent, error)
 	ListRecentSwarmLearnings(ctx context.Context, createdAt string) ([]SwarmLearning, error)
 	ListRunningSwarmWorkflows(ctx context.Context) ([]SwarmWorkflow, error)
+	ListSwarmDependenciesByProject(ctx context.Context, projectID string) ([]SwarmTicketDependency, error)
+	ListSwarmDependenciesByTicket(ctx context.Context, ticketID string) ([]SwarmTicketDependency, error)
 	ListSwarmEventsByType(ctx context.Context, arg ListSwarmEventsByTypeParams) ([]SwarmEvent, error)
 	ListSwarmEventsByWorkflow(ctx context.Context, workflowID sql.NullString) ([]SwarmEvent, error)
 	ListSwarmLearningDigests(ctx context.Context, limit int64) ([]SwarmLearningDigest, error)
@@ -94,6 +98,8 @@ type Querier interface {
 	ListSwarmSessionsByWorkflow(ctx context.Context, workflowID string) ([]SwarmSession, error)
 	ListSwarmTicketComments(ctx context.Context, ticketID string) ([]SwarmTicketComment, error)
 	ListSwarmTickets(ctx context.Context) ([]SwarmTicket, error)
+	ListSwarmTicketsByParent(ctx context.Context, parentID sql.NullString) ([]SwarmTicket, error)
+	ListSwarmTicketsByProject(ctx context.Context, projectID sql.NullString) ([]SwarmTicket, error)
 	// Dashboard queries
 	ListSwarmWorkflowsWithLatestSession(ctx context.Context) ([]ListSwarmWorkflowsWithLatestSessionRow, error)
 	ListTopCriticalSwarmLearnings(ctx context.Context, limit int64) ([]SwarmLearning, error)

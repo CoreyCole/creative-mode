@@ -760,6 +760,19 @@ func (m *Manager) advanceWorkflow(
 		)
 	}
 
+	// Project review → project_verify: spawn child tickets, don't spawn a
+	// verify session yet. The heartbeat will check child progress and spawn
+	// the verify session when all children complete.
+	if wf.Phase == swarm.PhaseProjectReview &&
+		transition.NextPhase == swarm.PhaseProjectVerify {
+		if spawnErr := m.SpawnProjectChildren(ctx, wf); spawnErr != nil {
+			m.logger.Error("spawn project children",
+				"workflow_id", wf.ID, "error", spawnErr)
+		}
+
+		return
+	}
+
 	// Temporal mode: trigger heartbeat to spawn next session; don't spawn directly.
 	if m.temporalRuntime != nil {
 		m.temporalRuntime.TriggerHeartbeat()
@@ -1267,6 +1280,7 @@ func (m *Manager) maintenanceLoop(ctx context.Context) {
 
 		case <-stallTicker.C:
 			m.detectAndAlertStalls(ctx)
+			m.CheckProjectProgress(ctx)
 
 		case <-decayTicker.C:
 			if err := swarm.DecayLearningRelevance(ctx, m.db.SQLDB()); err != nil {

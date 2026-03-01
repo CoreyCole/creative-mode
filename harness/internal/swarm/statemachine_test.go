@@ -186,11 +186,11 @@ func TestDetermineNextPhase(t *testing.T) {
 			wantPhase:    PhaseProjectReview,
 		},
 		{
-			name:         "project_review approve → done",
+			name:         "project_review approve → project_verify",
 			workflowType: WorkflowTypeProject,
 			phase:        PhaseProjectReview,
 			result:       ResultSuccess,
-			wantPhase:    PhaseDone,
+			wantPhase:    PhaseProjectVerify,
 		},
 		{
 			name:         "project_review revise under max → project_plan retry",

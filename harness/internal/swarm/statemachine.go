@@ -148,7 +148,11 @@ func transitionByPhase(
 
 	case PhaseProjectReview:
 		if lastResult == ResultSuccess {
-			return Transition{NextPhase: PhaseDone}
+			// After review approval, transition to project_verify.
+			// The orchestrator spawns child tickets on this transition
+			// and the heartbeat monitors child progress before running
+			// the verify session.
+			return Transition{NextPhase: PhaseProjectVerify}
 		}
 
 		if lastResult == ResultLogicFailure {

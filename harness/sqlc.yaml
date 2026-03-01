@@ -78,6 +78,7 @@ sql:
           period_end: "PeriodEnd"
           learning_count: "LearningCount"
           action_items: "ActionItems"
+          depends_on_ticket_id: "DependsOnTicketID"
         overrides:
           - db_type: "TIMESTAMP"
             go_type:

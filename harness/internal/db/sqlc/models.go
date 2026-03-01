@@ -192,6 +192,14 @@ type SwarmTicketComment struct {
 	SyncedAt  string
 }
 
+type SwarmTicketDependency struct {
+	ID                string
+	TicketID          string
+	DependsOnTicketID string
+	ProjectID         string
+	CreatedAt         string
+}
+
 type SwarmWorkflow struct {
 	ID                 string
 	TicketID           string

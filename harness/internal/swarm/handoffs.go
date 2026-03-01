@@ -72,6 +72,38 @@ func ResolveResearchPath(baseDir, ticketID string) (string, error) {
 	return matches[0], nil
 }
 
+// ResolvePlanPath finds the most recent project plan document for a ticket.
+// Returns "" with nil error if no matches are found.
+func ResolvePlanPath(baseDir, ticketID string) (string, error) {
+	// Try project-plans first, then regular plans.
+	for _, dir := range []string{"project-plans", "plans"} {
+		pattern := filepath.Join(
+			baseDir,
+			"thoughts",
+			"swarm",
+			dir,
+			fmt.Sprintf("*_%s_*.md", ticketID),
+		)
+
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			return "", fmt.Errorf("glob %s: %w", dir, err)
+		}
+
+		if len(matches) == 0 {
+			continue
+		}
+
+		sort.Slice(matches, func(i, j int) bool {
+			return filepath.Base(matches[i]) > filepath.Base(matches[j])
+		})
+
+		return matches[0], nil
+	}
+
+	return "", nil
+}
+
 // HandoffDir returns the handoff subdirectory name for a given phase.
 func HandoffDir(phase Phase) string {
 	switch phase {

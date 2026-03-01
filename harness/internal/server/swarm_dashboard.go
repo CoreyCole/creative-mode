@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"net/http"
@@ -10,6 +11,8 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/starfederation/datastar-go/datastar"
 
+	"creative-mode/harness/internal/db/sqlc"
+	"creative-mode/harness/internal/swarmorch"
 	swarmview "creative-mode/harness/views/swarm"
 )
 
@@ -25,6 +28,30 @@ func (s *Server) handleSwarmDashboard(c echo.Context) error {
 	data := swarmview.DashboardData{
 		Workflows: workflows,
 		Events:    recentEvents,
+	}
+
+	// Fetch metrics + health if swarm manager is available.
+	if s.SwarmManager != nil {
+		if metrics, err := s.SwarmManager.GetMetrics(
+			ctx,
+			swarmorch.DefaultPeriod,
+		); err == nil {
+			data.Metrics = metrics
+		}
+
+		if health, err := s.SwarmManager.GetHealth(ctx); err == nil {
+			data.Health = health
+		}
+	}
+
+	// Fetch recent learnings.
+	if learnings, err := s.DB.ListRecentSwarmLearnings(ctx, ""); err == nil {
+		data.Learnings = learnings
+	}
+
+	// Fetch latest digest.
+	if digest, err := s.DB.GetLatestSwarmLearningDigest(ctx); err == nil {
+		data.Digest = &digest
 	}
 
 	return render(c, swarmview.Page(data))
@@ -84,6 +111,25 @@ func (s *Server) handleSwarmDashboardSSE(c echo.Context) error {
 				continue
 			}
 
+			// Live tool activity feed.
+			if eventType == "swarm.tool_use" {
+				ticketID, _ := e["ticket_id"].(string)
+				phase, _ := e["phase"].(string)
+				tool, _ := e["tool"].(string)
+				file, _ := e["file"].(string)
+
+				if err := sse.PatchElementTempl(
+					swarmview.ToolActivityItem(ticketID, phase, tool, file),
+					datastar.WithSelectorID("swarm-tool-activity"),
+					datastar.WithModeAppend(),
+				); err != nil {
+					return nil
+				}
+
+				continue
+			}
+
+			// Refresh workflow + events tabs.
 			workflows, _ := s.DB.ListAllSwarmWorkflows(ctx, defaultQueryLimit)
 			recentEvents, _ := s.DB.ListRecentSwarmEvents(ctx, swarmEventLimit)
 
@@ -99,6 +145,10 @@ func (s *Server) handleSwarmDashboardSSE(c echo.Context) error {
 			); err != nil {
 				return nil
 			}
+
+			// Refresh metrics + health tabs on workflow events.
+			s.patchMetricsAndLearnings(ctx, sse)
+
 		case <-heartbeat.C:
 			if err := sse.MarshalAndPatchSignals(map[string]any{}); err != nil {
 				return nil
@@ -107,6 +157,38 @@ func (s *Server) handleSwarmDashboardSSE(c echo.Context) error {
 			return nil
 		}
 	}
+}
+
+// patchMetricsAndLearnings pushes updated metrics, health, and learnings tabs via SSE.
+func (s *Server) patchMetricsAndLearnings(
+	ctx context.Context,
+	sse *datastar.ServerSentEventGenerator,
+) {
+	var metrics *swarmorch.SwarmMetrics
+	var health *swarmorch.SwarmHealth
+
+	if s.SwarmManager != nil {
+		metrics, _ = s.SwarmManager.GetMetrics(ctx, swarmorch.DefaultPeriod)
+		health, _ = s.SwarmManager.GetHealth(ctx)
+	}
+
+	_ = sse.PatchElementTempl(
+		swarmview.MetricsTab(metrics, health),
+		datastar.WithSelectorID("swarm-metrics-tab"),
+	)
+
+	var learnings []sqlc.SwarmLearning
+	learnings, _ = s.DB.ListRecentSwarmLearnings(ctx, "")
+
+	var digest *sqlc.SwarmLearningDigest
+	if d, err := s.DB.GetLatestSwarmLearningDigest(ctx); err == nil {
+		digest = &d
+	}
+
+	_ = sse.PatchElementTempl(
+		swarmview.LearningsTab(learnings, digest),
+		datastar.WithSelectorID("swarm-learnings-tab"),
+	)
 }
 
 // handleSwarmDashboardCancel cancels a workflow from the dashboard.

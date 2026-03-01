@@ -445,6 +445,70 @@ func (q *Queries) ListActiveSwarmWorkflows(ctx context.Context) ([]SwarmWorkflow
 	return items, nil
 }
 
+const listAllSwarmWorkflows = `-- name: ListAllSwarmWorkflows :many
+SELECT w.id, w.ticket_id, w.workflow_type, w.phase, w.status, w.attempt, w.created_at, w.updated_at,
+       s.id AS session_id, s.skill, s.phase AS session_phase, COALESCE(s.result, '') AS result, s.started_at AS session_started_at
+FROM swarm_workflows w
+LEFT JOIN swarm_sessions s ON s.id = (
+    SELECT id FROM swarm_sessions WHERE workflow_id = w.id ORDER BY started_at DESC LIMIT 1
+)
+ORDER BY w.updated_at DESC
+LIMIT ?
+`
+
+type ListAllSwarmWorkflowsRow struct {
+	ID               string
+	TicketID         string
+	WorkflowType     swarm.WorkflowType
+	Phase            swarm.Phase
+	Status           swarm.WorkflowStatus
+	Attempt          int64
+	CreatedAt        string
+	UpdatedAt        string
+	SessionID        sql.NullString
+	Skill            sql.NullString
+	SessionPhase     swarm.Phase
+	Result           swarm.SessionResult
+	SessionStartedAt sql.NullString
+}
+
+func (q *Queries) ListAllSwarmWorkflows(ctx context.Context, limit int64) ([]ListAllSwarmWorkflowsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listAllSwarmWorkflows, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAllSwarmWorkflowsRow{}
+	for rows.Next() {
+		var i ListAllSwarmWorkflowsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TicketID,
+			&i.WorkflowType,
+			&i.Phase,
+			&i.Status,
+			&i.Attempt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SessionID,
+			&i.Skill,
+			&i.SessionPhase,
+			&i.Result,
+			&i.SessionStartedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRecentSwarmEvents = `-- name: ListRecentSwarmEvents :many
 SELECT id, workflow_id, session_id, ticket_id, event_type, phase, detail, created_at
 FROM swarm_events ORDER BY created_at DESC LIMIT ?

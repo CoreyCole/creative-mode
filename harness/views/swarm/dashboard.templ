@@ -1,0 +1,358 @@
+package swarm
+
+import (
+	"creative-mode/harness/internal/db/sqlc"
+	"creative-mode/harness/internal/swarm"
+	"creative-mode/harness/views/layout"
+	"database/sql"
+	"fmt"
+	"github.com/coreycole/datastarui/components/button"
+	"github.com/starfederation/datastar-go/datastar"
+)
+
+type DashboardData struct {
+	Workflows []sqlc.ListAllSwarmWorkflowsRow
+	Events    []sqlc.SwarmEvent
+}
+
+type WorkflowDetailData struct {
+	Workflow   sqlc.SwarmWorkflow
+	Sessions   []sqlc.SwarmSession
+	Events     []sqlc.SwarmEvent
+	Milestones []sqlc.SwarmProjectMilestone
+}
+
+type DashboardSignals struct {
+	ActiveTab string `json:"active_tab"`
+}
+
+func DefaultDashboardSignals() DashboardSignals {
+	return DashboardSignals{ActiveTab: "workflows"}
+}
+
+templ Page(data DashboardData) {
+	@layout.Base("Swarm Dashboard") {
+		<div
+			class="flex flex-col min-h-screen"
+			data-signals={ templ.JSONString(DefaultDashboardSignals()) }
+		>
+			<header class="flex justify-between items-center px-6 py-3 border-b border-border bg-[#111]">
+				<div class="flex items-center gap-3">
+					<a href="/" class="text-muted-foreground hover:text-primary transition-colors text-sm">Creative Mode</a>
+					<span class="text-muted-foreground">/</span>
+					<h1 class="text-lg font-semibold">Swarm Dashboard</h1>
+				</div>
+			</header>
+			<div class="flex border-b border-border bg-[#111]">
+				@tabButton("workflows", "Workflows")
+				@tabButton("events", "Events")
+			</div>
+			<div
+				class="flex-1 p-6 overflow-y-auto"
+				data-init={ datastar.GetSSE("/swarm/events") }
+			>
+				<div id="swarm-workflows-tab" data-show="$active_tab === 'workflows'">
+					@WorkflowsTab(data.Workflows)
+				</div>
+				<div id="swarm-events-tab" data-show="$active_tab === 'events'" style="display: none;">
+					@EventsTab(data.Events)
+				</div>
+			</div>
+		</div>
+	}
+}
+
+templ tabButton(id, label string) {
+	@button.Button(button.ButtonArgs{
+		Size:    "sm",
+		Variant: "ghost",
+		Attributes: templ.Attributes{
+			"data-on:click": fmt.Sprintf("$active_tab = '%s'", id),
+			"data-class":    fmt.Sprintf("{'bg-accent text-accent-foreground': $active_tab === '%s'}", id),
+		},
+	}) {
+		{ label }
+	}
+}
+
+templ WorkflowsTab(workflows []sqlc.ListAllSwarmWorkflowsRow) {
+	<div class="space-y-3">
+		if len(workflows) == 0 {
+			<p class="text-muted-foreground">No workflows yet</p>
+		}
+		for _, wf := range workflows {
+			@workflowRow(wf)
+		}
+	</div>
+}
+
+templ workflowRow(wf sqlc.ListAllSwarmWorkflowsRow) {
+	<a
+		href={ templ.SafeURL(fmt.Sprintf("/swarm/%s", wf.ID)) }
+		class="block rounded-lg border border-border bg-card p-4 hover:bg-accent/50 transition-colors"
+	>
+		<div class="flex items-center justify-between mb-2">
+			<div class="flex items-center gap-2">
+				@statusBadge(wf.Status)
+				@phaseBadge(wf.Phase)
+				<span class="text-xs text-muted-foreground">{ string(wf.WorkflowType) }</span>
+			</div>
+			<span class="text-xs text-muted-foreground">{ wf.UpdatedAt }</span>
+		</div>
+		<div class="flex items-center justify-between">
+			<div>
+				<span class="text-sm font-medium">{ wf.TicketID }</span>
+				<span class="text-xs text-muted-foreground ml-2">attempt { fmt.Sprintf("%d", wf.Attempt) }</span>
+			</div>
+			if wf.SessionID.Valid {
+				<div class="flex items-center gap-2 text-xs text-muted-foreground">
+					<span>{ wf.Skill.String }</span>
+					if string(wf.Result) != "" {
+						@resultBadge(wf.Result)
+					}
+				</div>
+			}
+		</div>
+	</a>
+}
+
+templ EventsTab(events []sqlc.SwarmEvent) {
+	<div class="space-y-2">
+		if len(events) == 0 {
+			<p class="text-muted-foreground">No events recorded</p>
+		}
+		for _, e := range events {
+			@eventItem(e)
+		}
+	</div>
+}
+
+templ eventItem(e sqlc.SwarmEvent) {
+	<div class="flex items-start gap-3 py-2 border-b border-border last:border-0">
+		<span class={ "text-xs px-2 py-0.5 rounded whitespace-nowrap", eventTypeClass(e.EventType) }>
+			{ string(e.EventType) }
+		</span>
+		<div class="flex-1 min-w-0">
+			<span class="text-sm text-muted-foreground">{ e.TicketID }</span>
+			if e.Phase.Valid {
+				<span class="text-xs text-muted-foreground ml-2">{ e.Phase.String }</span>
+			}
+			if e.Detail.Valid {
+				<p class="text-xs text-muted-foreground truncate mt-0.5">{ e.Detail.String }</p>
+			}
+		</div>
+		<span class="text-xs text-muted-foreground whitespace-nowrap">{ e.CreatedAt }</span>
+	</div>
+}
+
+templ WorkflowPage(data WorkflowDetailData) {
+	@layout.Base("Workflow " + data.Workflow.ID) {
+		<div class="flex flex-col min-h-screen">
+			<header class="flex justify-between items-center px-6 py-3 border-b border-border bg-[#111]">
+				<div class="flex items-center gap-3">
+					<a href="/swarm" class="text-muted-foreground hover:text-primary transition-colors text-sm">Swarm</a>
+					<span class="text-muted-foreground">/</span>
+					<h1 class="text-lg font-semibold">{ shortID(data.Workflow.ID) }</h1>
+					@statusBadge(data.Workflow.Status)
+					@phaseBadge(data.Workflow.Phase)
+				</div>
+				<div class="flex items-center gap-3">
+					<span class="text-sm text-muted-foreground">{ data.Workflow.TicketID }</span>
+					if data.Workflow.Status == swarm.StatusRunning || data.Workflow.Status == swarm.StatusPending {
+						<button
+							class="inline-flex items-center justify-center rounded-md border border-destructive bg-background shadow-xs hover:bg-destructive hover:text-destructive-foreground h-8 px-3 text-sm font-medium text-destructive"
+							data-on:click={ datastar.PostSSE(fmt.Sprintf("/swarm/%s/cancel", data.Workflow.ID)) }
+						>
+							Cancel
+						</button>
+					}
+				</div>
+			</header>
+			<div class="flex-1 p-6 overflow-y-auto space-y-6">
+				<!-- Workflow info -->
+				<div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+					@statCard("Type", string(data.Workflow.WorkflowType))
+					@statCard("Attempt", fmt.Sprintf("%d", data.Workflow.Attempt))
+					@statCard("Sessions", fmt.Sprintf("%d", len(data.Sessions)))
+					@statCard("Events", fmt.Sprintf("%d", len(data.Events)))
+				</div>
+				if data.Workflow.BranchName.Valid {
+					<div class="text-sm text-muted-foreground">
+						Branch: <code class="bg-muted px-1.5 py-0.5 rounded text-xs">{ data.Workflow.BranchName.String }</code>
+					</div>
+				}
+				<!-- Sessions -->
+				<div>
+					<h2 class="text-sm font-semibold mb-3 text-muted-foreground">Sessions</h2>
+					<div class="space-y-2">
+						if len(data.Sessions) == 0 {
+							<p class="text-muted-foreground text-sm">No sessions yet</p>
+						}
+						for _, s := range data.Sessions {
+							@sessionItem(s)
+						}
+					</div>
+				</div>
+				<!-- Milestones -->
+				if len(data.Milestones) > 0 {
+					<div>
+						<h2 class="text-sm font-semibold mb-3 text-muted-foreground">Milestones</h2>
+						<div class="space-y-2">
+							for _, m := range data.Milestones {
+								@milestoneItem(m)
+							}
+						</div>
+					</div>
+				}
+				<!-- Events -->
+				<div>
+					<h2 class="text-sm font-semibold mb-3 text-muted-foreground">Events</h2>
+					<div class="space-y-2">
+						if len(data.Events) == 0 {
+							<p class="text-muted-foreground text-sm">No events yet</p>
+						}
+						for _, e := range data.Events {
+							@eventItem(e)
+						}
+					</div>
+				</div>
+			</div>
+		</div>
+	}
+}
+
+templ sessionItem(s sqlc.SwarmSession) {
+	<div class="rounded-lg border border-border bg-card p-3">
+		<div class="flex items-center justify-between mb-1">
+			<div class="flex items-center gap-2">
+				@phaseBadge(s.Phase)
+				<span class="text-sm font-medium">{ s.Skill }</span>
+				if string(s.Result) != "" {
+					@resultBadge(s.Result)
+				}
+			</div>
+			<span class="text-xs text-muted-foreground">{ s.StartedAt }</span>
+		</div>
+		<div class="flex items-center gap-4 text-xs text-muted-foreground">
+			if s.DurationSec.Valid {
+				<span>{ fmt.Sprintf("%ds", s.DurationSec.Int64) }</span>
+			}
+			if s.TotalTokens.Valid {
+				<span>{ fmt.Sprintf("%d tokens", s.TotalTokens.Int64) }</span>
+			}
+			if s.Detail.Valid {
+				<span class="truncate max-w-md">{ s.Detail.String }</span>
+			}
+		</div>
+	</div>
+}
+
+templ milestoneItem(m sqlc.SwarmProjectMilestone) {
+	<div class="flex items-center gap-3 py-2 border-b border-border last:border-0">
+		@milestoneBadge(m.Status)
+		<div class="flex-1">
+			<span class="text-sm font-medium">{ m.Name }</span>
+			<p class="text-xs text-muted-foreground">{ m.Criteria }</p>
+		</div>
+		if m.VerifiedAt.Valid {
+			<span class="text-xs text-muted-foreground">{ m.VerifiedAt.String }</span>
+		}
+	</div>
+}
+
+templ statCard(label, value string) {
+	<div class="rounded-lg border border-border bg-card p-4">
+		<div class="text-2xl font-bold">{ value }</div>
+		<div class="text-sm text-muted-foreground">{ label }</div>
+	</div>
+}
+
+templ statusBadge(status swarm.WorkflowStatus) {
+	<span class={ "text-xs px-2 py-0.5 rounded-full", statusClass(status) }>
+		{ string(status) }
+	</span>
+}
+
+templ phaseBadge(phase swarm.Phase) {
+	<span class={ "text-xs px-2 py-0.5 rounded", phaseClass(phase) }>
+		{ string(phase) }
+	</span>
+}
+
+templ resultBadge(result swarm.SessionResult) {
+	<span class={ "text-xs px-2 py-0.5 rounded-full", resultClass(result) }>
+		{ string(result) }
+	</span>
+}
+
+templ milestoneBadge(status swarm.MilestoneStatus) {
+	<span class={ "text-xs px-2 py-0.5 rounded-full", milestoneClass(status) }>
+		{ string(status) }
+	</span>
+}
+
+func shortID(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
+}
+
+func statusClass(status swarm.WorkflowStatus) string {
+	switch status {
+	case swarm.StatusRunning:
+		return "bg-yellow-900/50 text-yellow-300"
+	case swarm.StatusComplete:
+		return "bg-green-900/50 text-green-300"
+	case swarm.StatusFailed:
+		return "bg-red-900/50 text-red-300"
+	case swarm.StatusCanceled:
+		return "bg-muted text-muted-foreground"
+	default: // pending
+		return "bg-blue-900/50 text-blue-300"
+	}
+}
+
+func phaseClass(phase swarm.Phase) string {
+	switch phase {
+	case swarm.PhaseDone:
+		return "bg-green-900/50 text-green-300"
+	case swarm.PhaseFailed:
+		return "bg-red-900/50 text-red-300"
+	default:
+		return "bg-muted text-muted-foreground"
+	}
+}
+
+func resultClass(result swarm.SessionResult) string {
+	switch result {
+	case swarm.ResultSuccess:
+		return "bg-green-900/50 text-green-300"
+	case swarm.ResultLogicFailure:
+		return "bg-red-900/50 text-red-300"
+	case swarm.ResultInfraFailure:
+		return "bg-orange-900/50 text-orange-300"
+	case swarm.ResultTimeout, swarm.ResultContextLimit:
+		return "bg-yellow-900/50 text-yellow-300"
+	default:
+		return "bg-muted text-muted-foreground"
+	}
+}
+
+func milestoneClass(status swarm.MilestoneStatus) string {
+	switch status {
+	case swarm.MilestoneStatusPassed:
+		return "bg-green-900/50 text-green-300"
+	case swarm.MilestoneStatusFailed:
+		return "bg-red-900/50 text-red-300"
+	default: // pending
+		return "bg-blue-900/50 text-blue-300"
+	}
+}
+
+func eventTypeClass(_ swarm.EventType) string {
+	return "bg-muted text-muted-foreground"
+}
+
+// Suppress unused import warning — sql.NullString is used in template expressions.
+var _ = sql.NullString{}

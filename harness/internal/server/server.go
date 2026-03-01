@@ -193,6 +193,12 @@ func (s *Server) RegisterRoutes(e *echo.Echo) {
 	approved.GET("/mayor/:worldID/file", s.handleMayorFileRead)
 	approved.PUT("/mayor/:worldID/file", s.handleMayorFileSave)
 
+	// Swarm dashboard (approved users).
+	approved.GET("/swarm", s.handleSwarmDashboard)
+	approved.GET("/swarm/events", s.handleSwarmDashboardSSE)
+	approved.GET("/swarm/:id", s.handleSwarmWorkflowDetail)
+	approved.POST("/swarm/:id/cancel", s.handleSwarmDashboardCancel)
+
 	// WASM artifact serving (approved users).
 	approved.GET("/wasm/:worldID/:cpID/*", s.handleWASMArtifacts)
 

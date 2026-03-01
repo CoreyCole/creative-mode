@@ -81,6 +81,7 @@ type Querier interface {
 	GetWorldsWithDiscordChannels(ctx context.Context) ([]World, error)
 	IncrementSwarmLearningReference(ctx context.Context, id string) error
 	ListActiveSwarmWorkflows(ctx context.Context) ([]SwarmWorkflow, error)
+	ListAllSwarmWorkflows(ctx context.Context, limit int64) ([]ListAllSwarmWorkflowsRow, error)
 	ListPendingUsers(ctx context.Context) ([]User, error)
 	ListRecentSwarmEvents(ctx context.Context, limit int64) ([]SwarmEvent, error)
 	ListRecentSwarmLearnings(ctx context.Context, createdAt string) ([]SwarmLearning, error)

@@ -356,7 +356,10 @@ func resolveOpenclawPaths(dataDir string) (home, bin string) {
 	if home == "" {
 		home = filepath.Join(dataDir, "openclaw")
 	}
-	bin = "/opt/openclaw/node_modules/.bin/openclaw"
+	bin = os.Getenv("OPENCLAW_BIN")
+	if bin == "" {
+		bin = "/opt/openclaw/openclaw.mjs"
+	}
 	return home, bin
 }
 

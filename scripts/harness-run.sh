@@ -26,6 +26,7 @@ export PATH="/home/deploy/go/bin:$PATH"
 
 # OpenClaw (agent framework for world mayors)
 export OPENCLAW_HOME=/home/deploy/creative-mode/data/openclaw
+export OPENCLAW_BIN=/opt/openclaw/openclaw.mjs
 
 # CGO for SQLite
 export CGO_ENABLED=1

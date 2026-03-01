@@ -167,5 +167,7 @@ func checkGatewayHealth() bool {
 		return false
 	}
 	defer func() { _ = resp.Body.Close() }()
-	return resp.StatusCode == http.StatusOK
+	// 503 = Control UI assets not built (gateway is still functional).
+	return resp.StatusCode == http.StatusOK ||
+		resp.StatusCode == http.StatusServiceUnavailable
 }

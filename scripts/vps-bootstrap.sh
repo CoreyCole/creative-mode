@@ -33,6 +33,7 @@ set -euo pipefail
 #   15b. Installs Claude Code CLI
 #   15c. Installs uv (Python package runner for Claude Code hooks)
 #   15d. Installs playwright-cli (autonomous browser testing)
+#   15e. Installs and configures OpenClaw gateway (agent framework for mayors)
 #   16. Starts the server via systemd
 #   17. Prints summary
 #
@@ -904,6 +905,162 @@ else
         sudo -u deploy bash -lc 'source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh && npm install -g @playwright/cli@latest'
         sudo -u deploy bash -lc 'source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh && export PATH="$HOME/.npm-global/bin:$PATH" && playwright-cli install'
         ok "Installed playwright-cli + Chromium"
+    fi
+fi
+
+# ============================================================================
+# Step 15e: Install and configure OpenClaw gateway
+# ============================================================================
+# OpenClaw is the agent framework for world mayors. The gateway runs as a
+# separate systemd service on port 18789, providing the /v1/chat/completions
+# API that the harness uses for mayor chat and orchestration.
+#
+# Sub-steps:
+#   1. Copy source from context/openclaw/ to /opt/openclaw/ (if missing)
+#   2. Install dependencies with pnpm
+#   3. Generate OPENCLAW_GATEWAY_TOKEN (if not in .env)
+#   4. Run setup-openclaw.sh for config
+#   5. Create and start openclaw-gateway.service
+# ============================================================================
+section "Step 15e: Install and configure OpenClaw gateway"
+
+OPENCLAW_SRC="$CREATIVE_MODE_DIR/context/openclaw"
+OPENCLAW_INSTALL="/opt/openclaw"
+OPENCLAW_BIN="$OPENCLAW_INSTALL/openclaw.mjs"
+OPENCLAW_DATA="$CREATIVE_MODE_DIR/data/openclaw"
+
+# Sub-step 1: Install OpenClaw source
+if [ -f "$OPENCLAW_BIN" ]; then
+    skip "OpenClaw already installed at $OPENCLAW_INSTALL"
+else
+    if [ ! -d "$OPENCLAW_SRC" ]; then
+        warn "OpenClaw source not found at $OPENCLAW_SRC — skipping gateway setup"
+        warn "Clone or copy OpenClaw source to context/openclaw/ first"
+    else
+        if $DRY_RUN; then
+            info "Would copy OpenClaw source to $OPENCLAW_INSTALL and install dependencies"
+        else
+            cp -r "$OPENCLAW_SRC" "$OPENCLAW_INSTALL"
+            chown -R deploy:deploy "$OPENCLAW_INSTALL"
+            ok "Copied OpenClaw source to $OPENCLAW_INSTALL"
+        fi
+    fi
+fi
+
+# Sub-step 2: Install dependencies and build (skip if dist/ exists)
+if [ -f "$OPENCLAW_BIN" ]; then
+    if [ -d "$OPENCLAW_INSTALL/dist" ]; then
+        skip "OpenClaw already built"
+    else
+        if $DRY_RUN; then
+            info "Would install OpenClaw dependencies and build"
+        else
+            sudo -u deploy bash -lc "
+                source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+                export PATH=\"\$HOME/.npm-global/bin:\$PATH\"
+                cd $OPENCLAW_INSTALL && pnpm install --frozen-lockfile && pnpm build
+            "
+            ok "Installed OpenClaw dependencies and built"
+        fi
+    fi
+fi
+
+# Sub-step 3: Generate gateway token
+if [ -f "$OPENCLAW_BIN" ]; then
+    if grep -q 'OPENCLAW_GATEWAY_TOKEN' "$ENV_FILE" 2>/dev/null; then
+        skip "OPENCLAW_GATEWAY_TOKEN already in .env"
+    else
+        if $DRY_RUN; then
+            info "Would generate OPENCLAW_GATEWAY_TOKEN and append to .env"
+        else
+            OC_TOKEN=$(openssl rand -hex 32)
+            {
+                echo ""
+                echo "# OpenClaw gateway auth token"
+                echo "OPENCLAW_GATEWAY_TOKEN=$OC_TOKEN"
+            } >> "$ENV_FILE"
+            ok "Generated OPENCLAW_GATEWAY_TOKEN"
+        fi
+    fi
+fi
+
+# Sub-step 4: Run setup-openclaw.sh for config
+if [ -f "$OPENCLAW_BIN" ]; then
+    if [ -f "$OPENCLAW_DATA/.openclaw/openclaw.json" ]; then
+        skip "OpenClaw config already exists"
+    else
+        if $DRY_RUN; then
+            info "Would run setup-openclaw.sh to configure OpenClaw"
+        else
+            sudo -u deploy bash -lc "
+                source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+                set -a && source $ENV_FILE && set +a
+                export OPENCLAW_HOME=$OPENCLAW_DATA
+                export OPENCLAW_BIN=$OPENCLAW_BIN
+                bash $CREATIVE_MODE_DIR/harness/scripts/setup-openclaw.sh
+            "
+            ok "OpenClaw configured"
+        fi
+    fi
+fi
+
+# Sub-step 5: Create systemd service
+if [ -f "$OPENCLAW_BIN" ]; then
+    if [ -f /etc/systemd/system/openclaw-gateway.service ]; then
+        skip "openclaw-gateway.service already exists"
+    else
+        if $DRY_RUN; then
+            info "Would create openclaw-gateway.service"
+        else
+            NODE_BIN=$(sudo -u deploy bash -lc 'source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh && which node')
+            cat > /etc/systemd/system/openclaw-gateway.service << SVCEOF
+[Unit]
+Description=OpenClaw Gateway
+After=network-online.target
+Wants=network-online.target
+Before=creative-mode.service
+
+[Service]
+Type=simple
+User=deploy
+WorkingDirectory=$OPENCLAW_INSTALL
+ExecStart=$NODE_BIN $OPENCLAW_BIN gateway run
+Restart=always
+RestartSec=5
+KillMode=process
+Environment=HOME=/home/deploy
+Environment=OPENCLAW_HOME=$OPENCLAW_DATA
+Environment=NODE_ENV=production
+EnvironmentFile=$ENV_FILE
+
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+            systemctl daemon-reload
+            systemctl enable openclaw-gateway
+            ok "Created and enabled openclaw-gateway.service"
+        fi
+    fi
+
+    # Start the gateway
+    if systemctl is-active --quiet openclaw-gateway; then
+        skip "openclaw-gateway is already running"
+    else
+        if $DRY_RUN; then
+            info "Would start openclaw-gateway"
+        else
+            systemctl start openclaw-gateway
+            sleep 2
+            # Health returns 503 when Control UI assets aren't built (expected),
+            # but the gateway is still functional. Check for any HTTP response.
+            HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:18789/health 2>/dev/null || echo "000")
+            if [ "$HTTP_CODE" != "000" ]; then
+                ok "OpenClaw gateway running (HTTP $HTTP_CODE on /health)"
+            else
+                warn "OpenClaw gateway started but not responding on port 18789"
+                warn "Check logs: journalctl -u openclaw-gateway -n 20"
+            fi
+        fi
     fi
 fi
 

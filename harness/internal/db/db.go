@@ -96,6 +96,7 @@ func (d *DB) runMigrations(ctx context.Context) error {
 		"migrations/003_template_type.sql",
 		"migrations/004_mayor_and_instrumentation.sql",
 		"migrations/005_cover_image.sql",
+		"migrations/006_swarm_tables.sql",
 	}
 	for _, file := range migrationFiles {
 		// Check if already applied.

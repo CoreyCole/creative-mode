@@ -7,6 +7,8 @@ package sqlc
 import (
 	"database/sql"
 	"time"
+
+	"creative-mode/harness/internal/swarm"
 )
 
 type Checkpoint struct {
@@ -90,6 +92,117 @@ type Session struct {
 	UserID    string
 	CreatedAt time.Time
 	ExpiresAt time.Time
+}
+
+type SwarmConfig struct {
+	ID     string
+	Config string
+}
+
+type SwarmEvent struct {
+	ID         string
+	WorkflowID sql.NullString
+	SessionID  sql.NullString
+	TicketID   string
+	EventType  swarm.EventType
+	Phase      sql.NullString
+	Detail     sql.NullString
+	CreatedAt  string
+}
+
+type SwarmLearning struct {
+	ID               string
+	SourceWorkflowID sql.NullString
+	SourceSessionID  sql.NullString
+	TicketID         string
+	Category         swarm.LearningCategory
+	Phase            sql.NullString
+	Severity         swarm.LearningSeverity
+	Title            string
+	Content          string
+	DocPath          sql.NullString
+	Tags             sql.NullString
+	RelevanceScore   float64
+	ReferencedCount  int64
+	ArchivedAt       sql.NullString
+	CreatedAt        string
+	UpdatedAt        string
+}
+
+type SwarmLearningDigest struct {
+	ID            string
+	DigestType    string
+	PeriodStart   string
+	PeriodEnd     string
+	LearningCount int64
+	Summary       string
+	ActionItems   sql.NullString
+	DocPath       sql.NullString
+	CreatedAt     string
+}
+
+type SwarmProjectMilestone struct {
+	ID         string
+	WorkflowID string
+	ProjectID  sql.NullString
+	Name       string
+	Criteria   string
+	Status     swarm.MilestoneStatus
+	VerifiedAt sql.NullString
+	CreatedAt  string
+}
+
+type SwarmSession struct {
+	ID          string
+	WorkflowID  string
+	SessionName string
+	Skill       string
+	Phase       swarm.Phase
+	Result      swarm.SessionResult
+	Detail      sql.NullString
+	DurationSec sql.NullInt64
+	TotalTokens sql.NullInt64
+	StartedAt   string
+	CompletedAt sql.NullString
+}
+
+type SwarmTicket struct {
+	ID         string
+	Identifier string
+	Title      string
+	Status     string
+	Priority   sql.NullInt64
+	Assignee   sql.NullString
+	Labels     sql.NullString
+	ParentID   sql.NullString
+	ProjectID  sql.NullString
+	Url        string
+	CreatedAt  string
+	UpdatedAt  string
+	SyncedAt   string
+}
+
+type SwarmTicketComment struct {
+	ID        string
+	TicketID  string
+	Body      string
+	Author    sql.NullString
+	CreatedAt string
+	UpdatedAt string
+	SyncedAt  string
+}
+
+type SwarmWorkflow struct {
+	ID                 string
+	TicketID           string
+	WorkflowType       swarm.WorkflowType
+	Phase              swarm.Phase
+	Status             swarm.WorkflowStatus
+	Attempt            int64
+	PreviousWorkflowID sql.NullString
+	BranchName         sql.NullString
+	CreatedAt          string
+	UpdatedAt          string
 }
 
 type User struct {

@@ -308,10 +308,11 @@ func (o *Orchestrator) ReapOrphanedSessions() {
 	for _, line := range strings.Split(
 		strings.TrimSpace(string(out)), "\n",
 	) {
-		// Match cm-{worldID}-{cpID} but NOT cm-server-* or cm-trunk-*.
+		// Match cm-{worldID}-{cpID} but NOT cm-server-*, cm-trunk-*, or cm-swarm-*.
 		if !strings.HasPrefix(line, "cm-") ||
 			strings.HasPrefix(line, "cm-server-") ||
-			strings.HasPrefix(line, "cm-trunk-") {
+			strings.HasPrefix(line, "cm-trunk-") ||
+			strings.HasPrefix(line, "cm-swarm-") {
 			continue
 		}
 

@@ -52,6 +52,32 @@ sql:
           error_message: "ErrorMessage"
           invited_by: "InvitedBy"
           cover_image_path: "CoverImagePath"
+          workflow_id: "WorkflowID"
+          workflow_type: "WorkflowType"
+          ticket_id: "TicketID"
+          session_id: "SessionID"
+          session_name: "SessionName"
+          event_type: "EventType"
+          agent_index: "AgentIndex"
+          previous_workflow_id: "PreviousWorkflowID"
+          branch_name: "BranchName"
+          duration_sec: "DurationSec"
+          total_tokens: "TotalTokens"
+          project_id: "ProjectID"
+          parent_id: "ParentID"
+          synced_at: "SyncedAt"
+          verified_at: "VerifiedAt"
+          source_workflow_id: "SourceWorkflowID"
+          source_session_id: "SourceSessionID"
+          relevance_score: "RelevanceScore"
+          referenced_count: "ReferencedCount"
+          archived_at: "ArchivedAt"
+          doc_path: "DocPath"
+          digest_type: "DigestType"
+          period_start: "PeriodStart"
+          period_end: "PeriodEnd"
+          learning_count: "LearningCount"
+          action_items: "ActionItems"
         overrides:
           - db_type: "TIMESTAMP"
             go_type:
@@ -60,3 +86,39 @@ sql:
             nullable: true
           - column: "checkpoints.status"
             go_type: "string"
+          - column: "swarm_workflows.phase"
+            go_type:
+              import: "creative-mode/harness/internal/swarm"
+              type: "Phase"
+          - column: "swarm_workflows.status"
+            go_type:
+              import: "creative-mode/harness/internal/swarm"
+              type: "WorkflowStatus"
+          - column: "swarm_workflows.workflow_type"
+            go_type:
+              import: "creative-mode/harness/internal/swarm"
+              type: "WorkflowType"
+          - column: "swarm_sessions.phase"
+            go_type:
+              import: "creative-mode/harness/internal/swarm"
+              type: "Phase"
+          - column: "swarm_sessions.result"
+            go_type:
+              import: "creative-mode/harness/internal/swarm"
+              type: "SessionResult"
+          - column: "swarm_events.event_type"
+            go_type:
+              import: "creative-mode/harness/internal/swarm"
+              type: "EventType"
+          - column: "swarm_project_milestones.status"
+            go_type:
+              import: "creative-mode/harness/internal/swarm"
+              type: "MilestoneStatus"
+          - column: "swarm_learnings.category"
+            go_type:
+              import: "creative-mode/harness/internal/swarm"
+              type: "LearningCategory"
+          - column: "swarm_learnings.severity"
+            go_type:
+              import: "creative-mode/harness/internal/swarm"
+              type: "LearningSeverity"

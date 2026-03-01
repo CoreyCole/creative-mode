@@ -10,7 +10,10 @@ import (
 )
 
 type Querier interface {
+	ArchiveSwarmLearning(ctx context.Context, id string) error
+	CompleteSwarmSession(ctx context.Context, arg CompleteSwarmSessionParams) error
 	CountActiveBuilds(ctx context.Context, createdBy sql.NullString) (int64, error)
+	CountActiveSwarmSessions(ctx context.Context) (int64, error)
 	CountUsers(ctx context.Context) (int64, error)
 	CreateCheckpoint(ctx context.Context, arg CreateCheckpointParams) error
 	CreateMayorActivity(ctx context.Context, arg CreateMayorActivityParams) error
@@ -19,8 +22,21 @@ type Querier interface {
 	CreateMessage(ctx context.Context, arg CreateMessageParams) error
 	CreatePromptHistory(ctx context.Context, arg CreatePromptHistoryParams) error
 	CreateSession(ctx context.Context, arg CreateSessionParams) error
+	// swarm_events
+	CreateSwarmEvent(ctx context.Context, arg CreateSwarmEventParams) error
+	// swarm_learnings
+	CreateSwarmLearning(ctx context.Context, arg CreateSwarmLearningParams) error
+	// swarm_learning_digests
+	CreateSwarmLearningDigest(ctx context.Context, arg CreateSwarmLearningDigestParams) error
+	// swarm_project_milestones
+	CreateSwarmMilestone(ctx context.Context, arg CreateSwarmMilestoneParams) error
+	// swarm_sessions
+	CreateSwarmSession(ctx context.Context, arg CreateSwarmSessionParams) error
+	// swarm_workflows
+	CreateSwarmWorkflow(ctx context.Context, arg CreateSwarmWorkflowParams) error
 	CreateWorld(ctx context.Context, arg CreateWorldParams) error
 	CreateWorldInvite(ctx context.Context, arg CreateWorldInviteParams) error
+	DecaySwarmLearningRelevance(ctx context.Context) error
 	DeleteExpiredSessions(ctx context.Context) error
 	DeleteMessagesByUserID(ctx context.Context, userID sql.NullString) error
 	DeletePromptHistoryByUserID(ctx context.Context, userID string) error
@@ -31,6 +47,9 @@ type Querier interface {
 	DeleteWorldInvite(ctx context.Context, arg DeleteWorldInviteParams) error
 	GetCheckpoint(ctx context.Context, id string) (Checkpoint, error)
 	GetCheckpointTree(ctx context.Context, worldID string) ([]Checkpoint, error)
+	GetLatestSwarmLearningDigest(ctx context.Context) (SwarmLearningDigest, error)
+	GetLatestSwarmResultComment(ctx context.Context, ticketID string) (SwarmTicketComment, error)
+	GetLatestSwarmSession(ctx context.Context, workflowID string) (SwarmSession, error)
 	GetMayorActivity(ctx context.Context, arg GetMayorActivityParams) ([]MayorActivity, error)
 	GetMayorBuilds(ctx context.Context, arg GetMayorBuildsParams) ([]MayorBuild, error)
 	GetMayorMessageByDiscordID(ctx context.Context, discordMessageID sql.NullString) (MayorMessage, error)
@@ -42,6 +61,16 @@ type Querier interface {
 	GetRecentMessagesByWorld(ctx context.Context, arg GetRecentMessagesByWorldParams) ([]Message, error)
 	GetRecentMessagesWithUser(ctx context.Context, limit int64) ([]GetRecentMessagesWithUserRow, error)
 	GetSession(ctx context.Context, id string) (Session, error)
+	// swarm_config
+	GetSwarmConfig(ctx context.Context) (SwarmConfig, error)
+	GetSwarmLearning(ctx context.Context, id string) (SwarmLearning, error)
+	GetSwarmMilestone(ctx context.Context, id string) (SwarmProjectMilestone, error)
+	GetSwarmSession(ctx context.Context, id string) (SwarmSession, error)
+	GetSwarmTicket(ctx context.Context, id string) (SwarmTicket, error)
+	GetSwarmTicketByIdentifier(ctx context.Context, identifier string) (SwarmTicket, error)
+	GetSwarmWorkflow(ctx context.Context, id string) (SwarmWorkflow, error)
+	GetSwarmWorkflowByPrevious(ctx context.Context, previousWorkflowID sql.NullString) (SwarmWorkflow, error)
+	GetSwarmWorkflowsByTicket(ctx context.Context, ticketID string) ([]SwarmWorkflow, error)
 	GetUserByDiscordID(ctx context.Context, discordID string) (User, error)
 	GetUserByID(ctx context.Context, id string) (User, error)
 	GetUserPosition(ctx context.Context, arg GetUserPositionParams) (string, error)
@@ -50,7 +79,24 @@ type Querier interface {
 	GetWorldByMayorSecret(ctx context.Context, mayorSecret sql.NullString) (World, error)
 	GetWorldInvites(ctx context.Context, worldID string) ([]WorldInvite, error)
 	GetWorldsWithDiscordChannels(ctx context.Context) ([]World, error)
+	IncrementSwarmLearningReference(ctx context.Context, id string) error
+	ListActiveSwarmWorkflows(ctx context.Context) ([]SwarmWorkflow, error)
 	ListPendingUsers(ctx context.Context) ([]User, error)
+	ListRecentSwarmEvents(ctx context.Context, limit int64) ([]SwarmEvent, error)
+	ListRecentSwarmLearnings(ctx context.Context, createdAt string) ([]SwarmLearning, error)
+	ListRunningSwarmWorkflows(ctx context.Context) ([]SwarmWorkflow, error)
+	ListSwarmEventsByType(ctx context.Context, arg ListSwarmEventsByTypeParams) ([]SwarmEvent, error)
+	ListSwarmEventsByWorkflow(ctx context.Context, workflowID sql.NullString) ([]SwarmEvent, error)
+	ListSwarmLearningDigests(ctx context.Context, limit int64) ([]SwarmLearningDigest, error)
+	ListSwarmLearningsByTicket(ctx context.Context, ticketID string) ([]SwarmLearning, error)
+	ListSwarmMilestonesByWorkflow(ctx context.Context, workflowID string) ([]SwarmProjectMilestone, error)
+	ListSwarmSessionsByWorkflow(ctx context.Context, workflowID string) ([]SwarmSession, error)
+	ListSwarmTicketComments(ctx context.Context, ticketID string) ([]SwarmTicketComment, error)
+	ListSwarmTickets(ctx context.Context) ([]SwarmTicket, error)
+	// Dashboard queries
+	ListSwarmWorkflowsWithLatestSession(ctx context.Context) ([]ListSwarmWorkflowsWithLatestSessionRow, error)
+	ListTopCriticalSwarmLearnings(ctx context.Context, limit int64) ([]SwarmLearning, error)
+	ListTopSwarmLearningsByPhase(ctx context.Context, arg ListTopSwarmLearningsByPhaseParams) ([]SwarmLearning, error)
 	ListUsers(ctx context.Context) ([]User, error)
 	ListWorlds(ctx context.Context) ([]World, error)
 	SetUserPosition(ctx context.Context, arg SetUserPositionParams) error
@@ -62,10 +108,19 @@ type Querier interface {
 	UpdateCheckpointWasmPath(ctx context.Context, arg UpdateCheckpointWasmPathParams) error
 	UpdateLastSeen(ctx context.Context, id string) error
 	UpdateMayorBuildStatus(ctx context.Context, arg UpdateMayorBuildStatusParams) error
+	UpdateSwarmConfig(ctx context.Context, config string) error
+	UpdateSwarmMilestoneStatus(ctx context.Context, arg UpdateSwarmMilestoneStatusParams) error
+	UpdateSwarmWorkflowBranch(ctx context.Context, arg UpdateSwarmWorkflowBranchParams) error
+	UpdateSwarmWorkflowPhase(ctx context.Context, arg UpdateSwarmWorkflowPhaseParams) error
+	UpdateSwarmWorkflowStatus(ctx context.Context, arg UpdateSwarmWorkflowStatusParams) error
 	UpdateUserRole(ctx context.Context, arg UpdateUserRoleParams) (sql.Result, error)
 	UpdateWorldCoverImage(ctx context.Context, arg UpdateWorldCoverImageParams) error
 	UpdateWorldMayor(ctx context.Context, arg UpdateWorldMayorParams) error
 	UpsertMayorSession(ctx context.Context, arg UpsertMayorSessionParams) error
+	// swarm_tickets
+	UpsertSwarmTicket(ctx context.Context, arg UpsertSwarmTicketParams) error
+	// swarm_ticket_comments
+	UpsertSwarmTicketComment(ctx context.Context, arg UpsertSwarmTicketCommentParams) error
 	UpsertUser(ctx context.Context, arg UpsertUserParams) error
 }
 

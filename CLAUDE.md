@@ -15,6 +15,7 @@ Multiplayer creative sandbox — Go harness server + Bevy/WASM game client.
 | `pkg/`     | Shared Go packages: `worldchannel` (Discord channels), `mayorchat` (onboarding chat), `markdown` (renderer), `imagegen` (image generation) |
 | `context/` | Reference code (gitignored) |
 | `thoughts/` | Plans, reviews, and notes |
+| `thoughts/swarm/` | Swarm agent handoffs, plans, research, retrospectives, and learning digests |
 
 ## Agent System
 

@@ -27,6 +27,8 @@ Creates a git branch, commits changes, pushes, and opens a GitHub PR linked to t
 | `CM_SWARM_RESULT_PATH` | Path to write RESULT output as final action |
 | `CM_SWARM_DRY_RUN` | If `true`, no git/GitHub operations |
 | `CM_SWARM_BRANCH` | Branch name (if pre-set by orchestrator) |
+| `CM_SWARM_STACK_PARENT` | Parent branch for Graphite stacking (set by project orchestrator) |
+| `CM_SWARM_STACK_ORDER` | Position in stack for PR description (set by project orchestrator) |
 
 ## Process
 
@@ -39,7 +41,23 @@ Creates a git branch, commits changes, pushes, and opens a GitHub PR linked to t
    - File inventory for PR description
    - Acceptance criteria for test plan
 
-3. **Create branch and commit**:
+3. **Create branch and commit** — Choose between Graphite stacking and plain git:
+
+   **If `$CM_SWARM_STACK_PARENT` is set** (Graphite stacking mode):
+   ```bash
+   # Ensure we're on the parent branch first
+   git checkout {CM_SWARM_STACK_PARENT}
+   # Create stacked branch via Graphite
+   gt branch create swarm/{ticketID}/{slug} -m "{ticket title}" --no-interactive
+   git add {specific files from plan's file inventory}
+   git commit -m "{ticket title}
+
+   {Brief description of changes}
+
+   Closes {ticketID}"
+   ```
+
+   **Otherwise** (standalone branch):
    ```bash
    git checkout -b swarm/{ticketID}/{slug}
    git add {specific files from plan's file inventory}
@@ -49,15 +67,29 @@ Creates a git branch, commits changes, pushes, and opens a GitHub PR linked to t
 
    Closes {ticketID}"
    ```
+
+   In both cases:
    - Stage specific files, not `git add -A`
    - Include handoff and plan documents in the commit
 
-4. **Push to remote**:
+4. **Push and create PR** — Choose based on stacking mode:
+
+   **If `$CM_SWARM_STACK_PARENT` is set** (Graphite stacking):
+   ```bash
+   # Submit the stack — creates/updates PRs for all stacked branches
+   gt stack submit --no-interactive --no-edit --publish
+   ```
+   The PR title and body are set from the first commit message and Graphite's
+   template. Add stack context to the PR body:
+   ```
+   Stack position: {CM_SWARM_STACK_ORDER} (parent: {CM_SWARM_STACK_PARENT})
+   ```
+
+   **Otherwise** (standalone):
    ```bash
    git push -u origin swarm/{ticketID}/{slug}
    ```
-
-5. **Create GitHub PR** — Use `gh pr create`:
+   Then create PR with `gh pr create`:
    ```bash
    gh pr create --title "{ticketID}: {title}" --body "$(cat <<'EOF'
    ## Summary
@@ -77,10 +109,7 @@ Creates a git branch, commits changes, pushes, and opens a GitHub PR linked to t
    )"
    ```
 
-6. **Move ticket to In Review** — Update Linear ticket status:
-   ```bash
-   linear-cli update {ticketID} --status "In Review"
-   ```
+5. **Move ticket to In Review** — The orchestrator handles Linear status updates via the Go API client. No CLI call needed here.
 
 7. **Post Linear comment** — `PR:` prefix:
    ```

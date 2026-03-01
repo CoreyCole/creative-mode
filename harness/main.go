@@ -7,6 +7,7 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	discordlistener "creative-mode/harness/internal/discord"
 	"creative-mode/harness/internal/events"
 	"creative-mode/harness/internal/gemini"
+	"creative-mode/harness/internal/graphite"
 	"creative-mode/harness/internal/linear"
 	"creative-mode/harness/internal/logging"
 	"creative-mode/harness/internal/mayor"
@@ -279,6 +281,15 @@ func main() {
 		}
 		swarmManager.SetLinearClient(linear.NewClient(linearKey, linearTeam, logger))
 		logger.Info("Swarm Linear integration enabled", "team", linearTeam)
+	}
+
+	// Set up Graphite client for branch stacking (optional — requires gt CLI).
+	if gtBin, gtErr := exec.LookPath("gt"); gtErr == nil {
+		projectRoot, _ := filepath.Abs("..")
+		swarmManager.SetGraphiteClient(
+			graphite.NewClient(gtBin, projectRoot, logger),
+		)
+		logger.Info("Swarm Graphite integration enabled", "bin", gtBin)
 	}
 
 	// Set up Temporal runtime for durable swarm orchestration (optional).

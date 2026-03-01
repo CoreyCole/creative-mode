@@ -20,6 +20,7 @@ import (
 	"creative-mode/harness/internal/db"
 	"creative-mode/harness/internal/db/sqlc"
 	"creative-mode/harness/internal/events"
+	"creative-mode/harness/internal/graphite"
 	"creative-mode/harness/internal/linear"
 	"creative-mode/harness/internal/swarm"
 )
@@ -71,6 +72,9 @@ type Manager struct {
 
 	// Linear client for ticket management (nil when LINEAR_API_KEY is not set).
 	linearClient *linear.Client
+
+	// Graphite client for branch stacking (nil when gt CLI is not available).
+	graphiteClient *graphite.Client
 
 	// Temporal runtime (nil when CM_SWARM_TEMPORAL=false).
 	temporalRuntime *TemporalRuntime
@@ -861,10 +865,14 @@ func (m *Manager) buildEnv(
 		m.populatePreviousContext(ctx, &se, wf.PreviousWorkflowID.String)
 	}
 
-	// Look up ticket URL.
+	// Look up ticket URL and project context for Graphite stacking.
 	ticket, ticketErr := m.db.GetSwarmTicket(ctx, wf.TicketID)
 	if ticketErr == nil && ticket.Url != "" {
 		se.TicketURL = ticket.Url
+	}
+
+	if ticketErr == nil && m.graphiteClient != nil && ticket.ParentID.Valid {
+		m.populateStackContext(ctx, &se, ticket)
 	}
 
 	if hookSecret := os.Getenv(swarm.EnvKey("HookSecret")); hookSecret != "" {
@@ -928,6 +936,59 @@ func (m *Manager) populatePreviousContext(
 	if r, rErr := swarm.ResolveResearchPath(m.baseDir, prevWF.TicketID); rErr == nil {
 		se.PreviousResearchPath = r
 	}
+}
+
+// populateStackContext sets Graphite stacking env vars when the ticket is a
+// child of a project. It looks up the parent ticket's branch to set as the
+// stack parent, and counts siblings to determine stack order.
+func (m *Manager) populateStackContext(
+	ctx context.Context,
+	se *swarm.SwarmEnv,
+	ticket sqlc.SwarmTicket,
+) {
+	if !ticket.ParentID.Valid {
+		return
+	}
+
+	// Look up the parent ticket's latest workflow to get its branch name.
+	parentBranch := "main"
+
+	parentWFs, wfErr := m.db.GetSwarmWorkflowsByTicket(ctx, ticket.ParentID.String)
+	if wfErr == nil {
+		for i := len(parentWFs) - 1; i >= 0; i-- {
+			if parentWFs[i].BranchName.Valid {
+				parentBranch = parentWFs[i].BranchName.String
+
+				break
+			}
+		}
+	}
+
+	se.StackParent = parentBranch
+
+	// Count siblings for stack ordering (simple positional order).
+	siblings, sibErr := m.db.ListSwarmTickets(ctx)
+	if sibErr != nil {
+		se.StackOrder = "1"
+
+		return
+	}
+
+	order := 1
+
+	for _, t := range siblings {
+		if !t.ParentID.Valid || t.ParentID.String != ticket.ParentID.String {
+			continue
+		}
+
+		if t.Identifier == ticket.Identifier {
+			break
+		}
+
+		order++
+	}
+
+	se.StackOrder = strconv.Itoa(order)
 }
 
 // createTmuxSession creates a new tmux session with the given name, working
@@ -1155,6 +1216,11 @@ func (m *Manager) SetAlertManager(alertMgr *AlertManager) {
 // SetLinearClient configures the Linear API client for ticket management.
 func (m *Manager) SetLinearClient(lc *linear.Client) {
 	m.linearClient = lc
+}
+
+// SetGraphiteClient configures the Graphite CLI client for branch stacking.
+func (m *Manager) SetGraphiteClient(gc *graphite.Client) {
+	m.graphiteClient = gc
 }
 
 // SetTemporalRuntime configures the Temporal runtime for durable orchestration.

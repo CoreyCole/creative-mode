@@ -24,10 +24,12 @@ import (
 )
 
 const (
-	sessionPollInterval = 15 * time.Second
-	resultFilePrefix    = "swarm-result-"
-	learningFilePrefix  = "swarm-learning-"
-	promptFilePrefix    = "swarm-prompt-"
+	sessionPollInterval  = 15 * time.Second
+	startTimeout         = 30 * time.Second
+	tmuxFallbackInterval = 30 * time.Second
+	resultFilePrefix     = "swarm-result-"
+	learningFilePrefix   = "swarm-learning-"
+	promptFilePrefix     = "swarm-prompt-"
 )
 
 // Manager orchestrates swarm workflows: starting workflows, spawning Claude
@@ -42,6 +44,12 @@ type Manager struct {
 	harnessURL string
 	mu         sync.Mutex // serializes workflow advancement
 
+	// Hook-driven completion: registries replace tmux polling as the primary
+	// mechanism. Tmux checks remain as a fallback.
+	completionReg *CompletionRegistry
+	startReg      *StartRegistry
+	ctxPressure   *ContextPressure
+
 	// JSONL log writers keyed by sessionID; closed on session completion.
 	jsonlMu      sync.RWMutex
 	jsonlWriters map[string]*JSONLWriter
@@ -55,13 +63,16 @@ func NewManager(
 	baseDir, logsDir, harnessURL string,
 ) *Manager {
 	return &Manager{
-		db:           database,
-		logger:       logger,
-		eventBus:     eventBus,
-		baseDir:      baseDir,
-		logsDir:      logsDir,
-		harnessURL:   harnessURL,
-		jsonlWriters: make(map[string]*JSONLWriter),
+		db:            database,
+		logger:        logger,
+		eventBus:      eventBus,
+		baseDir:       baseDir,
+		logsDir:       logsDir,
+		harnessURL:    harnessURL,
+		completionReg: NewCompletionRegistry(),
+		startReg:      NewStartRegistry(),
+		ctxPressure:   NewContextPressure(),
+		jsonlWriters:  make(map[string]*JSONLWriter),
 	}
 }
 
@@ -193,10 +204,13 @@ func (m *Manager) RecoverWorkflows(ctx context.Context) error {
 
 		// Check if tmux session is still alive.
 		if isTmuxSessionAlive(session.SessionName) {
-			// Re-attach watcher.
+			// Re-attach watcher with fresh registry channels (hooks may not
+			// fire for recovered sessions, but tmux fallback will catch them).
 			m.logger.Info("recovery: re-watching live session",
 				"session", session.SessionName, "workflow_id", wf.ID)
-			go m.watchSession(session.ID, session.SessionName, time.Now())
+			startCh := m.startReg.Register(session.ID)
+			completionCh := m.completionReg.Register(session.ID)
+			go m.watchSession(session.ID, session.SessionName, startCh, completionCh)
 
 			continue
 		}
@@ -233,6 +247,24 @@ func (m *Manager) spawnSession(ctx context.Context, wf sqlc.SwarmWorkflow) error
 	}
 
 	env, cleanupFn := m.buildEnv(ctx, wf, sessionID)
+
+	// Generate Claude Code hooks config pointing back to harness.
+	hookSecret := os.Getenv("CM_HOOK_SECRET")
+	hooksConfigDir, hooksErr := WriteHooksConfig(
+		sessionID,
+		wf.TicketID,
+		m.harnessURL,
+		hookSecret,
+	)
+	if hooksErr != nil {
+		m.logger.Warn("failed to create hooks config", "error", hooksErr)
+	} else {
+		env["CLAUDE_CONFIG_DIR"] = hooksConfigDir
+	}
+
+	// Register in start and completion registries before spawning.
+	startCh := m.startReg.Register(sessionID)
+	completionCh := m.completionReg.Register(sessionID)
 
 	// Create per-session JSONL writer.
 	jw, jwErr := NewJSONLWriter(m.logsDir, wf.TicketID, sessionID)
@@ -290,27 +322,73 @@ func (m *Manager) spawnSession(ctx context.Context, wf sqlc.SwarmWorkflow) error
 		})
 	}
 
-	go m.watchSession(sessionID, sessionName, time.Now())
+	go m.watchSession(sessionID, sessionName, startCh, completionCh)
 
 	return nil
 }
 
-// watchSession polls tmux every 15s; when the session dies, calls handleSessionComplete.
-func (m *Manager) watchSession(sessionID, sessionName string, startedAt time.Time) {
-	ticker := time.NewTicker(sessionPollInterval)
-	defer ticker.Stop()
+// watchSession waits for hook-driven completion signals, falling back to tmux
+// health checks if hooks don't fire.
+func (m *Manager) watchSession(
+	sessionID, sessionName string,
+	startCh chan struct{},
+	completionCh chan SessionResult,
+) {
+	startedAt := time.Now()
 
-	for range ticker.C {
-		if isTmuxSessionAlive(sessionName) {
-			continue
+	defer func() {
+		m.startReg.Unregister(sessionID)
+		m.completionReg.Unregister(sessionID)
+		m.ctxPressure.Remove(sessionID)
+		CleanupHooksConfig(sessionID)
+	}()
+
+	// Phase 1: Wait for SessionStart hook (30s timeout).
+	select {
+	case <-startCh:
+		m.logger.Info("session started (hook)", "session", sessionName)
+	case <-time.After(startTimeout):
+		// Timeout — check if tmux is alive as fallback.
+		if !isTmuxSessionAlive(sessionName) {
+			m.logger.Warn("session never started and tmux is dead",
+				"session", sessionName)
+			m.handleSessionComplete(context.Background(), sessionID)
+
+			return
 		}
 
-		m.logger.Info("session ended",
-			"session", sessionName,
-			"duration", time.Since(startedAt).Round(time.Second))
-		m.handleSessionComplete(context.Background(), sessionID)
+		m.logger.Info("session start hook timed out, tmux alive — continuing",
+			"session", sessionName)
+	}
 
-		return
+	// Phase 2: Wait for completion signal from Stop/SessionEnd hooks,
+	// with periodic tmux health checks as fallback.
+	tmuxTicker := time.NewTicker(tmuxFallbackInterval)
+	defer tmuxTicker.Stop()
+
+	for {
+		select {
+		case <-completionCh:
+			m.logger.Info("session completed (hook)",
+				"session", sessionName,
+				"duration", time.Since(startedAt).Round(time.Second))
+			m.handleSessionComplete(context.Background(), sessionID)
+
+			return
+
+		case <-tmuxTicker.C:
+			if isTmuxSessionAlive(sessionName) {
+				continue
+			}
+
+			// Tmux died without hooks firing — handle completion.
+			m.logger.Info("session ended (tmux fallback)",
+				"session", sessionName,
+				"duration", time.Since(startedAt).Round(time.Second))
+			m.handleSessionComplete(context.Background(), sessionID)
+
+			return
+		}
 	}
 }
 
@@ -402,9 +480,10 @@ func (m *Manager) handleSessionComplete(ctx context.Context, sessionID string) {
 	// Close JSONL writer for this session.
 	m.closeJSONLWriter(sessionID)
 
-	// Clean up temp files.
+	// Clean up temp files and hooks config.
 	_ = os.Remove(resultPath)
 	_ = os.Remove(LearningFilePath(sessionID))
+	CleanupHooksConfig(sessionID)
 }
 
 // advanceWorkflow uses the state machine to determine the next phase and
@@ -831,6 +910,27 @@ func (m *Manager) WriteJSONLEvent(sessionID string, event map[string]any) {
 	if ok {
 		_ = jw.Write(event)
 	}
+}
+
+// SignalStart notifies the watcher that a session's Claude Code process has started.
+func (m *Manager) SignalStart(sessionID string) {
+	m.startReg.Signal(sessionID)
+}
+
+// SignalCompletion notifies the watcher that a session has completed.
+func (m *Manager) SignalCompletion(sessionID string, result SessionResult) {
+	m.completionReg.Signal(sessionID, result)
+}
+
+// IncrementContextPressure records a compaction event for the session and
+// returns the updated count.
+func (m *Manager) IncrementContextPressure(sessionID string) int {
+	return m.ctxPressure.Increment(sessionID)
+}
+
+// GetContextPressure returns the current compact count for a session.
+func (m *Manager) GetContextPressure(sessionID string) int {
+	return m.ctxPressure.Get(sessionID)
 }
 
 // LogsDir returns the logs directory path.

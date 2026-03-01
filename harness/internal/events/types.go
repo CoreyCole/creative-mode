@@ -19,4 +19,6 @@ const (
 	EventSwarmWorkflowFailed   = "swarm.workflow_failed"
 	EventSwarmSessionSpawned   = "swarm.session_spawned"
 	EventSwarmSessionComplete  = "swarm.session_completed"
+	EventSwarmToolUse          = "swarm.tool_use"
+	EventSwarmContextPressure  = "swarm.context_pressure"
 )

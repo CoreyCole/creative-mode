@@ -167,6 +167,12 @@ func (s *Server) RegisterRoutes(e *echo.Echo) {
 	swarmGroup.GET("/status/:id", s.handleSwarmStatus)
 	swarmGroup.POST("/cancel", s.handleSwarmCancel)
 	swarmGroup.GET("/session/:id/log", s.handleSwarmSessionLog)
+	swarmGroup.POST("/hook/session-started", s.handleSwarmHookSessionStarted)
+	swarmGroup.POST("/hook/pre-tool-use", s.handleSwarmHookPreToolUse)
+	swarmGroup.POST("/hook/post-tool-use", s.handleSwarmHookPostToolUse)
+	swarmGroup.POST("/hook/pre-compact", s.handleSwarmHookPreCompact)
+	swarmGroup.POST("/hook/session-complete", s.handleSwarmHookSessionComplete)
+	swarmGroup.POST("/hook/session-ended", s.handleSwarmHookSessionEnded)
 
 	// Root route — soft session check renders login/pending/lobby.
 	e.GET("/", s.handleRoot)

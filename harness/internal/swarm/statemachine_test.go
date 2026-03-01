@@ -272,6 +272,65 @@ func TestSkillForPhase(t *testing.T) {
 	}
 }
 
+func TestLogicFailureFallthroughPhases(t *testing.T) {
+	t.Parallel()
+
+	config := DefaultConfig
+
+	// Phases where logic_failure has no special handling — should fail the workflow.
+	fallthroughPhases := []struct {
+		name  string
+		phase Phase
+	}{
+		{"research logic_failure → failed", PhaseResearch},
+		{"code_plan logic_failure → failed", PhaseCodePlan},
+		{"implement logic_failure → failed", PhaseImplement},
+		{"pr logic_failure → failed", PhasePR},
+		{"project_plan logic_failure → failed", PhaseProjectPlan},
+	}
+
+	for _, tt := range fallthroughPhases {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := DetermineNextPhase(
+				WorkflowTypeCode,
+				tt.phase,
+				1,
+				ResultLogicFailure,
+				config,
+			)
+			if got.NextPhase != PhaseFailed {
+				t.Errorf("NextPhase = %q, want %q", got.NextPhase, PhaseFailed)
+			}
+			if !got.Failed {
+				t.Error("Failed = false, want true")
+			}
+		})
+	}
+}
+
+func TestTerminalPhasesReturnFailed(t *testing.T) {
+	t.Parallel()
+
+	config := DefaultConfig
+
+	// Calling DetermineNextPhase on terminal phases should return PhaseFailed.
+	for _, phase := range []Phase{PhaseDone, PhaseFailed} {
+		t.Run(string(phase), func(t *testing.T) {
+			t.Parallel()
+
+			got := DetermineNextPhase(WorkflowTypeCode, phase, 1, ResultSuccess, config)
+			if got.NextPhase != PhaseFailed {
+				t.Errorf("NextPhase = %q, want %q", got.NextPhase, PhaseFailed)
+			}
+			if !got.Failed {
+				t.Error("Failed = false, want true")
+			}
+		})
+	}
+}
+
 func TestFirstPhaseIsResearch(t *testing.T) {
 	t.Parallel()
 

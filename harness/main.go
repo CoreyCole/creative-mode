@@ -30,6 +30,7 @@ import (
 	"creative-mode/harness/internal/mayor"
 	"creative-mode/harness/internal/president"
 	"creative-mode/harness/internal/server"
+	"creative-mode/harness/internal/swarmorch"
 	"creative-mode/harness/internal/world"
 )
 
@@ -233,6 +234,17 @@ func main() {
 		}
 	}()
 
+	// Set up swarm orchestrator.
+	swarmManager := swarmorch.NewManager(
+		database, logger, eventBus,
+		"..", // baseDir: project root (harness runs from harness/)
+		filepath.Join(dataDir, "logs"),
+		baseURL,
+	)
+	if recoverErr := swarmManager.RecoverWorkflows(ctx); recoverErr != nil {
+		logger.Error("failed to recover swarm workflows", "error", recoverErr)
+	}
+
 	// Set up Gemini image generation (optional — requires GEMINI_API_KEY).
 	geminiClient, geminiErr := gemini.NewClient(ctx, os.Getenv("GEMINI_API_KEY"), logger)
 	if geminiErr != nil {
@@ -309,6 +321,7 @@ func main() {
 	srv.GeminiClient = geminiClient
 	srv.MayorManager = mayorManager
 	srv.PresidentManager = presidentManager
+	srv.SwarmManager = swarmManager
 	srv.DataDir = dataDir
 	srv.CreateConvMgr = createConvMgr
 	srv.CreateClaudeClient = createClaudeClient

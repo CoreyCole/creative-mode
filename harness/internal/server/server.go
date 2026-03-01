@@ -31,6 +31,7 @@ import (
 	"creative-mode/harness/internal/gemini"
 	"creative-mode/harness/internal/mayor"
 	"creative-mode/harness/internal/president"
+	"creative-mode/harness/internal/swarmorch"
 	"creative-mode/harness/internal/world"
 	"creative-mode/harness/views/admin"
 	"creative-mode/harness/views/lobby"
@@ -56,6 +57,7 @@ type Server struct {
 	GeminiClient     *gemini.Client
 	MayorManager     *mayor.Manager
 	PresidentManager *president.Manager
+	SwarmManager     *swarmorch.Manager
 	DataDir          string
 	dev              *devState // nil when DEV_MODE is not set
 
@@ -158,6 +160,12 @@ func (s *Server) RegisterRoutes(e *echo.Echo) {
 	presidentGroup.POST("/repo-build", s.handlePresidentRepoBuild)
 	presidentGroup.POST("/template-update", s.handlePresidentTemplateUpdate)
 	presidentGroup.POST("/deploy", s.handlePresidentDeploy)
+
+	// Swarm API (protected by CM_HOOK_SECRET).
+	swarmGroup := e.Group("/api/swarm", hookSecretMiddleware())
+	swarmGroup.POST("/start", s.handleSwarmStart)
+	swarmGroup.GET("/status/:id", s.handleSwarmStatus)
+	swarmGroup.POST("/cancel", s.handleSwarmCancel)
 
 	// Root route — soft session check renders login/pending/lobby.
 	e.GET("/", s.handleRoot)

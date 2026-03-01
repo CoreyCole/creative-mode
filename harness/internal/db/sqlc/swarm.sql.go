@@ -188,7 +188,7 @@ func (q *Queries) GetLatestSwarmResultComment(ctx context.Context, ticketID stri
 }
 
 const getLatestSwarmSession = `-- name: GetLatestSwarmSession :one
-SELECT id, workflow_id, session_name, skill, phase, result, detail, duration_sec, total_tokens, started_at, completed_at
+SELECT id, workflow_id, session_name, skill, phase, COALESCE(result, '') AS result, detail, duration_sec, total_tokens, started_at, completed_at
 FROM swarm_sessions WHERE workflow_id = ? ORDER BY started_at DESC LIMIT 1
 `
 
@@ -246,7 +246,7 @@ func (q *Queries) GetSwarmMilestone(ctx context.Context, id string) (SwarmProjec
 }
 
 const getSwarmSession = `-- name: GetSwarmSession :one
-SELECT id, workflow_id, session_name, skill, phase, result, detail, duration_sec, total_tokens, started_at, completed_at
+SELECT id, workflow_id, session_name, skill, phase, COALESCE(result, '') AS result, detail, duration_sec, total_tokens, started_at, completed_at
 FROM swarm_sessions WHERE id = ?
 `
 
@@ -638,7 +638,7 @@ func (q *Queries) ListSwarmMilestonesByWorkflow(ctx context.Context, workflowID 
 }
 
 const listSwarmSessionsByWorkflow = `-- name: ListSwarmSessionsByWorkflow :many
-SELECT id, workflow_id, session_name, skill, phase, result, detail, duration_sec, total_tokens, started_at, completed_at
+SELECT id, workflow_id, session_name, skill, phase, COALESCE(result, '') AS result, detail, duration_sec, total_tokens, started_at, completed_at
 FROM swarm_sessions WHERE workflow_id = ? ORDER BY started_at DESC
 `
 
@@ -758,7 +758,7 @@ func (q *Queries) ListSwarmTickets(ctx context.Context) ([]SwarmTicket, error) {
 const listSwarmWorkflowsWithLatestSession = `-- name: ListSwarmWorkflowsWithLatestSession :many
 
 SELECT w.id, w.ticket_id, w.workflow_type, w.phase, w.status, w.attempt, w.created_at, w.updated_at,
-       s.id AS session_id, s.skill, s.phase AS session_phase, s.result, s.started_at AS session_started_at
+       s.id AS session_id, s.skill, s.phase AS session_phase, COALESCE(s.result, '') AS result, s.started_at AS session_started_at
 FROM swarm_workflows w
 LEFT JOIN swarm_sessions s ON s.id = (
     SELECT id FROM swarm_sessions WHERE workflow_id = w.id ORDER BY started_at DESC LIMIT 1

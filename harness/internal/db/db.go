@@ -65,6 +65,17 @@ func (d *DB) Close() error {
 	return d.db.Close()
 }
 
+// SQLDB returns the underlying *sql.DB for use with interfaces like swarm.DBTX.
+func (d *DB) SQLDB() *sql.DB {
+	return d.db
+}
+
+// NewForTest creates a DB wrapper from an existing *sql.DB and Queries for testing.
+// This bypasses migrations and is only suitable for tests with pre-applied schemas.
+func NewForTest(sqlDB *sql.DB, queries *sqlc.Queries) *DB {
+	return &DB{Queries: queries, db: sqlDB}
+}
+
 // BeginTx starts a new transaction.
 func (d *DB) BeginTx(ctx context.Context) (*sql.Tx, error) {
 	return d.db.BeginTx(ctx, nil)

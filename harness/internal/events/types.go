@@ -12,4 +12,11 @@ const (
 	EventClaudeRateLimited = "claude.rate_limited"
 	EventExecuteScript     = "execute_script"
 	EventMayorMessage      = "mayor.message"
+
+	// Swarm orchestrator events.
+	EventSwarmWorkflowStarted  = "swarm.workflow_started"
+	EventSwarmWorkflowComplete = "swarm.workflow_completed"
+	EventSwarmWorkflowFailed   = "swarm.workflow_failed"
+	EventSwarmSessionSpawned   = "swarm.session_spawned"
+	EventSwarmSessionComplete  = "swarm.session_completed"
 )

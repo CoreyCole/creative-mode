@@ -60,6 +60,9 @@ All structured comments use a prefix for machine parsing:
 | `PR:` | pr | PR URL + summary |
 | `REVISION:` | code_plan (retry) | Revision notes referencing review |
 | `RESTART:` | any | Full restart context |
+| `PROJECT-PLAN:` | project_plan | Project plan summary + doc path |
+| `PROJECT-REVIEW:` | project_review | Verdict (approve/revise) + feedback |
+| `PROJECT-VERIFY:` | project_verify | Milestone verification results |
 | `HEARTBEAT:` | heartbeat | Stall detection / status check |
 | `RESUME:` | resume | Resume context after interruption |
 | `TERMINAL_FAILURE:` | failed | Post-mortem summary |
@@ -81,6 +84,8 @@ Summary: {one-line summary of what happened}
 - Plans: `thoughts/swarm/plans/{timestamp}_{ticketID}_{slug}_v{N}.md`
 - Reviews: `thoughts/swarm/handoffs-plan-reviews/{timestamp}_{ticketID}_{verdict}.md`
 - Handoffs: `thoughts/swarm/handoffs-{phase}/{timestamp}_{ticketID}_{detail}.md`
+- Project Plans: `thoughts/swarm/project-plans/{timestamp}_{ticketID}_{slug}_v{N}.md`
+- Project Reviews: `thoughts/swarm/handoffs-project-reviews/{timestamp}_{ticketID}_{verdict}.md`
 - Retrospectives: `thoughts/swarm/retrospectives/{timestamp}_{ticketID}_{summary}.md`
 - Digests: `thoughts/swarm/digests/{timestamp}_digest.md`
 

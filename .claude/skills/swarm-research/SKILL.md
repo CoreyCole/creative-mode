@@ -26,10 +26,16 @@ Explores the codebase and external sources to answer the research questions in a
 | `CM_SWARM_LEARNING_CONTEXT_PATH` | Learning context file |
 | `CM_SWARM_RESULT_PATH` | Path to write RESULT output as final action |
 | `CM_SWARM_DRY_RUN` | If `true`, no writes |
+| `CM_SWARM_PREVIOUS_WORKFLOW_ID` | Previous workflow ID (if full restart) |
+| `CM_SWARM_PREVIOUS_BRANCH` | Previous workflow's git branch |
+| `CM_SWARM_PREVIOUS_HANDOFF_PATH` | Previous workflow's last handoff |
+| `CM_SWARM_PREVIOUS_RESEARCH_PATH` | Previous workflow's research doc |
 
 ## Process
 
 1. **Read the ticket** — Understand the research questions or goals from the ticket description. Parse the YAML footer for context (dependencies, parent ticket, etc.).
+
+1b. **Read previous attempt context** (restart only) — If `$CM_SWARM_PREVIOUS_HANDOFF_PATH` is set, read the previous attempt's handoff for context. Note what worked and what failed. If `$CM_SWARM_PREVIOUS_RESEARCH_PATH` is set, read prior research to avoid duplicating work.
 
 2. **Explore the codebase** — Use Glob, Grep, Read, and Agent to find relevant code:
    - Identify key files, patterns, and architecture

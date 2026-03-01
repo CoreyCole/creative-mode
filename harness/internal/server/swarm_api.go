@@ -26,9 +26,10 @@ func (s *Server) handleSwarmStart(c echo.Context) error {
 	}
 
 	var req struct {
-		TicketID     string `json:"ticket_id"`     //nolint:tagliatelle // API field name
-		WorkflowType string `json:"workflow_type"` //nolint:tagliatelle // API field name
-		TicketURL    string `json:"ticket_url"`    //nolint:tagliatelle // API field name
+		TicketID           string `json:"ticket_id"`            //nolint:tagliatelle // API field name
+		WorkflowType       string `json:"workflow_type"`        //nolint:tagliatelle // API field name
+		TicketURL          string `json:"ticket_url"`           //nolint:tagliatelle // API field name
+		PreviousWorkflowID string `json:"previous_workflow_id"` //nolint:tagliatelle // API field name
 	}
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
@@ -45,6 +46,7 @@ func (s *Server) handleSwarmStart(c echo.Context) error {
 		req.TicketID,
 		swarm.WorkflowType(req.WorkflowType),
 		req.TicketURL,
+		req.PreviousWorkflowID,
 	)
 	if err != nil {
 		s.Logger.Error("failed to start swarm workflow", "error", err)

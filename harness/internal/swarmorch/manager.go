@@ -101,6 +101,7 @@ func (m *Manager) StartWorkflow(
 	ticketID string,
 	workflowType swarm.WorkflowType,
 	ticketURL string,
+	previousWorkflowID string,
 ) (string, error) {
 	if !workflowType.Valid() {
 		return "", fmt.Errorf("invalid workflow type: %q", workflowType)
@@ -108,13 +109,19 @@ func (m *Manager) StartWorkflow(
 
 	wfID := uuid.New().String()[:8]
 
+	prevWF := sql.NullString{}
+	if previousWorkflowID != "" {
+		prevWF = sql.NullString{String: previousWorkflowID, Valid: true}
+	}
+
 	if err := m.db.CreateSwarmWorkflow(ctx, sqlc.CreateSwarmWorkflowParams{
-		ID:           wfID,
-		TicketID:     ticketID,
-		WorkflowType: workflowType,
-		Phase:        swarm.PhaseResearch,
-		Status:       swarm.StatusRunning,
-		Attempt:      1,
+		ID:                 wfID,
+		TicketID:           ticketID,
+		WorkflowType:       workflowType,
+		Phase:              swarm.PhaseResearch,
+		Status:             swarm.StatusRunning,
+		Attempt:            1,
+		PreviousWorkflowID: prevWF,
 	}); err != nil {
 		return "", fmt.Errorf("create workflow: %w", err)
 	}
@@ -785,38 +792,43 @@ func (m *Manager) buildEnv(
 		}
 	}
 
-	env := map[string]string{
-		"CM_SWARM_TICKET_ID":   wf.TicketID,
-		"CM_SWARM_WORKFLOW_ID": wf.ID,
-		"CM_SWARM_SESSION_ID":  sessionID,
-		"CM_SWARM_PHASE":       string(wf.Phase),
-		"CM_SWARM_ATTEMPT":     strconv.FormatInt(wf.Attempt, 10),
-		"CM_SWARM_RESULT_PATH": ResultFilePath(sessionID),
-		"CM_HARNESS_URL":       m.harnessURL,
+	se := swarm.SwarmEnv{
+		TicketID:   wf.TicketID,
+		WorkflowID: wf.ID,
+		SessionID:  sessionID,
+		Phase:      string(wf.Phase),
+		Attempt:    strconv.FormatInt(wf.Attempt, 10),
+		ResultPath: ResultFilePath(sessionID),
+		HarnessURL: m.harnessURL,
 	}
 
 	if wf.BranchName.Valid {
-		env["CM_SWARM_BRANCH"] = wf.BranchName.String
+		se.Branch = wf.BranchName.String
+	}
+
+	// Pass previous workflow context for full restart path.
+	if wf.PreviousWorkflowID.Valid {
+		m.populatePreviousContext(ctx, &se, wf.PreviousWorkflowID.String)
 	}
 
 	// Look up ticket URL.
 	ticket, ticketErr := m.db.GetSwarmTicket(ctx, wf.TicketID)
 	if ticketErr == nil && ticket.Url != "" {
-		env["CM_SWARM_TICKET_URL"] = ticket.Url
+		se.TicketURL = ticket.Url
 	}
 
 	if hookSecret := os.Getenv("CM_HOOK_SECRET"); hookSecret != "" {
-		env["CM_HOOK_SECRET"] = hookSecret
+		se.HookSecret = hookSecret
 	}
 
 	if os.Getenv("CM_SWARM_DRY_RUN") == "true" {
-		env["CM_SWARM_DRY_RUN"] = "true"
+		se.DryRun = "true"
 	}
 
 	// Resolve handoff path from previous phase.
 	handoffPath, handoffErr := swarm.ResolveHandoffPath(m.baseDir, wf.TicketID)
-	if handoffErr == nil && handoffPath != "" {
-		env["CM_SWARM_HANDOFF_PATH"] = handoffPath
+	if handoffErr == nil {
+		se.HandoffPath = handoffPath
 	}
 
 	// Build learning context and write to temp file.
@@ -833,12 +845,39 @@ func (m *Manager) buildEnv(
 			[]byte(learningCtx),
 			0o600,
 		); writeErr == nil {
-			env["CM_SWARM_LEARNING_CONTEXT_PATH"] = learningPath
+			se.LearningContextPath = learningPath
 			cleanups = append(cleanups, learningPath)
 		}
 	}
 
-	return env, cleanup
+	return se.ToMap(), cleanup
+}
+
+// populatePreviousContext resolves branch, handoff, and research paths from a
+// previous workflow and sets them on the SwarmEnv.
+func (m *Manager) populatePreviousContext(
+	ctx context.Context,
+	se *swarm.SwarmEnv,
+	prevID string,
+) {
+	se.PreviousWorkflowID = prevID
+
+	prevWF, err := m.db.GetSwarmWorkflow(ctx, prevID)
+	if err != nil {
+		return
+	}
+
+	if prevWF.BranchName.Valid {
+		se.PreviousBranch = prevWF.BranchName.String
+	}
+
+	if h, hErr := swarm.ResolveHandoffPath(m.baseDir, prevWF.TicketID); hErr == nil {
+		se.PreviousHandoffPath = h
+	}
+
+	if r, rErr := swarm.ResolveResearchPath(m.baseDir, prevWF.TicketID); rErr == nil {
+		se.PreviousResearchPath = r
+	}
 }
 
 // createTmuxSession creates a new tmux session with the given name, working

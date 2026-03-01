@@ -184,3 +184,9 @@ timestamp: {ISO 8601}
 | `CM_SWARM_DRY_RUN` | User/Orchestrator | If `true`, no mutations (Linear, git, files) |
 | `CM_SWARM_TICKET_URL` | Orchestrator | Linear ticket URL for comment posting |
 | `CM_SWARM_BRANCH` | Orchestrator | Git branch name for this workflow |
+| `CM_SWARM_PREVIOUS_WORKFLOW_ID` | Orchestrator | Previous workflow for restart context |
+| `CM_SWARM_PREVIOUS_BRANCH` | Orchestrator | Previous workflow's git branch |
+| `CM_SWARM_PREVIOUS_HANDOFF_PATH` | Orchestrator | Previous workflow's last handoff |
+| `CM_SWARM_PREVIOUS_RESEARCH_PATH` | Orchestrator | Previous workflow's research doc |
+| `CM_SWARM_STACK_PARENT` | Project Orchestrator | Parent branch for Graphite stacking |
+| `CM_SWARM_STACK_ORDER` | Project Orchestrator | Position in stack for PR description |

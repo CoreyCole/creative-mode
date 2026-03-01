@@ -828,7 +828,7 @@ func TestStartWorkflowInvalidType(t *testing.T) {
 	database := newManagerTestDB(t)
 	mgr := NewManager(database, testLogger(), nil, t.TempDir(), t.TempDir(), "")
 
-	_, err := mgr.StartWorkflow(t.Context(), "TKT-1", "invalid_type", "")
+	_, err := mgr.StartWorkflow(t.Context(), "TKT-1", "invalid_type", "", "")
 	if err == nil {
 		t.Fatal("expected error for invalid workflow type")
 	}
@@ -856,6 +856,7 @@ func TestStartWorkflowCreatesRecords(t *testing.T) {
 		"CM-NEW",
 		swarm.WorkflowTypeResearch,
 		"https://linear.app/CM-NEW",
+		"",
 	)
 	if wfID == "" {
 		t.Fatal("expected workflow ID even on spawn failure")

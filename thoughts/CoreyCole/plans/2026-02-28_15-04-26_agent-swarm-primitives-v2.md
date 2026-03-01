@@ -2,14 +2,14 @@
 
 ## Overview
 
-Build a general-purpose agent swarm system through 11 flat, composable Claude Code skills and a Lead FDE orchestration agent. Revision of the v1 plan based on staff engineering review — addresses the critical Project Orchestrator underspecification, context window pressure from nested loading, and five other concerns.
+Build a general-purpose agent swarm system through 10 flat, composable Claude Code skills and a Temporal-orchestrated Lead FDE. Revision of the v1 plan based on staff engineering review — addresses the critical Project Orchestrator underspecification, context window pressure from nested loading, and five other concerns. The Lead FDE uses Temporal workflows for durable orchestration with task queue-based concurrency control (verification queue at concurrency 1). LLM reasoning belongs in the worker sessions, not the scheduler — the orchestration logic is mechanical (poll, compare, spawn/reap) but Temporal gives us durable state, retry policies, queue management, and observability via its web UI.
 
 ## Current State Analysis
 
 ### What Exists
 - **38 linear-cli skills** installed (`.agents/skills/linear-*/SKILL.md`) — full Linear CRUD, search, relations, projects, sprints
 - **Workflow commands** working: `/create_plan`, `/implement_plan`, `/validate_plan`, `/research_codebase`, `/create_handoff`, `/resume_handoff`, `/describe_pr`, `/create_spec`, `/tkt`
-- **OpenClaw president agent** pattern (`harness/internal/president/`) — heartbeat loop, Discord binding, workspace files, skills
+- **OpenClaw president agent** pattern (`harness/internal/president/`) — heartbeat loop, Discord binding, workspace files, skills (reference only — Lead FDE will NOT use OpenClaw)
 - **Mayor agent** pattern (`harness/internal/mayor/`) — per-world provisioning, Discord REST API, event-driven
 - **Claude Code orchestrator** (`harness/internal/claude/`) — tmux session management, hook scripts, orphaned session reaping
 - **Skill directory pattern** proven by `playwright-cli` — SKILL.md + `references/` sub-files loaded on demand
@@ -22,7 +22,9 @@ Build a general-purpose agent swarm system through 11 flat, composable Claude Co
 - `harness/internal/claude/claude.go:290-346` — Orphaned session reaper scans `tmux list-sessions`, kills stale sessions every 5 min
 - linear-cli label create is NOT idempotent — errors `"A label with the name already exists"` on duplicate. Need check-then-create pattern.
 - linear-cli has native `--dry-run` flag. Exit codes: 0=Success, 1=General, 2=NotFound, 3=Auth, 4=RateLimited.
-- OpenClaw heartbeat (`context/openclaw/src/infra/heartbeat-runner.ts`) — timer-based, reads HEARTBEAT.md, gives agent full turn with exec/read/write tools, prunes on HEARTBEAT_OK
+- Existing Go ticker patterns: orphaned session reaper (5-min, `main.go:223-234`), expired session cleanup (1-hr, `main.go:108-122`).
+- No existing queue, retry, or worker pool infrastructure in the harness — all async work is fire-and-forget goroutines. No global build serialization beyond per-user rate limiting.
+- VPS Nix flake (`flake.nix`) provides all dev tools via `nix profile install`. Temporal CLI will be added to the flake.
 
 ### What's Missing
 - No swarm skills or primitives
@@ -37,7 +39,7 @@ A fully operational agent swarm where:
 1. **Any idea** given to a swarm primitive gets classified, tracked, implemented, and verified — Linear is the source of truth
 2. **Projects** decompose into parent → child tickets with dependency graphs and parallelism analysis
 3. **Code changes** follow a full lifecycle: ticket → research → plan revision (agent-only) → implement/verify loop → PR → human review
-4. **Lead FDE** runs heartbeat loops, spawning orchestrator sessions via harness API, detecting stalls, escalating blockers
+4. **Lead FDE** runs Temporal workflows — polling Linear, spawning Claude Code sessions, detecting stalls, reaping dead sessions — with durable state, queue management (verification at concurrency 1), retry policies, and web UI observability. Zero LLM cost for orchestration.
 5. **Human gates** are explicit and minimal: classification, project kickoff, PR merge
 6. **Dry-run** works on all primitives for safe iteration
 
@@ -54,7 +56,7 @@ A fully operational agent swarm where:
 
 - Building a custom workflow engine (Linear IS the workflow engine)
 - Replacing existing commands (swarm primitives COMPOSE them)
-- Persistent agent processes (OpenClaw is per-turn, Claude Code sessions are ephemeral)
+- LLM-based orchestration (Temporal workflows are deterministic Go code; LLM reasoning is only in the Claude Code worker sessions)
 - Auto-merging PRs (human always reviews and merges)
 - Slack integration (Discord-only; Slack acknowledged as future extension)
 - Custom UI for swarm management (Linear UI + CLI is sufficient)
@@ -62,15 +64,15 @@ A fully operational agent swarm where:
 
 ## Implementation Approach
 
-**Flat skills**: 11 independent Claude Code skills (`/swarm-research`, `/swarm-code-change`, etc.) instead of one `/swarm` router. Each SKILL.md is self-contained (~100-150 lines). No primitive loads another. Composition hints document recommended sequences.
+**Flat skills**: 10 independent Claude Code skills (`/swarm-research`, `/swarm-code-change`, etc.) instead of one `/swarm` router. Each SKILL.md is self-contained (~100-150 lines). No primitive loads another. Composition hints document recommended sequences.
 
 **Agent-only plan review**: Plan-review primitive runs in a separate Agent subagent for objectivity. No `AskUserQuestion` in autonomous sessions. Three human gates: classification, project kickoff, PR merge.
 
 **Dry-run from Phase 1**: Every primitive respects `--dry-run`. linear-cli has native support. File writes print path + first 10 lines.
 
-**Linear comments as state**: Every phase transition writes a structured comment (`RESEARCH:`, `PLAN:`, `IMPL:`, `VERIFY:`, `PR:`). The resume primitive parses these to reconstruct state. The Lead FDE reads them to track progress.
+**Linear comments as state**: Every phase transition writes a structured comment (`RESEARCH:`, `PLAN:`, `IMPL:`, `VERIFY:`, `PR:`). The resume primitive parses these to reconstruct state. Temporal workflows read them to track progress.
 
-**Lead FDE spawns via harness API**: `POST /api/lead-fde/spawn` creates tmux sessions `cm-swarm-{ticketID}`. Max 4 concurrent. Health check endpoint. Orchestrators report via Linear comments.
+**Temporal-orchestrated Lead FDE**: Temporal workflows replace both the OpenClaw heartbeat and the Go ticker. Two task queues: `swarm-general` (concurrency 3) for research/plan/implement/PR activities, and `swarm-verify` (concurrency 1) for verification — ensuring only one `just check` or build runs at a time to prevent OOM. Durable workflow state survives harness restarts. Temporal web UI provides observability. API endpoints expose health/spawn/kill for manual use and the `/swarm-status` skill.
 
 ---
 
@@ -91,10 +93,11 @@ A fully operational agent swarm where:
   swarm-verify/SKILL.md                   # Verification (~100 lines)
   swarm-plan-review/SKILL.md              # Plan review, agent context (~120 lines)
   swarm-project-verify/SKILL.md           # Project verification (~100 lines)
-  swarm-heartbeat/SKILL.md                # Orchestration heartbeat (~120 lines)
   swarm-status/SKILL.md                   # Status dashboard (~80 lines)
   swarm-resume/SKILL.md                   # Resume from ticket history (~120 lines)
 ```
+
+Note: `swarm-heartbeat` removed — orchestration is now Temporal workflows in `harness/internal/leadfde/`, not a Claude Code skill.
 
 ---
 
@@ -261,10 +264,10 @@ Process:
 
 ---
 
-## Phase 3: Support Primitives (Verify, Plan-Review, Heartbeat, Status, Resume)
+## Phase 3: Support Primitives (Verify, Plan-Review, Status, Resume)
 
 ### Overview
-Create verification, review, orchestration, and state recovery primitives.
+Create verification, review, and state recovery primitives. Note: orchestration heartbeat moved to Phase 4 as Temporal workflows (not a Claude Code skill).
 
 ### Changes Required
 
@@ -280,15 +283,11 @@ Read plan → evaluate (completeness, feasibility, file refs exist, edge cases, 
 **File**: `.claude/skills/swarm-project-verify/SKILL.md` (~100 lines)
 List project issues → categorize by workstream/status → identify blockers (>24h stale) → comment summary → recommend continue/reprioritize/escalate.
 
-#### 4. Orchestration Heartbeat
-**File**: `.claude/skills/swarm-heartbeat/SKILL.md` (~120 lines)
-Query in-progress issues + active projects → identify stalls (>4h) → comment `HEARTBEAT:` → check dependency deadlocks → report. When run by Lead FDE, also checks tmux sessions via health API.
-
-#### 5. Status Dashboard
+#### 4. Status Dashboard
 **File**: `.claude/skills/swarm-status/SKILL.md` (~80 lines)
-Dashboard: active projects table, awaiting review, in-progress with last update, recently completed. Read-only, no side effects.
+Dashboard: active projects table, awaiting review, in-progress with last update, recently completed. Also queries Lead FDE health API for active session info. Read-only, no side effects.
 
-#### 6. Resume from Ticket History
+#### 5. Resume from Ticket History
 **File**: `.claude/skills/swarm-resume/SKILL.md` (~120 lines)
 
 ```yaml
@@ -311,125 +310,280 @@ Process:
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] All 10 primitive SKILL.md files exist under `.claude/skills/swarm-*/`
+- [ ] All 9 primitive SKILL.md files exist under `.claude/skills/swarm-*/`
 - [ ] Each has valid YAML frontmatter with `name`, `description`, `allowed-tools`
 
 #### Manual Verification:
 - [ ] `/swarm-verify CM-XXX` runs checks and reports PASS/FAIL
 - [ ] `/swarm-plan-review` produces structured review in Agent subagent
-- [ ] `/swarm-heartbeat` queries Linear and identifies stalled tickets
-- [ ] `/swarm-status` displays formatted dashboard
+- [ ] `/swarm-status` displays formatted dashboard (including Lead FDE session info)
 - [ ] `/swarm-resume CM-XXX` correctly identifies last phase and continues
 
 ---
 
-## Phase 4: Lead FDE (OpenClaw Agent + Harness API)
+## Phase 4: Lead FDE (Temporal Workflows + Harness API)
 
 ### Overview
-Create the Lead FDE as an OpenClaw agent with session tracking and a harness API. This is the most detailed phase, addressing the v1 review's critical issue.
+Create the Lead FDE as Temporal workflows with session tracking and a harness API. Temporal provides durable workflow execution, task queue-based concurrency control, retry policies, and web UI observability. The orchestration logic is deterministic Go code — no LLM cost. Intelligence lives in the Claude Code worker sessions.
+
+### Design Decision: Why Temporal
+
+**Evaluated and rejected**:
+- **OpenClaw heartbeat**: Burns ~$0.03-0.10+ per tick for LLM to interpret HEARTBEAT.md and run `curl`/`linear-cli`. Risk of hallucinating flags. No queue management. No retry durability.
+- **Go `time.Ticker`**: Simple, zero dependencies. But: in-memory state lost on restart, no queue management for verification, no built-in retry policies, no observability UI. Would need to build a custom semaphore for verification serialization.
+
+**Why Temporal wins**:
+1. **Verification queue**: `swarm-verify` task queue with `MaxConcurrentActivityExecutionSize: 1`. Only one `just check` or build runs at a time — prevents OOM on the 10 GB VPS. No custom semaphore needed.
+2. **Durable retry loops**: The implement/verify loop (max 3 attempts) and plan-review loop (max 3 revisions) survive harness restarts. With a Go ticker, a crash mid-loop loses state.
+3. **Session recovery**: Activities record tmux session names in heartbeat details. On worker restart, the activity resumes polling the same tmux session instead of spawning a duplicate.
+4. **Observability**: Temporal web UI shows running workflows, current activity, retry history, queue depth. No need to build a custom dashboard.
+5. **Resource footprint**: ~200 MB RAM for Temporal server with SQLite backend. Fits easily on the 10 GB VPS.
+
+### Infrastructure
+
+#### Temporal Server
+**Install via Nix**: Add `temporal-cli` to `flake.nix` packages. The Temporal CLI includes `temporal server start-dev` which runs a full server with SQLite persistence.
+
+**File**: `flake.nix` — add `temporal-cli` to the `paths` list in `packages.default` and `devShells.default`.
+
+**Systemd service**: `scripts/vps-bootstrap.sh` — add a new step to create `/etc/systemd/system/temporal.service`:
+```ini
+[Unit]
+Description=Temporal Server (SQLite)
+After=network.target
+Before=creative-mode.service
+
+[Service]
+Type=simple
+User=deploy
+ExecStart=/home/deploy/.nix-profile/bin/temporal server start-dev \
+    --db-filename /home/deploy/creative-mode/data/temporal.db \
+    --port 7233 --ui-port 8233 --headless \
+    --namespace swarm \
+    --log-format json --log-level warn
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Note: `--headless` disables the web UI by default on the VPS (accessible via Tailscale if needed by removing this flag). SQLite persistence means workflow state survives restarts.
+
+#### Go SDK Dependency
+**File**: `harness/go.mod` — add `go.temporal.io/sdk`.
 
 ### Changes Required
 
-#### 1. Lead FDE Manager
-**File**: `harness/internal/leadfde/leadfde.go` (~250 lines)
+#### 1. Workflows
+**File**: `harness/internal/leadfde/workflows.go` (~250 lines)
 
-Follows president pattern (`harness/internal/president/president.go`) but adds session tracking:
+**Workflow IDs contain the agent index** for observability and deduplication: `swarm-{agentIdx}-{ticketID}` (e.g., `swarm-0-CM-123`, `swarm-1-CM-456`). The agent index is assigned at spawn time from the pool of available slots (0 through maxSessions-1).
 
 ```go
-type Manager struct {
-    openclawHome, openclawBin, harnessURL, secret, channelID string
-    db     *db.DB
-    logger *slog.Logger
-    mu             sync.Mutex
-    activeSessions map[string]*SwarmSession
-    maxSessions    int // 4
+// CodeChangeWorkflow — full lifecycle with durable retry loops
+func CodeChangeWorkflow(ctx workflow.Context, params CodeChangeParams) error {
+    // Workflow ID: swarm-{agentIdx}-{ticketID}
+    generalCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+        TaskQueue:           "swarm-general",
+        StartToCloseTimeout: 2 * time.Hour,
+        HeartbeatTimeout:    2 * time.Minute,
+        RetryPolicy:         &temporal.RetryPolicy{MaximumAttempts: 2},
+    })
+    verifyCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+        TaskQueue:           "swarm-verify",   // concurrency 1
+        StartToCloseTimeout: 30 * time.Minute,
+        HeartbeatTimeout:    2 * time.Minute,
+        RetryPolicy:         &temporal.RetryPolicy{MaximumAttempts: 1},
+    })
+
+    // 1. Research (general queue)
+    err := workflow.ExecuteActivity(generalCtx, SpawnClaudeSession,
+        params.TicketID, "/swarm-research").Get(ctx, nil)
+    if err != nil { return err }
+
+    // 2. Plan (general queue)
+    err = workflow.ExecuteActivity(generalCtx, SpawnClaudeSession,
+        params.TicketID, "/swarm-code-change --phase plan").Get(ctx, nil)
+    if err != nil { return err }
+
+    // 3. Plan review loop (max 3 revisions — durable across restarts)
+    for i := 0; i < 3; i++ {
+        var verdict string
+        err = workflow.ExecuteActivity(generalCtx, SpawnClaudeSession,
+            params.TicketID, "/swarm-plan-review").Get(ctx, &verdict)
+        if err != nil { return err }
+        if verdict == "APPROVE" { break }
+        err = workflow.ExecuteActivity(generalCtx, SpawnClaudeSession,
+            params.TicketID, "/swarm-code-change --phase revise").Get(ctx, nil)
+        if err != nil { return err }
+    }
+
+    // 4. Implement + verify loop (verify on dedicated queue — concurrency 1)
+    for i := 0; i < 3; i++ {
+        err = workflow.ExecuteActivity(generalCtx, SpawnClaudeSession,
+            params.TicketID, "/swarm-code-change --phase implement").Get(ctx, nil)
+        if err != nil { return err }
+        var pass bool
+        err = workflow.ExecuteActivity(verifyCtx, RunVerification,
+            params.TicketID).Get(ctx, &pass)
+        if err != nil { return err }
+        if pass { break }
+    }
+
+    // 5. PR (general queue)
+    return workflow.ExecuteActivity(generalCtx, SpawnClaudeSession,
+        params.TicketID, "/swarm-code-change --phase pr").Get(ctx, nil)
 }
 
-type SwarmSession struct {
-    Name, TicketID, Prompt string
-    StartedAt              time.Time
+// ResearchWorkflow — research only
+func ResearchWorkflow(ctx workflow.Context, params ResearchParams) error { ... }
+
+// ProjectWorkflow — decomposition, spawns child CodeChangeWorkflows
+func ProjectWorkflow(ctx workflow.Context, params ProjectParams) error { ... }
+
+// HeartbeatWorkflow — scheduled every 2 min, replaces Go ticker
+func HeartbeatWorkflow(ctx workflow.Context) error {
+    ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+        TaskQueue:           "swarm-general",
+        StartToCloseTimeout: 2 * time.Minute,
+    })
+    // Reap dead sessions
+    _ = workflow.ExecuteActivity(ctx, ReapDeadSessions).Get(ctx, nil)
+    // Kill stuck sessions (>2h)
+    _ = workflow.ExecuteActivity(ctx, KillStuckSessions, 2*time.Hour).Get(ctx, nil)
+    // Comment on stalled tickets (>4h since last comment)
+    _ = workflow.ExecuteActivity(ctx, CommentOnStalledTickets).Get(ctx, nil)
+    // Spawn ready tickets (Todo with swarm labels → CodeChangeWorkflow)
+    return workflow.ExecuteActivity(ctx, SpawnReadyTickets).Get(ctx, nil)
 }
 ```
 
-Key methods:
-- `Provision()` — idempotent (checks SOUL.md exists), writes workspace files, registers via CLI, binds Discord
-- `SpawnSession(ticketID, prompt) (string, error)` — creates tmux `cm-swarm-{ticketID}`, enforces max 4 concurrent
-- `GetActiveSessions() []SwarmSession` — snapshot of active sessions
-- `ReapSessions()` — scans `tmux list-sessions` for `cm-swarm-*`, removes dead entries (5min ticker)
-- `KillSession(name) error` — kills tmux session and removes from tracking
+**Workflow ID convention**: `swarm-{agentIdx}-{ticketID}` ensures:
+- Each ticket has at most one active workflow (Temporal deduplication by workflow ID)
+- The agent index (0-3) is visible in the Temporal UI for capacity tracking
+- Tmux sessions use the same naming: `cm-swarm-{agentIdx}-{ticketID}`
 
-**Session naming**: `cm-swarm-{ticketID}` (e.g., `cm-swarm-CM-123`). Distinct from `cm-{worldID}-{cpID}` world builds.
+#### 2. Activities
+**File**: `harness/internal/leadfde/activities.go` (~200 lines)
 
-**Spawn flow**: Lock mutex → reap dead sessions → check count < maxSessions → write prompt to temp file → `tmux new-session -d -s cm-swarm-{ticketID} -c {repoRoot}` → `tmux send-keys "claude --dangerously-skip-permissions --input-file <path>" Enter` → track in activeSessions → return 202.
+```go
+type Activities struct {
+    repoRoot string
+    logger   *slog.Logger
+}
 
-#### 2. Workspace Files
-**File**: `harness/internal/leadfde/workspace.go` (~200 lines)
+// SpawnClaudeSession — spawns tmux session, polls for completion with heartbeat
+func (a *Activities) SpawnClaudeSession(ctx context.Context, ticketID, prompt string) (string, error) {
+    // Resume from previous attempt if worker restarted
+    var sessionName string
+    if activity.HasHeartbeatDetails(ctx) {
+        activity.GetHeartbeatDetails(ctx, &sessionName)
+    }
+    if sessionName == "" {
+        // Assign agent index from workflow ID: "swarm-{idx}-{ticket}"
+        sessionName = fmt.Sprintf("cm-%s", workflow.GetInfo(ctx).WorkflowExecution.ID)
+        // ... create tmux session, write prompt to file, send-keys
+    }
+    // Poll loop
+    for {
+        if !tmuxHasSession(sessionName) {
+            return readLastComment(ticketID), nil // session finished
+        }
+        activity.RecordHeartbeat(ctx, sessionName)
+        select {
+        case <-ctx.Done(): return "", ctx.Err()
+        case <-time.After(10 * time.Second):
+        }
+    }
+}
 
-Created at `{OPENCLAW_HOME}/workspaces/lead-fde/`:
+// RunVerification — runs on swarm-verify queue (concurrency 1)
+func (a *Activities) RunVerification(ctx context.Context, ticketID string) (bool, error) {
+    // Run `just check` in a tmux session, poll for completion
+    // Parse exit code to determine PASS/FAIL
+    // Post VERIFY: comment on ticket
+    ...
+}
 
-**SOUL.md** — Identity: Lead FDE, orchestration brain. Safety: autonomous for comments/research/status/spawn; approval for new projects; forbidden: merge PRs/delete projects.
+// ReapDeadSessions, KillStuckSessions, CommentOnStalledTickets, SpawnReadyTickets
+// — same logic as the Go ticker, but now Temporal activities with structured error handling
+```
 
-**AGENTS.md** — Heartbeat mode (periodic) + reactive mode (Discord messages).
+#### 3. Worker Setup
+**File**: `harness/internal/leadfde/worker.go` (~100 lines)
 
-**HEARTBEAT.md** — The critical specification:
-1. Check active sessions: `curl GET /api/lead-fde/health -H "X-LeadFDE-Secret: {SECRET}"`
-2. Kill stuck sessions (>2h): `curl POST /api/lead-fde/kill/cm-swarm-{TICKET}`
-3. Query Linear: `linear-cli i list -t CM -s "In Progress" --output json --compact`
-4. Comment `HEARTBEAT:` on stalled tickets (>4h since last comment)
-5. Spawn for ready todo tickets: `curl POST /api/lead-fde/spawn -d '{"ticket_id":"CM-XXX","prompt":"/swarm-resume CM-XXX"}'`
-6. If at capacity (429), note queued tickets in MEMORY.md
-7. Check project progress, escalate if all workstreams blocked
-8. Update MEMORY.md with observations
+```go
+func SetupWorkers(temporalClient client.Client, activities *Activities) (worker.Worker, worker.Worker) {
+    // General queue: research, plan, implement, PR — up to 3 concurrent
+    generalWorker := worker.New(temporalClient, "swarm-general", worker.Options{
+        MaxConcurrentActivityExecutionSize: 3,
+    })
+    generalWorker.RegisterWorkflow(CodeChangeWorkflow)
+    generalWorker.RegisterWorkflow(ResearchWorkflow)
+    generalWorker.RegisterWorkflow(ProjectWorkflow)
+    generalWorker.RegisterWorkflow(HeartbeatWorkflow)
+    generalWorker.RegisterActivity(activities)
 
-**How orchestrators report back**: Spawned sessions write structured comments (`RESEARCH:`, `PLAN:`, `IMPL:`, `VERIFY:`, `PR:`) on the Linear ticket. Lead FDE reads these via `linear-cli cm list CM-XXX --output json` on next heartbeat. Linear comments ARE the reporting mechanism.
+    // Verify queue: only 1 verification at a time (OOM prevention)
+    verifyWorker := worker.New(temporalClient, "swarm-verify", worker.Options{
+        MaxConcurrentActivityExecutionSize: 1,
+    })
+    verifyWorker.RegisterActivity(activities)
 
-**IDENTITY.md**, **USER.md**, **MEMORY.md** — Standard OpenClaw workspace files.
-
-#### 3. Lead FDE Skills
-**File**: `harness/internal/leadfde/skills.go` (~80 lines)
-
-OpenClaw skills pointing to harness API (same pattern as `harness/internal/president/skills.go`):
-- `swarm-health/SKILL.md` — `curl GET /api/lead-fde/health`
-- `swarm-spawn/SKILL.md` — `curl POST /api/lead-fde/spawn`
+    return generalWorker, verifyWorker
+}
+```
 
 #### 4. API Endpoints
-**File**: `harness/internal/server/leadfde_api.go` (~200 lines)
+**File**: `harness/internal/server/leadfde_api.go` (~150 lines)
 
 Auth: `X-LeadFDE-Secret` header (same pattern as `presidentAuthMiddleware` at `president_api.go:19-36`).
 
 | Route | Method | Purpose | Response |
 |-------|--------|---------|----------|
-| `/api/lead-fde/health` | GET | Sessions + capacity | `{status, active_sessions: [{name, ticket_id, started_at, alive}], capacity: {used, max}}` |
-| `/api/lead-fde/spawn` | POST | Spawn session | 202 `{status: "spawned", session, ticket_id}` or 429 `{status: "at_capacity"}` |
-| `/api/lead-fde/session/:name` | GET | Session detail | `{name, ticket_id, started_at, alive}` |
-| `/api/lead-fde/kill/:name` | POST | Kill session | `{status: "killed"}` |
+| `/api/lead-fde/health` | GET | Running workflows + capacity | `{status, workflows: [{id, ticket_id, state, started_at}], capacity: {used, max}}` |
+| `/api/lead-fde/spawn` | POST | Start a CodeChangeWorkflow | 202 `{status: "spawned", workflow_id}` or 429 `{status: "at_capacity"}` |
+| `/api/lead-fde/workflow/:id` | GET | Workflow detail | `{id, ticket_id, state, current_activity, history}` |
+| `/api/lead-fde/cancel/:id` | POST | Cancel workflow | `{status: "cancelled"}` |
+
+Health endpoint queries Temporal visibility API (`client.ListWorkflow`) for running `swarm-*` workflows. No in-memory state needed — Temporal is the source of truth.
 
 #### 5. Wiring
-**File**: `harness/main.go` — Add `initLeadFDEManager()` (same pattern as `initPresidentManager` at lines 391-422). Env var guard: `LEAD_FDE_DISCORD_CHANNEL_ID` + `LEAD_FDE_SECRET`. Add 5-min reaper ticker goroutine.
+**File**: `harness/main.go` — Add `initTemporalClient()` and `initLeadFDEWorkers()`. Env var guard: `LEAD_FDE_SECRET` + `TEMPORAL_ADDRESS` (default `localhost:7233`). Create Temporal schedule for HeartbeatWorkflow (every 2 min). Workers start non-blocking via `worker.Start()`, stop on shutdown.
 
-**File**: `harness/internal/server/server.go` — Add `LeadFDEManager *leadfde.Manager` field to Server struct. Register `/api/lead-fde` route group with auth middleware.
+**File**: `harness/internal/server/server.go` — Add `TemporalClient client.Client` field to Server struct. Register `/api/lead-fde` route group with auth middleware.
 
-#### 6. Environment Variables
+#### 6. Infrastructure Files
+**File**: `flake.nix` — Add `temporal-cli` to packages.
+**File**: `scripts/vps-bootstrap.sh` — Add step for Temporal systemd service + SQLite DB path.
+**File**: `scripts/harness-run.sh` — Add `TEMPORAL_ADDRESS` default export.
+
+#### 7. Environment Variables
 
 | Variable | Purpose |
 |----------|---------|
-| `LEAD_FDE_DISCORD_CHANNEL_ID` | Discord channel for reports |
 | `LEAD_FDE_SECRET` | Auth for `/api/lead-fde/*` endpoints |
+| `TEMPORAL_ADDRESS` | Temporal server address (default `localhost:7233`) |
 
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `just check` passes (Go compilation)
-- [ ] `ls harness/internal/leadfde/` shows leadfde.go, workspace.go, skills.go
+- [ ] `just check` passes (Go compilation with `go.temporal.io/sdk`)
+- [ ] `ls harness/internal/leadfde/` shows workflows.go, activities.go, worker.go
 - [ ] `ls harness/internal/server/leadfde_api.go` exists
+- [ ] `temporal-cli` available in Nix profile
 
 #### Manual Verification:
-- [ ] Lead FDE provisions on harness startup (idempotent)
-- [ ] `curl -H "X-LeadFDE-Secret: $SECRET" localhost:8080/api/lead-fde/health` returns session list + capacity
-- [ ] `curl -X POST -H "X-LeadFDE-Secret: $SECRET" -d '{"ticket_id":"CM-1","prompt":"test"}' localhost:8080/api/lead-fde/spawn` creates tmux session
-- [ ] 5th spawn returns 429
-- [ ] Reaper cleans dead sessions after 5 minutes
-- [ ] Lead FDE heartbeat queries Linear, spawns sessions, reports via Discord
+- [ ] Temporal server starts via systemd, web UI accessible on :8233
+- [ ] Workers connect on harness boot (log message)
+- [ ] HeartbeatWorkflow runs every 2 min (visible in Temporal UI)
+- [ ] `curl POST /api/lead-fde/spawn` starts a CodeChangeWorkflow (visible in Temporal UI)
+- [ ] Workflow ID format: `swarm-{agentIdx}-{ticketID}`
+- [ ] 4th spawn returns 429 (all agent slots full)
+- [ ] Verification activities queue behind each other (only 1 runs at a time)
+- [ ] Kill harness mid-workflow → restart → workflow resumes at correct activity
+- [ ] Stalled tickets get HEARTBEAT comments within 2 ticks
 
 ---
 
@@ -444,11 +598,12 @@ End-to-end testing and documentation.
 **File**: `CLAUDE.md`
 
 Add "## Agent Swarm System" section:
-- Primitives table (all 11 skills)
+- Primitives table (all 10 skills)
 - Recommended sequences (quick research, scoped change, large project)
 - Human gates (classification, project kickoff, PR merge)
 - Dry-run documentation
 - Lead FDE API reference
+- Temporal architecture (server, workers, task queues, workflow IDs)
 
 #### 2. Error Handling Conventions
 Each primitive includes standardized error handling:
@@ -460,7 +615,7 @@ Each primitive includes standardized error handling:
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] All 10 primitive SKILL.md + 1 conventions SKILL.md + 3 templates = 14 skill files exist
+- [ ] All 9 primitive SKILL.md + 1 conventions SKILL.md + 3 templates = 13 skill files exist
 - [ ] CLAUDE.md contains "Agent Swarm System" section
 - [ ] `just check` passes
 
@@ -470,7 +625,7 @@ Each primitive includes standardized error handling:
 - [ ] `/swarm-code-change "add /health-detailed endpoint"` → full lifecycle to PR
 - [ ] `/swarm-resume CM-XXX` on completed ticket → reconstructs state
 - [ ] `/swarm-project "improve error handling"` → project + hierarchy
-- [ ] `/swarm-heartbeat` → queries Linear, identifies stalls
+- [ ] HeartbeatWorkflow auto-detects stalls and posts HEARTBEAT comments (verify in Temporal UI + Linear)
 - [ ] Full restart: reject PR → new ticket references old → fresh cycle
 
 ---
@@ -487,35 +642,38 @@ Each primitive includes standardized error handling:
 2. Run `/swarm-research "how does session auth work"` → verify ticket + doc + comments
 3. Run `/swarm-code-change "add a /health-detailed endpoint"` → verify full lifecycle
 4. Run `/swarm-resume CM-XXX` → verify state reconstruction from comments
-5. Run `/swarm-heartbeat` → verify stall detection
+5. Verify HeartbeatWorkflow detects stalled tickets (Temporal UI + Linear comments)
 
-### Lead FDE API Testing:
-1. `curl GET /api/lead-fde/health` → verify response format
-2. `curl POST /api/lead-fde/spawn` → verify session creation
-3. Spawn 4 sessions, attempt 5th → verify 429
-4. Kill a session → verify cleanup
-5. Wait for reaper → verify dead sessions removed
+### Lead FDE + Temporal Testing:
+1. `curl GET /api/lead-fde/health` → verify response (queries Temporal visibility)
+2. `curl POST /api/lead-fde/spawn` → verify CodeChangeWorkflow starts (visible in Temporal UI)
+3. Spawn 4 workflows, attempt 5th → verify 429 (all agent slots full)
+4. Cancel a workflow → verify tmux session cleaned up
+5. Kill harness mid-workflow → restart → verify workflow resumes at correct activity
+6. Run 2 workflows that both reach verification → verify only 1 runs `just check` at a time (swarm-verify queue)
 
 ### End-to-End:
 1. `/swarm-project "add rate limiting"` → creates project
 2. Verify ticket hierarchy in Linear
-3. `POST /api/lead-fde/spawn` for one workstream
-4. Watch Linear for comment updates
+3. Move a workstream ticket to Todo → HeartbeatWorkflow auto-starts CodeChangeWorkflow
+4. Watch Temporal UI for workflow progression + Linear for structured comments
 5. Verify PR created
-6. `/swarm-heartbeat` detects in-progress session
+6. `/swarm-status` shows active workflows + ticket progress
 
 ## Performance Considerations
 
-- linear-cli calls: ~1500 req/hr budget. Project decomposition (20 tickets + 15 relations + 20 comments = ~55 requests) is well within limits.
-- WASM builds: ~5 GB RAM each. Lead FDE max 4 sessions accounts for this — but note swarm sessions don't trigger WASM builds (they're code-change sessions, not world builds).
-- Claude Code sessions: Each session uses RAM for the Claude process. 4 concurrent is conservative for 10 GB VPS.
-- Heartbeat: Batch Linear queries (list all issues once, not per-ticket). Single `linear-cli i list -t CM -s "In Progress" --output json` call.
+- **linear-cli calls**: ~1500 req/hr budget. Project decomposition (20 tickets + 15 relations + 20 comments = ~55 requests) well within limits. HeartbeatWorkflow: ~3-5 calls per tick at 2-min interval = ~90-150 req/hr.
+- **WASM builds**: ~5 GB RAM each. The `swarm-verify` queue (concurrency 1) ensures only one verification/build runs at a time — prevents OOM.
+- **Claude Code sessions**: Each uses meaningful RAM. `swarm-general` queue (concurrency 3) + `swarm-verify` queue (concurrency 1) = max 4 concurrent, conservative for 10 GB VPS.
+- **Temporal server**: ~200 MB RAM with SQLite backend at idle. Negligible CPU for <10 concurrent workflows.
+- **Resource budget**: Temporal (~200 MB) + harness + workers (~250 MB) + up to 3 Claude sessions (~1.5 GB) + 1 verification (~1-5 GB) = ~3-7 GB peak. Fits in 10 GB with headroom.
+- **Zero LLM API cost** for orchestration. All Anthropic API spend goes to the Claude Code worker sessions.
 
 ---
 
 ## File Inventory
 
-### New Files (18)
+### New Files (17)
 
 | File | Phase | ~Lines |
 |------|-------|--------|
@@ -530,21 +688,23 @@ Each primitive includes standardized error handling:
 | `.claude/skills/swarm-verify/SKILL.md` | 3 | 100 |
 | `.claude/skills/swarm-plan-review/SKILL.md` | 3 | 120 |
 | `.claude/skills/swarm-project-verify/SKILL.md` | 3 | 100 |
-| `.claude/skills/swarm-heartbeat/SKILL.md` | 3 | 120 |
 | `.claude/skills/swarm-status/SKILL.md` | 3 | 80 |
 | `.claude/skills/swarm-resume/SKILL.md` | 3 | 120 |
-| `harness/internal/leadfde/leadfde.go` | 4 | 250 |
-| `harness/internal/leadfde/workspace.go` | 4 | 200 |
-| `harness/internal/leadfde/skills.go` | 4 | 80 |
-| `harness/internal/server/leadfde_api.go` | 4 | 200 |
+| `harness/internal/leadfde/workflows.go` | 4 | 250 |
+| `harness/internal/leadfde/activities.go` | 4 | 200 |
+| `harness/internal/leadfde/worker.go` | 4 | 100 |
+| `harness/internal/server/leadfde_api.go` | 4 | 150 |
 
-### Modified Files (3)
+### Modified Files (6)
 
 | File | Phase | Change |
 |------|-------|--------|
 | `CLAUDE.md` | 5 | Add Agent Swarm System section |
-| `harness/main.go` | 4 | Wire Lead FDE init + reaper |
-| `harness/internal/server/server.go` | 4 | Add LeadFDEManager field + routes |
+| `harness/main.go` | 4 | Wire Temporal client + workers + heartbeat schedule |
+| `harness/internal/server/server.go` | 4 | Add TemporalClient field + routes |
+| `harness/go.mod` | 4 | Add `go.temporal.io/sdk` |
+| `flake.nix` | 4 | Add `temporal-cli` to packages |
+| `scripts/vps-bootstrap.sh` | 4 | Add Temporal systemd service step |
 
 ## References
 
@@ -552,8 +712,14 @@ Each primitive includes standardized error handling:
 - v1 review: `thoughts/CoreyCole/reviews/2026-02-28_14-28-09_agent-swarm-primitives_review.md`
 - Chestnut flowchart: `/Users/coreycole/Downloads/chestnut-agent-primitives-flowchart.html`
 - Linear CLI research: `thoughts/CoreyCole/research/2026-02-28_13-42-58_linear-cli-architecture.md`
-- President agent (reference impl): `harness/internal/president/`
-- Mayor agent (reference impl): `harness/internal/mayor/`
+- President agent (reference, NOT used for Lead FDE): `harness/internal/president/`
+- Mayor agent (reference): `harness/internal/mayor/`
 - Session management: `harness/internal/tmux/session.go`
 - Claude orchestrator: `harness/internal/claude/claude.go`
-- OpenClaw heartbeat: `context/openclaw/src/infra/heartbeat-runner.ts`
+- Nix flake (VPS dependencies): `flake.nix`
+- VPS bootstrap (systemd, Nix install): `scripts/vps-bootstrap.sh`
+- Harness run wrapper (PATH setup): `scripts/harness-run.sh`
+- Temporal Go SDK: `go.temporal.io/sdk` v1.40+
+- Temporal server (dev mode with SQLite): `temporal server start-dev --db-filename`
+- OpenClaw heartbeat (evaluated, rejected for Lead FDE): `context/openclaw/src/infra/heartbeat-runner.ts`
+- Go ticker (evaluated, superseded by Temporal): simpler but lacks queue management, durable state, observability

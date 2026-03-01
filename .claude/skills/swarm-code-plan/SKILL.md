@@ -75,11 +75,24 @@ Creates or revises a versioned implementation plan based on research findings.
 
    ## Verification Checks
 
-   Each check must be independently runnable:
+   Each check must be independently runnable. Organize by category:
 
+   ### Compilation
    1. `just check` — Full project compilation
-   2. `cd harness && go test ./path/to/...` — Unit tests pass
-   3. {Additional check} — {What it verifies}
+
+   ### Unit Tests
+   2. `cd harness && go test ./path/to/...` — {What unit tests verify}
+
+   ### Integration Tests
+   3. `cd harness && go test -tags=integration ./path/to/...` — {What integration tests verify}
+
+   ### E2E Tests
+   4. `playwright-cli open http://localhost:8080/path --headed --persistent` → snapshot → verify {element} exists
+
+   ### Manual Playwright Checks
+   5. Navigate to `/path` → verify {page} loads → screenshot
+
+   Note: Categories with no applicable checks should be omitted from the plan.
 
    ## Risks
    - {Risk 1}: {Mitigation}

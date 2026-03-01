@@ -1,7 +1,7 @@
 ---
 name: swarm-code-verify
 description: Verification phase — run the plan's verification checks and report structured PASS/FAIL results. Does NOT fix failures.
-allowed-tools: Bash, Read, Glob, Grep
+allowed-tools: Bash, Read, Glob, Grep, playwright-cli
 ---
 
 # Swarm Code Verify Skill
@@ -33,46 +33,69 @@ Runs verification checks from the implementation plan and reports structured res
 1. **Read the plan** — Find the approved plan:
    - Glob: `thoughts/swarm/plans/*_{ticketID}_*.md`
    - Extract the "Verification Checks" section
+   - Identify checks by category: Compilation, Unit Tests, Integration Tests, E2E Tests, Manual Playwright Checks
 
-2. **Run `just check`** — Full project compilation check:
+2. **Phase 1: Compilation** — Run `just check`:
    ```bash
    just -f /path/to/project/justfile check
    ```
-   Record exit code and output.
+   Record exit code and output. If compilation fails, still continue to report all categories.
 
-3. **Run each verification check** — Execute each check from the plan sequentially:
-   - Record the command, exit code, and relevant output (truncate to last 50 lines if verbose)
+3. **Phase 2: Unit Tests** — Run all unit test commands from the plan:
+   - Execute each `go test` command (without `-tags=integration`)
+   - Record exit code and relevant output (truncate to last 50 lines if verbose)
    - Do NOT attempt to fix any failures
 
-4. **Compile results** — For each check:
+4. **Phase 3: Integration Tests** — Run integration test commands from the plan (if any):
+   - Execute each `go test -tags=integration` command
+   - Record exit code and relevant output
+   - If no integration tests in plan, report `[SKIP]`
+
+5. **Phase 4: E2E Tests** — Run Playwright E2E commands from the plan (if any):
+   - Use `playwright-cli open <url> --headed --persistent` for stateful sessions
+   - Use `playwright-cli snapshot` to verify expected elements exist
+   - Use `playwright-cli console error` to catch JS errors
+   - If no E2E tests in plan, report `[SKIP]`
+
+6. **Phase 5: Manual Playwright Checks** — Run manual verification sequences from the plan (if any):
+   - Follow the plan's navigation steps (open, snapshot, interact, screenshot)
+   - Use `playwright-cli screenshot` and read the PNG for visual verification
+   - If no manual checks in plan, report `[SKIP]`
+
+7. **Compile results** — Report each category independently:
    ```
-   [PASS] Check 1: just check — exit 0
-   [FAIL] Check 2: go test ./internal/swarm/... — exit 1
-     Error: TestFoo: expected 5, got 3
+   [PASS] Compilation: just check — exit 0
+   [PASS] Unit Tests: 3/3 passed
+   [FAIL] Integration Tests: 1/2 passed — TestSwarmWorkflowE2E failed
+   [SKIP] E2E Tests: no E2E checks in plan
+   [PASS] Manual Checks: dashboard loads, screenshot taken
    ```
 
-5. **Post Linear comment** — `VERIFY:` prefix:
+8. **Post Linear comment** — `VERIFY:` prefix:
    ```
-   VERIFY: {PASS|FAIL} — {passed}/{total} checks passed
+   VERIFY: {PASS|FAIL} — {passed}/{total} categories passed ({skipped} skipped)
 
    Results:
-   - [PASS] just check
-   - [FAIL] go test ./internal/swarm/... — TestFoo assertion error
+   - [PASS] Compilation: just check
+   - [PASS] Unit Tests: 3/3 passed
+   - [FAIL] Integration Tests: 1/2 — TestFoo assertion error
+   - [SKIP] E2E Tests: no checks in plan
+   - [PASS] Manual Checks: dashboard loads
    ```
 
-6. **Write handoff** — Write handoff to `thoughts/swarm/handoffs-code-reviews/`:
+9. **Write handoff** — Write handoff to `thoughts/swarm/handoffs-code-reviews/`:
    - If FAIL: Gotchas should include the specific errors; Next Steps should describe what the implement phase needs to fix
 
-7. **Write RESULT**:
-   - All pass: `RESULT: success` (advance to PR)
-   - Any fail: `RESULT: logic_failure` (loop back to implement)
-   ```
-   RESULT: {success|logic_failure}
-   Phase: verify
-   Handoff: thoughts/swarm/handoffs-code-reviews/{filename}
+10. **Write RESULT**:
+    - All pass: `RESULT: success` (advance to PR)
+    - Any fail: `RESULT: logic_failure` (loop back to implement)
+    ```
+    RESULT: {success|logic_failure}
+    Phase: verify
+    Handoff: thoughts/swarm/handoffs-code-reviews/{filename}
 
-   Summary: {passed}/{total} checks passed{; first failure description if any}
-   ```
+    Summary: {passed}/{total} categories passed ({skipped} skipped){; first failure description if any}
+    ```
 
 ## Important Constraints
 

@@ -50,6 +50,9 @@ type Manager struct {
 	startReg      *StartRegistry
 	ctxPressure   *ContextPressure
 
+	// Metrics cache with 60s TTL.
+	metricsCache *metricsCache
+
 	// JSONL log writers keyed by sessionID; closed on session completion.
 	jsonlMu      sync.RWMutex
 	jsonlWriters map[string]*JSONLWriter
@@ -72,6 +75,7 @@ func NewManager(
 		completionReg: NewCompletionRegistry(),
 		startReg:      NewStartRegistry(),
 		ctxPressure:   NewContextPressure(),
+		metricsCache:  newMetricsCache(),
 		jsonlWriters:  make(map[string]*JSONLWriter),
 	}
 }

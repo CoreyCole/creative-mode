@@ -161,3 +161,78 @@ func (s *Server) handleSwarmSessionLog(c echo.Context) error {
 
 	return c.File(logPath)
 }
+
+// handleSwarmMetrics returns aggregate metrics for the given period.
+func (s *Server) handleSwarmMetrics(c echo.Context) error {
+	if s.SwarmManager == nil {
+		return echo.NewHTTPError(
+			http.StatusServiceUnavailable,
+			"swarm manager not configured",
+		)
+	}
+
+	period := c.QueryParam("period")
+	if period == "" {
+		period = swarmorch.DefaultPeriod
+	}
+
+	metrics, err := s.SwarmManager.GetMetrics(c.Request().Context(), period)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+
+	return c.JSON(http.StatusOK, metrics)
+}
+
+// handleSwarmHealth returns the current health status of the swarm system.
+func (s *Server) handleSwarmHealth(c echo.Context) error {
+	if s.SwarmManager == nil {
+		return echo.NewHTTPError(
+			http.StatusServiceUnavailable,
+			"swarm manager not configured",
+		)
+	}
+
+	health, err := s.SwarmManager.GetHealth(c.Request().Context())
+	if err != nil {
+		s.Logger.Error("failed to get swarm health", "error", err)
+
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get health")
+	}
+
+	return c.JSON(http.StatusOK, health)
+}
+
+// handleSwarmSessionStatus returns the status and context pressure for a session.
+func (s *Server) handleSwarmSessionStatus(c echo.Context) error {
+	if s.SwarmManager == nil {
+		return echo.NewHTTPError(
+			http.StatusServiceUnavailable,
+			"swarm manager not configured",
+		)
+	}
+
+	sessionID := c.Param("id")
+
+	session, err := s.DB.GetSwarmSession(c.Request().Context(), sessionID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return echo.NewHTTPError(http.StatusNotFound, "session not found")
+		}
+
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get session")
+	}
+
+	ctxPressure := s.SwarmManager.GetContextPressure(sessionID)
+
+	return c.JSON(http.StatusOK, map[string]any{
+		"session_id":       session.ID,
+		"workflow_id":      session.WorkflowID,
+		"phase":            string(session.Phase),
+		"skill":            session.Skill,
+		"result":           string(session.Result),
+		"started_at":       session.StartedAt,
+		"completed_at":     session.CompletedAt.String,
+		"context_pressure": ctxPressure,
+	})
+}

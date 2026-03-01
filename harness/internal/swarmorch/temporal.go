@@ -81,7 +81,9 @@ func StartRuntime(
 		MaxConcurrentActivityExecutionSize: concurrencyGeneral,
 	})
 	generalWorker.RegisterWorkflow(HeartbeatWorkflow)
+	generalWorker.RegisterWorkflow(LeadFDEWorkflow)
 	generalWorker.RegisterWorkflow(SessionWorkflow)
+	generalWorker.RegisterWorkflow(ProjectOrchestratorWorkflow)
 	generalWorker.RegisterActivity(activities)
 
 	verifyWorker := worker.New(c, QueueVerify, worker.Options{
@@ -94,6 +96,8 @@ func StartRuntime(
 		MaxConcurrentActivityExecutionSize: concurrencyOps,
 	})
 	opsWorker.RegisterWorkflow(HeartbeatWorkflow)
+	opsWorker.RegisterWorkflow(LeadFDEWorkflow)
+	opsWorker.RegisterWorkflow(ProjectOrchestratorWorkflow)
 	opsWorker.RegisterActivity(activities)
 
 	workers := []worker.Worker{generalWorker, verifyWorker, opsWorker}

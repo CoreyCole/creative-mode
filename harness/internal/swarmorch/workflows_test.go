@@ -188,3 +188,143 @@ func TestHeartbeatWorkflow_MaintenanceFailuresContinue(t *testing.T) {
 
 	env.AssertExpectations(t)
 }
+
+func TestLeadFDEWorkflow_CallsAllActivities(t *testing.T) {
+	t.Parallel()
+
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestWorkflowEnvironment()
+	registerActivities(env)
+
+	env.OnActivity("DetectStalls", mock.Anything).Return(nil)
+	env.OnActivity("ReapSessions", mock.Anything).Return(nil)
+	env.OnActivity("DecayLearnings", mock.Anything).Return(nil)
+	env.OnActivity("GenerateDigest", mock.Anything).Return(nil)
+	env.OnActivity("CheckProjectHealth", mock.Anything).
+		Return([]ProjectHealthStatus{}, nil)
+	env.OnActivity("CheckProjectProgress", mock.Anything).Return(nil)
+	env.OnActivity("ReadTicketQueue", mock.Anything).
+		Return([]SpawnRequest{}, nil)
+
+	env.ExecuteWorkflow(LeadFDEWorkflow)
+
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+	env.AssertExpectations(t)
+}
+
+func TestLeadFDEWorkflow_SpawnsSessionsForPendingWork(t *testing.T) {
+	t.Parallel()
+
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestWorkflowEnvironment()
+	registerActivities(env)
+
+	env.OnActivity("DetectStalls", mock.Anything).Return(nil)
+	env.OnActivity("ReapSessions", mock.Anything).Return(nil)
+	env.OnActivity("DecayLearnings", mock.Anything).Return(nil)
+	env.OnActivity("GenerateDigest", mock.Anything).Return(nil)
+	env.OnActivity("CheckProjectHealth", mock.Anything).
+		Return([]ProjectHealthStatus{}, nil)
+	env.OnActivity("CheckProjectProgress", mock.Anything).Return(nil)
+
+	spawns := []SpawnRequest{
+		{
+			WorkflowID: "wf-1",
+			TicketID:   "CM-1",
+			Phase:      swarm.PhaseResearch,
+			Attempt:    1,
+		},
+	}
+	env.OnActivity("ReadTicketQueue", mock.Anything).Return(spawns, nil)
+	env.OnWorkflow(SessionWorkflow, mock.Anything, mock.Anything).Return(
+		SessionWorkflowResult{Result: swarm.ResultSuccess}, nil,
+	)
+
+	env.ExecuteWorkflow(LeadFDEWorkflow)
+
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+	env.AssertExpectations(t)
+}
+
+func TestProjectOrchestratorWorkflow_CompletesWhenAllDone(t *testing.T) {
+	t.Parallel()
+
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestWorkflowEnvironment()
+	registerActivities(env)
+
+	params := ProjectOrchestratorParams{
+		WorkflowID: "wf-proj-1",
+		ProjectID:  "wf-proj-1",
+		TicketID:   "CM-PROJ-1",
+	}
+
+	// AdvanceProject returns all complete on first check.
+	env.OnActivity("AdvanceProject", mock.Anything, params).Return(
+		ProjectProgressResult{
+			AllComplete:    true,
+			TotalTickets:   3,
+			CompletedCount: 3,
+		}, nil,
+	)
+
+	env.OnActivity("PostProjectUpdate", mock.Anything, ProjectUpdateParams{
+		TicketID:       "CM-PROJ-1",
+		TotalTickets:   3,
+		CompletedCount: 3,
+	}).Return(nil)
+
+	env.ExecuteWorkflow(ProjectOrchestratorWorkflow, params)
+
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+	env.AssertExpectations(t)
+}
+
+func TestProjectOrchestratorWorkflow_AdvancesWaves(t *testing.T) {
+	t.Parallel()
+
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestWorkflowEnvironment()
+	registerActivities(env)
+
+	params := ProjectOrchestratorParams{
+		WorkflowID: "wf-proj-2",
+		ProjectID:  "wf-proj-2",
+		TicketID:   "CM-PROJ-2",
+	}
+
+	// First call: wave in progress with new tickets started.
+	env.OnActivity("AdvanceProject", mock.Anything, params).Return(
+		ProjectProgressResult{
+			AllComplete:    false,
+			TotalTickets:   4,
+			CompletedCount: 2,
+			StartedCount:   1,
+		}, nil,
+	).Once()
+
+	// Second call: all complete.
+	env.OnActivity("AdvanceProject", mock.Anything, params).Return(
+		ProjectProgressResult{
+			AllComplete:    true,
+			TotalTickets:   4,
+			CompletedCount: 4,
+		}, nil,
+	).Once()
+
+	// PostProjectUpdate called for the wave advance (StartedCount > 0)
+	// and the final completion.
+	env.OnActivity(
+		"PostProjectUpdate",
+		mock.Anything,
+		mock.Anything,
+	).Return(nil)
+
+	env.ExecuteWorkflow(ProjectOrchestratorWorkflow, params)
+
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+}

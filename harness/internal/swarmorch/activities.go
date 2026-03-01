@@ -224,6 +224,130 @@ func (a *Activities) CheckProjectProgress(ctx context.Context) error {
 	return nil
 }
 
+// AdvanceProject checks a single project's child status and advances waves
+// or triggers project_verify when all children are complete.
+func (a *Activities) AdvanceProject(
+	ctx context.Context,
+	params ProjectOrchestratorParams,
+) (ProjectProgressResult, error) {
+	wf, err := a.mgr.db.GetSwarmWorkflow(ctx, params.WorkflowID)
+	if err != nil {
+		return ProjectProgressResult{}, fmt.Errorf(
+			"get workflow: %w",
+			err,
+		)
+	}
+
+	if wf.Status != swarm.StatusRunning {
+		return ProjectProgressResult{AllComplete: true}, nil
+	}
+
+	graph := a.mgr.buildProjectGraph(ctx, params.ProjectID)
+	if len(graph.Tickets) == 0 {
+		return ProjectProgressResult{AllComplete: true}, nil
+	}
+
+	completed := a.mgr.completedChildTickets(ctx, graph)
+
+	if graph.AllComplete(completed) {
+		// Spawn verify session if needed.
+		session, sessionErr := a.mgr.db.GetLatestSwarmSession(ctx, wf.ID)
+		if sessionErr != nil || session.Phase != swarm.PhaseProjectVerify {
+			if spawnErr := a.mgr.spawnSession(ctx, wf); spawnErr != nil {
+				a.mgr.logger.Warn("spawn project verify",
+					"workflow_id", wf.ID, "error", spawnErr)
+			}
+		}
+
+		return ProjectProgressResult{
+			AllComplete:    true,
+			TotalTickets:   len(graph.Tickets),
+			CompletedCount: len(completed),
+		}, nil
+	}
+
+	// Start newly-unblocked tickets.
+	ready := graph.ReadyTickets(completed)
+	started := 0
+
+	for _, rt := range ready {
+		existing, existErr := a.mgr.db.GetSwarmWorkflowsByTicket(
+			ctx,
+			rt.TicketID,
+		)
+		if existErr == nil && len(existing) > 0 {
+			continue
+		}
+
+		if _, startErr := a.mgr.StartWorkflow(
+			ctx, rt.TicketID, rt.WorkflowType, "", "",
+		); startErr != nil {
+			a.mgr.logger.Warn("start unblocked child",
+				"ticket", rt.TicketID, "error", startErr)
+		} else {
+			started++
+		}
+	}
+
+	return ProjectProgressResult{
+		AllComplete:    false,
+		TotalTickets:   len(graph.Tickets),
+		CompletedCount: len(completed),
+		StartedCount:   started,
+	}, nil
+}
+
+// CheckProjectHealth checks all active project orchestrator workflows and
+// returns a summary of their health. Used by LeadFDEWorkflow.
+func (a *Activities) CheckProjectHealth(
+	ctx context.Context,
+) ([]ProjectHealthStatus, error) {
+	workflows, err := a.mgr.db.ListRunningSwarmWorkflows(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list running workflows: %w", err)
+	}
+
+	var statuses []ProjectHealthStatus
+
+	for _, wf := range workflows {
+		if wf.WorkflowType != swarm.WorkflowTypeProject {
+			continue
+		}
+
+		graph := a.mgr.buildProjectGraph(ctx, wf.ID)
+		completed := a.mgr.completedChildTickets(ctx, graph)
+
+		statuses = append(statuses, ProjectHealthStatus{
+			WorkflowID:     wf.ID,
+			TicketID:       wf.TicketID,
+			Phase:          wf.Phase,
+			TotalTickets:   len(graph.Tickets),
+			CompletedCount: len(completed),
+			AllComplete:    graph.AllComplete(completed),
+		})
+	}
+
+	return statuses, nil
+}
+
+// PostProjectUpdate posts a status comment on the project's parent
+// Linear ticket.
+func (a *Activities) PostProjectUpdate(
+	ctx context.Context,
+	params ProjectUpdateParams,
+) error {
+	a.mgr.linearComment(
+		params.TicketID,
+		fmt.Sprintf(
+			"📊 Project progress: %d/%d child tickets complete",
+			params.CompletedCount,
+			params.TotalTickets,
+		),
+	)
+
+	return nil
+}
+
 // DecayLearnings applies relevance decay to stored learnings.
 func (a *Activities) DecayLearnings(ctx context.Context) error {
 	return swarm.DecayLearningRelevance(ctx, a.mgr.db.SQLDB())

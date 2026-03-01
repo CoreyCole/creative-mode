@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	temporalClient "go.temporal.io/sdk/client"
 
 	"creative-mode/harness/internal/db/sqlc"
 	"creative-mode/harness/internal/swarm"
@@ -194,7 +195,49 @@ func (m *Manager) SpawnProjectChildren(ctx context.Context, wf sqlc.SwarmWorkflo
 		),
 	)
 
+	// Start a ProjectOrchestratorWorkflow if Temporal is enabled.
+	if m.temporalRuntime != nil {
+		m.startProjectOrchestrator(ctx, wf)
+	}
+
 	return nil
+}
+
+// startProjectOrchestrator starts a long-lived Temporal workflow that
+// manages a project's child ticket lifecycle.
+func (m *Manager) startProjectOrchestrator(
+	ctx context.Context,
+	wf sqlc.SwarmWorkflow,
+) {
+	if m.temporalRuntime == nil || m.temporalRuntime.client == nil {
+		return
+	}
+
+	orchID := "project-orch-" + wf.ID
+	params := ProjectOrchestratorParams{
+		WorkflowID: wf.ID,
+		ProjectID:  wf.ID, // project ID == workflow ID
+		TicketID:   wf.TicketID,
+	}
+
+	_, err := m.temporalRuntime.client.ExecuteWorkflow(
+		ctx,
+		temporalClient.StartWorkflowOptions{
+			ID:        orchID,
+			TaskQueue: QueueOps,
+		},
+		ProjectOrchestratorWorkflow,
+		params,
+	)
+	if err != nil {
+		m.logger.Warn("start project orchestrator",
+			"workflow_id", wf.ID, "error", err)
+
+		return
+	}
+
+	m.logger.Info("project orchestrator started",
+		"orchestrator_id", orchID, "project_id", wf.ID)
 }
 
 // CheckProjectProgress checks all running project workflows to advance

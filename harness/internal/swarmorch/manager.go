@@ -114,6 +114,13 @@ func (m *Manager) StartWorkflow(
 	ticketURL string,
 	previousWorkflowID string,
 ) (string, error) {
+	// Auto-classify when workflow type is not provided.
+	if workflowType == "" {
+		workflowType = m.classifyTicket(ctx, ticketID)
+		m.logger.Info("auto-classified ticket",
+			"ticket", ticketID, "type", workflowType)
+	}
+
 	if !workflowType.Valid() {
 		return "", fmt.Errorf("invalid workflow type: %q", workflowType)
 	}
@@ -1219,6 +1226,30 @@ func (m *Manager) IncrementContextPressure(sessionID string) int {
 // GetContextPressure returns the current compact count for a session.
 func (m *Manager) GetContextPressure(sessionID string) int {
 	return m.ctxPressure.Get(sessionID)
+}
+
+// classifyTicket determines the workflow type for a ticket by checking
+// Linear metadata first, then falling back to keyword classification.
+func (m *Manager) classifyTicket(
+	ctx context.Context,
+	ticketID string,
+) swarm.WorkflowType {
+	title := ticketID
+	description := ""
+
+	// Try to get ticket details from Linear.
+	if m.linearClient != nil {
+		linCtx, cancel := context.WithTimeout(ctx, linearTimeout)
+		defer cancel()
+
+		ticket, err := m.linearClient.GetTicket(linCtx, ticketID)
+		if err == nil {
+			title = ticket.Title
+			description = ticket.Description
+		}
+	}
+
+	return swarm.ClassifyTicket(title, description)
 }
 
 // SetAlertManager configures the alert manager for Discord notifications.

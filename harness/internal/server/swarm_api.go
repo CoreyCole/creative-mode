@@ -1,11 +1,15 @@
 package server
 
 import (
+	"database/sql"
+	"errors"
 	"net/http"
+	"os"
 
 	"github.com/labstack/echo/v4"
 
 	"creative-mode/harness/internal/swarm"
+	"creative-mode/harness/internal/swarmorch"
 )
 
 // handleSwarmStart creates a new swarm workflow and spawns the first session.
@@ -121,4 +125,39 @@ func (s *Server) handleSwarmCancel(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, map[string]string{"status": "canceled"})
+}
+
+// handleSwarmSessionLog returns the JSONL log file for a session.
+func (s *Server) handleSwarmSessionLog(c echo.Context) error {
+	if s.SwarmManager == nil {
+		return echo.NewHTTPError(
+			http.StatusServiceUnavailable,
+			"swarm manager not configured",
+		)
+	}
+
+	sessionID := c.Param("id")
+
+	// Look up session to get ticketID for the log path.
+	session, err := s.DB.GetSwarmSession(c.Request().Context(), sessionID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return echo.NewHTTPError(http.StatusNotFound, "session not found")
+		}
+
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get session")
+	}
+
+	// Get ticketID from the workflow.
+	wf, wfErr := s.DB.GetSwarmWorkflow(c.Request().Context(), session.WorkflowID)
+	if wfErr != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get workflow")
+	}
+
+	logPath := swarmorch.LogPath(s.SwarmManager.LogsDir(), wf.TicketID, sessionID)
+	if _, statErr := os.Stat(logPath); os.IsNotExist(statErr) {
+		return echo.NewHTTPError(http.StatusNotFound, "log not found")
+	}
+
+	return c.File(logPath)
 }

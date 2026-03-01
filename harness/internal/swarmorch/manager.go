@@ -41,6 +41,10 @@ type Manager struct {
 	logsDir    string // data/logs for session logs
 	harnessURL string
 	mu         sync.Mutex // serializes workflow advancement
+
+	// JSONL log writers keyed by sessionID; closed on session completion.
+	jsonlMu      sync.RWMutex
+	jsonlWriters map[string]*JSONLWriter
 }
 
 // NewManager creates a new swarm orchestrator.
@@ -51,12 +55,13 @@ func NewManager(
 	baseDir, logsDir, harnessURL string,
 ) *Manager {
 	return &Manager{
-		db:         database,
-		logger:     logger,
-		eventBus:   eventBus,
-		baseDir:    baseDir,
-		logsDir:    logsDir,
-		harnessURL: harnessURL,
+		db:           database,
+		logger:       logger,
+		eventBus:     eventBus,
+		baseDir:      baseDir,
+		logsDir:      logsDir,
+		harnessURL:   harnessURL,
+		jsonlWriters: make(map[string]*JSONLWriter),
 	}
 }
 
@@ -229,6 +234,27 @@ func (m *Manager) spawnSession(ctx context.Context, wf sqlc.SwarmWorkflow) error
 
 	env, cleanupFn := m.buildEnv(ctx, wf, sessionID)
 
+	// Create per-session JSONL writer.
+	jw, jwErr := NewJSONLWriter(m.logsDir, wf.TicketID, sessionID)
+	if jwErr != nil {
+		m.logger.Warn("failed to create JSONL writer", "error", jwErr)
+	} else {
+		m.jsonlMu.Lock()
+		m.jsonlWriters[sessionID] = jw
+		m.jsonlMu.Unlock()
+
+		_ = jw.Write(map[string]any{
+			"event":       "session_spawned",
+			"session_id":  sessionID,
+			"workflow_id": wf.ID,
+			"ticket_id":   wf.TicketID,
+			"phase":       string(wf.Phase),
+			"skill":       skill,
+		})
+	}
+
+	sessLog := NewSessionLog(m.logger, wf.TicketID, wf.ID, sessionID, wf.Phase)
+
 	if err := m.createTmuxSession(ctx, sessionName, m.baseDir, env); err != nil {
 		cleanupFn()
 
@@ -240,6 +266,8 @@ func (m *Manager) spawnSession(ctx context.Context, wf sqlc.SwarmWorkflow) error
 
 		return fmt.Errorf("send skill prompt: %w", err)
 	}
+
+	sessLog.Info("session spawned", "session_name", sessionName, "skill", skill)
 
 	m.emitEvent(
 		ctx,
@@ -370,6 +398,9 @@ func (m *Manager) handleSessionComplete(ctx context.Context, sessionID string) {
 
 	m.captureLearnings(ctx, wf, session, result)
 	m.advanceWorkflow(ctx, wf, result)
+
+	// Close JSONL writer for this session.
+	m.closeJSONLWriter(sessionID)
 
 	// Clean up temp files.
 	_ = os.Remove(resultPath)
@@ -778,6 +809,33 @@ func (m *Manager) emitEvent(
 	}); err != nil {
 		m.logger.Error("emit swarm event", "type", eventType, "error", err)
 	}
+}
+
+// closeJSONLWriter closes and removes the JSONL writer for a session.
+func (m *Manager) closeJSONLWriter(sessionID string) {
+	m.jsonlMu.Lock()
+	defer m.jsonlMu.Unlock()
+
+	if jw, ok := m.jsonlWriters[sessionID]; ok {
+		_ = jw.Close()
+		delete(m.jsonlWriters, sessionID)
+	}
+}
+
+// WriteJSONLEvent writes an event to the JSONL log for a session.
+func (m *Manager) WriteJSONLEvent(sessionID string, event map[string]any) {
+	m.jsonlMu.RLock()
+	jw, ok := m.jsonlWriters[sessionID]
+	m.jsonlMu.RUnlock()
+
+	if ok {
+		_ = jw.Write(event)
+	}
+}
+
+// LogsDir returns the logs directory path.
+func (m *Manager) LogsDir() string {
+	return m.logsDir
 }
 
 // ResultFilePath returns the temp file path for a session's RESULT output.

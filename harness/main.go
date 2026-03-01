@@ -30,6 +30,7 @@ import (
 	"creative-mode/harness/internal/mayor"
 	"creative-mode/harness/internal/president"
 	"creative-mode/harness/internal/server"
+	"creative-mode/harness/internal/swarm"
 	"creative-mode/harness/internal/swarmorch"
 	"creative-mode/harness/internal/world"
 )
@@ -482,7 +483,7 @@ func initPresidentManager(
 		return nil
 	}
 
-	hookSecret := os.Getenv("CM_HOOK_SECRET")
+	hookSecret := os.Getenv(swarm.EnvKey("HookSecret"))
 
 	openclawHome, openclawBin := resolveOpenclawPaths(dataDir)
 	mgr := president.NewManager(

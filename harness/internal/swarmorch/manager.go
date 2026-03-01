@@ -288,7 +288,7 @@ func (m *Manager) spawnSession(ctx context.Context, wf sqlc.SwarmWorkflow) error
 	env, cleanupFn := m.buildEnv(ctx, wf, sessionID)
 
 	// Generate Claude Code hooks config pointing back to harness.
-	hookSecret := os.Getenv("CM_HOOK_SECRET")
+	hookSecret := os.Getenv(swarm.EnvKey("HookSecret"))
 	hooksConfigDir, hooksErr := WriteHooksConfig(
 		sessionID,
 		wf.TicketID,
@@ -817,11 +817,11 @@ func (m *Manager) buildEnv(
 		se.TicketURL = ticket.Url
 	}
 
-	if hookSecret := os.Getenv("CM_HOOK_SECRET"); hookSecret != "" {
+	if hookSecret := os.Getenv(swarm.EnvKey("HookSecret")); hookSecret != "" {
 		se.HookSecret = hookSecret
 	}
 
-	if os.Getenv("CM_SWARM_DRY_RUN") == "true" {
+	if os.Getenv(swarm.EnvKey("DryRun")) == "true" {
 		se.DryRun = "true"
 	}
 

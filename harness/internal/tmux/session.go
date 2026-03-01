@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"creative-mode/harness/internal/swarm"
 )
 
 // Session represents a tmux session for a Claude Code instance working on a
@@ -41,13 +43,13 @@ func (s *Session) Create(
 		"-s", s.Name, "-c", s.WorkDir,
 		"-e", "CM_WORLD_ID=" + worldID,
 		"-e", "CM_CHECKPOINT_ID=" + cpID,
-		"-e", "CM_HARNESS_URL=" + harnessURL,
+		"-e", swarm.EnvKey("HarnessURL") + "=" + harnessURL,
 		"-e", "CM_LOG_DIR=" + logDir,
 	}
 
 	// Propagate hook secret so hook scripts can authenticate with the harness.
-	if secret := os.Getenv("CM_HOOK_SECRET"); secret != "" {
-		args = append(args, "-e", "CM_HOOK_SECRET="+secret)
+	if secret := os.Getenv(swarm.EnvKey("HookSecret")); secret != "" {
+		args = append(args, "-e", swarm.EnvKey("HookSecret")+"="+secret)
 	}
 
 	for _, env := range extraEnv {

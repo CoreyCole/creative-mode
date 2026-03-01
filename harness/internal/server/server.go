@@ -31,6 +31,7 @@ import (
 	"creative-mode/harness/internal/gemini"
 	"creative-mode/harness/internal/mayor"
 	"creative-mode/harness/internal/president"
+	"creative-mode/harness/internal/swarm"
 	"creative-mode/harness/internal/swarmorch"
 	"creative-mode/harness/internal/world"
 	"creative-mode/harness/views/admin"
@@ -703,7 +704,7 @@ func (s *Server) handleSharedAssets(c echo.Context) error {
 // hookSecretMiddleware validates the X-Hook-Secret header against CM_HOOK_SECRET.
 // If CM_HOOK_SECRET is not set, all requests are allowed.
 func hookSecretMiddleware() echo.MiddlewareFunc {
-	secret := os.Getenv("CM_HOOK_SECRET")
+	secret := os.Getenv(swarm.EnvKey("HookSecret"))
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			if secret != "" && c.Request().Header.Get("X-Hook-Secret") != secret {

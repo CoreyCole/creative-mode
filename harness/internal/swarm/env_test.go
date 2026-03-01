@@ -55,10 +55,16 @@ func TestSwarmEnvToMapPreviousContext(t *testing.T) {
 	m := env.ToMap()
 
 	if m["CM_SWARM_PREVIOUS_WORKFLOW_ID"] != "prev123" {
-		t.Errorf("CM_SWARM_PREVIOUS_WORKFLOW_ID = %q, want prev123", m["CM_SWARM_PREVIOUS_WORKFLOW_ID"])
+		t.Errorf(
+			"CM_SWARM_PREVIOUS_WORKFLOW_ID = %q, want prev123",
+			m["CM_SWARM_PREVIOUS_WORKFLOW_ID"],
+		)
 	}
 	if m["CM_SWARM_PREVIOUS_BRANCH"] != "swarm/CM-OLD/fix" {
-		t.Errorf("CM_SWARM_PREVIOUS_BRANCH = %q, want swarm/CM-OLD/fix", m["CM_SWARM_PREVIOUS_BRANCH"])
+		t.Errorf(
+			"CM_SWARM_PREVIOUS_BRANCH = %q, want swarm/CM-OLD/fix",
+			m["CM_SWARM_PREVIOUS_BRANCH"],
+		)
 	}
 
 	// PreviousResearchPath not set — should be omitted.
@@ -74,7 +80,10 @@ func TestEnvKey(t *testing.T) {
 		t.Errorf("EnvKey(TicketID) = %q, want CM_SWARM_TICKET_ID", got)
 	}
 	if got := EnvKey("PreviousWorkflowID"); got != "CM_SWARM_PREVIOUS_WORKFLOW_ID" {
-		t.Errorf("EnvKey(PreviousWorkflowID) = %q, want CM_SWARM_PREVIOUS_WORKFLOW_ID", got)
+		t.Errorf(
+			"EnvKey(PreviousWorkflowID) = %q, want CM_SWARM_PREVIOUS_WORKFLOW_ID",
+			got,
+		)
 	}
 }
 

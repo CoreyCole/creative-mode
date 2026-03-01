@@ -3,6 +3,7 @@ package swarmorch
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"time"
 
 	"creative-mode/harness/internal/swarm"
@@ -171,13 +172,15 @@ func queryActiveWorkflows(ctx context.Context, db *sql.DB) ([]ActiveWorkflowInfo
 	return results, rows.Err()
 }
 
+//nolint:gosec // status values are typed constants, not user input
 func queryRecentCompletions(ctx context.Context, db *sql.DB) ([]CompletionInfo, error) {
-	query := `SELECT id, ticket_id, status, updated_at
+	query := fmt.Sprintf(`SELECT id, ticket_id, status, updated_at
 	FROM swarm_workflows
-	WHERE status IN ('completed', 'failed', 'canceled')
+	WHERE status IN ('%s', '%s', '%s')
 	  AND updated_at >= datetime('now', '-24 hours')
 	ORDER BY updated_at DESC
-	LIMIT ?`
+	LIMIT ?`,
+		swarm.StatusComplete, swarm.StatusFailed, swarm.StatusCanceled)
 
 	rows, err := db.QueryContext(ctx, query, recentCompletionCap)
 	if err != nil {

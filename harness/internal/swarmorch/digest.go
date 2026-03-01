@@ -192,11 +192,11 @@ func buildDigestSummary(
 	fmt.Fprintf(&b, "Total learnings: %d\n", len(learnings))
 
 	categories := []string{
-		"post_mortem",
-		"code_bug",
-		"plan_issue",
-		"convention",
-		"pattern",
+		string(swarm.LearningPostMortem),
+		string(swarm.LearningCodeBug),
+		string(swarm.LearningPlanIssue),
+		string(swarm.LearningConvention),
+		string(swarm.LearningPattern),
 	}
 	for _, cat := range categories {
 		if items, ok := grouped[cat]; ok {
@@ -233,11 +233,11 @@ func buildDigestMarkdown(
 
 	grouped := groupByCategory(learnings)
 	categories := []string{
-		"post_mortem",
-		"code_bug",
-		"plan_issue",
-		"convention",
-		"pattern",
+		string(swarm.LearningPostMortem),
+		string(swarm.LearningCodeBug),
+		string(swarm.LearningPlanIssue),
+		string(swarm.LearningConvention),
+		string(swarm.LearningPattern),
 	}
 
 	for _, cat := range categories {

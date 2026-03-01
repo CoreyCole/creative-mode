@@ -56,7 +56,7 @@ func (s *Server) handleSwarmStart(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, map[string]string{
 		"workflow_id": wfID,
-		"status":      "running",
+		"status":      string(swarm.StatusRunning),
 	})
 }
 
@@ -130,7 +130,10 @@ func (s *Server) handleSwarmCancel(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 
-	return c.JSON(http.StatusOK, map[string]string{"status": "canceled"})
+	return c.JSON(
+		http.StatusOK,
+		map[string]string{"status": string(swarm.StatusCanceled)},
+	)
 }
 
 // handleSwarmSessionLog returns the JSONL log file for a session.

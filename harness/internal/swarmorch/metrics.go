@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"creative-mode/harness/internal/swarm"
 )
 
 // Metrics constants.
@@ -184,13 +186,20 @@ func queryWorkflowMetrics(
 	sinceExpr string,
 	out *WorkflowMetrics,
 ) error {
-	query := `SELECT
+	query := fmt.Sprintf(
+		`SELECT
 		COUNT(*) AS total,
-		COALESCE(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END), 0) AS completed,
-		COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS failed,
-		COALESCE(SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END), 0) AS running,
-		COALESCE(SUM(CASE WHEN status = 'canceled' THEN 1 ELSE 0 END), 0) AS canceled
-	FROM swarm_workflows WHERE created_at >= ` + sinceExpr
+		COALESCE(SUM(CASE WHEN status = '%s' THEN 1 ELSE 0 END), 0) AS completed,
+		COALESCE(SUM(CASE WHEN status = '%s' THEN 1 ELSE 0 END), 0) AS failed,
+		COALESCE(SUM(CASE WHEN status = '%s' THEN 1 ELSE 0 END), 0) AS running,
+		COALESCE(SUM(CASE WHEN status = '%s' THEN 1 ELSE 0 END), 0) AS canceled
+	FROM swarm_workflows WHERE created_at >= %s`,
+		swarm.StatusComplete,
+		swarm.StatusFailed,
+		swarm.StatusRunning,
+		swarm.StatusCanceled,
+		sinceExpr,
+	)
 
 	row := db.QueryRowContext(ctx, query)
 	if err := row.Scan(
@@ -213,14 +222,16 @@ func queryPhaseMetrics(
 	sinceExpr string,
 	out map[string]PhaseMetrics,
 ) error {
-	query := `SELECT
+	query := fmt.Sprintf(`SELECT
 		phase,
 		COUNT(*) AS count,
 		COALESCE(AVG(duration_sec), 0) AS avg_duration,
-		COALESCE(SUM(CASE WHEN result IN ('logic_failure', 'infra_failure', 'timeout') THEN 1 ELSE 0 END), 0) AS failures
+		COALESCE(SUM(CASE WHEN result IN ('%s', '%s', '%s') THEN 1 ELSE 0 END), 0) AS failures
 	FROM swarm_sessions
-	WHERE started_at >= ` + sinceExpr + `
-	GROUP BY phase`
+	WHERE started_at >= %s
+	GROUP BY phase`,
+		swarm.ResultLogicFailure, swarm.ResultInfraFailure, swarm.ResultTimeout,
+		sinceExpr)
 
 	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
@@ -259,11 +270,15 @@ func queryRetryMetrics(
 	sinceExpr string,
 	out *RetryMetrics,
 ) error {
-	query := `SELECT
-		COALESCE(SUM(CASE WHEN event_type = 'retry_triggered' AND phase IN ('code_plan', 'plan_review') THEN 1 ELSE 0 END), 0),
-		COALESCE(SUM(CASE WHEN event_type = 'retry_triggered' AND phase IN ('verify', 'implement') THEN 1 ELSE 0 END), 0),
-		COALESCE(SUM(CASE WHEN event_type = 'retry_triggered' AND detail LIKE '%infra%' THEN 1 ELSE 0 END), 0)
-	FROM swarm_events WHERE created_at >= ` + sinceExpr
+	query := fmt.Sprintf(`SELECT
+		COALESCE(SUM(CASE WHEN event_type = '%s' AND phase IN ('%s', '%s') THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN event_type = '%s' AND phase IN ('%s', '%s') THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN event_type = '%s' AND detail LIKE '%%infra%%' THEN 1 ELSE 0 END), 0)
+	FROM swarm_events WHERE created_at >= %s`,
+		swarm.EventRetryTriggered, swarm.PhaseCodePlan, swarm.PhasePlanReview,
+		swarm.EventRetryTriggered, swarm.PhaseVerify, swarm.PhaseImplement,
+		swarm.EventRetryTriggered,
+		sinceExpr)
 
 	row := db.QueryRowContext(ctx, query)
 

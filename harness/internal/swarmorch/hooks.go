@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"sync"
+
+	"creative-mode/harness/internal/swarm"
 )
 
 const (
@@ -67,12 +69,12 @@ func WriteHooksConfig(
 	baseURL := harnessURL + "/api/swarm/hook"
 
 	authHeaders := map[string]string{
-		"X-Hook-Secret":   "$CM_HOOK_SECRET",
+		"X-Hook-Secret":   "$" + swarm.EnvKey("HookSecret"),
 		"X-Swarm-Session": sessionID,
 		"X-Swarm-Ticket":  ticketID,
 		"Content-Type":    "application/json",
 	}
-	allowedVars := []string{"CM_HOOK_SECRET"}
+	allowedVars := []string{swarm.EnvKey("HookSecret")}
 
 	settings := hooksSettings{
 		Hooks: map[string][]matcherGroup{

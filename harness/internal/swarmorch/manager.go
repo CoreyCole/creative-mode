@@ -65,6 +65,9 @@ type Manager struct {
 	// Alerts manager for Discord notifications.
 	alertMgr *AlertManager
 
+	// Temporal runtime (nil when CM_SWARM_TEMPORAL=false).
+	temporalRuntime *TemporalRuntime
+
 	// Maintenance loop cancellation.
 	maintenanceCancel context.CancelFunc
 }
@@ -146,6 +149,13 @@ func (m *Manager) StartWorkflow(
 		})
 	}
 
+	// Temporal mode: trigger heartbeat to pick up new workflow; don't spawn directly.
+	if m.temporalRuntime != nil {
+		m.temporalRuntime.TriggerHeartbeat()
+
+		return wfID, nil
+	}
+
 	wf, err := m.db.GetSwarmWorkflow(ctx, wfID)
 	if err != nil {
 		return "", fmt.Errorf("get workflow: %w", err)
@@ -198,7 +208,14 @@ func (m *Manager) CancelWorkflow(ctx context.Context, workflowID string) error {
 
 // RecoverWorkflows finds running workflows with dead tmux sessions and
 // re-advances them. Called on startup to handle unclean restarts.
+// When Temporal is enabled, recovery is handled by the heartbeat schedule.
 func (m *Manager) RecoverWorkflows(ctx context.Context) error {
+	if m.temporalRuntime != nil {
+		m.logger.Info("temporal enabled — skipping goroutine-based recovery")
+
+		return nil
+	}
+
 	workflows, err := m.db.ListRunningSwarmWorkflows(ctx)
 	if err != nil {
 		return fmt.Errorf("list running workflows: %w", err)
@@ -682,6 +699,13 @@ func (m *Manager) advanceWorkflow(
 		"",
 	)
 
+	// Temporal mode: trigger heartbeat to spawn next session; don't spawn directly.
+	if m.temporalRuntime != nil {
+		m.temporalRuntime.TriggerHeartbeat()
+
+		return
+	}
+
 	// Refresh workflow and spawn next session.
 	updatedWf, getErr := m.db.GetSwarmWorkflow(ctx, wf.ID)
 	if getErr != nil {
@@ -973,10 +997,21 @@ func (m *Manager) SetAlertManager(alertMgr *AlertManager) {
 	m.alertMgr = alertMgr
 }
 
+// SetTemporalRuntime configures the Temporal runtime for durable orchestration.
+func (m *Manager) SetTemporalRuntime(rt *TemporalRuntime) {
+	m.temporalRuntime = rt
+}
+
 // StartMaintenance launches periodic background tasks: stall detection (2min),
 // relevance decay (1hr), and digest generation (24hr). Call StopMaintenance to
 // cancel.
 func (m *Manager) StartMaintenance() {
+	if m.temporalRuntime != nil {
+		m.logger.Info("temporal enabled — skipping goroutine-based maintenance")
+
+		return
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	m.maintenanceCancel = cancel
 

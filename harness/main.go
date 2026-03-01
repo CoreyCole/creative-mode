@@ -245,6 +245,61 @@ func main() {
 		logger.Error("failed to recover swarm workflows", "error", recoverErr)
 	}
 
+	// Wire swarm alert manager (Discord alerts for failures/stalls/crashes).
+	presidentChannelID := os.Getenv("DISCORD_PRESIDENT_CHANNEL_ID")
+	if botToken := os.Getenv(
+		"DISCORD_BOT_TOKEN",
+	); botToken != "" &&
+		presidentChannelID != "" {
+		alertClient, alertErr := worldchannel.NewClient(worldchannel.Config{
+			BotToken:         botToken,
+			GuildID:          os.Getenv("DISCORD_GUILD_ID"),
+			WorldsCategoryID: os.Getenv("DISCORD_WORLDS_CATEGORY_ID"),
+		}, logger)
+		if alertErr != nil {
+			logger.Error("failed to create swarm alert discord client", "error", alertErr)
+		} else {
+			swarmManager.SetAlertManager(
+				swarmorch.NewAlertManager(alertClient, presidentChannelID, logger),
+			)
+			logger.Info("Swarm alert manager enabled", "channel_id", presidentChannelID)
+		}
+	} else {
+		// Wire alert manager without Discord — alerts are logged only.
+		swarmManager.SetAlertManager(swarmorch.NewAlertManager(nil, "", logger))
+	}
+
+	// Set up Temporal runtime for durable swarm orchestration (optional).
+	var temporalRuntime *swarmorch.TemporalRuntime
+	if swarmorch.TemporalEnabled() {
+		temporalClient, temporalErr := swarmorch.NewTemporalClient(
+			os.Getenv("TEMPORAL_ADDRESS"), logger,
+		)
+		if temporalErr != nil {
+			log.Fatalf( //nolint:gocritic // intentional startup abort
+				"Temporal connect failed (CM_SWARM_TEMPORAL=true): %v",
+				temporalErr,
+			)
+		}
+
+		rt, rtErr := swarmorch.StartRuntime(temporalClient, swarmManager, logger)
+		if rtErr != nil {
+			temporalClient.Close()
+			log.Fatalf(
+				"Temporal runtime failed (CM_SWARM_TEMPORAL=true): %v",
+				rtErr,
+			)
+		}
+
+		temporalRuntime = rt
+		swarmManager.SetTemporalRuntime(rt)
+		logger.Info("Swarm Temporal runtime enabled")
+	}
+
+	// Start periodic maintenance (stall detection, relevance decay, digest generation).
+	// Skipped automatically when Temporal is enabled (heartbeat schedule handles it).
+	swarmManager.StartMaintenance()
+
 	// Set up Gemini image generation (optional — requires GEMINI_API_KEY).
 	geminiClient, geminiErr := gemini.NewClient(ctx, os.Getenv("GEMINI_API_KEY"), logger)
 	if geminiErr != nil {
@@ -333,6 +388,11 @@ func main() {
 		<-ctx.Done()
 		logger.Info("Shutting down server...")
 		worldManager.Shutdown()
+		swarmManager.StopMaintenance()
+
+		if temporalRuntime != nil {
+			temporalRuntime.Stop()
+		}
 
 		if discordListener != nil {
 			_ = discordListener.Stop()

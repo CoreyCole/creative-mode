@@ -13,8 +13,10 @@ Build a general-purpose agent swarm system through 14 composable Claude Code ski
 - **Explicit user-invoked workflows** — no auto-classification. User explicitly calls `/swarm-research`, `/swarm-code "..."`, or `/swarm-project "..."`. OpenClaw can direct routing in a future iteration.
 - **Full restart path** — `swarm_workflows.previous_workflow_id` enables creating new attempts that reference prior failed/rejected work as context.
 - **State machine unit tests** — `statemachine_test.go` in Phase 1 with table-driven tests for every transition.
-- **Graphite `gt` for PR stacking** — `pkgs.graphite-cli` added to `flake.nix` (available in nixpkgs v1.7.18). PRs created via `gt create`.
+- **Graphite `gt` for PR stacking** — `pkgs.graphite-cli` added to `flake.nix` (available in nixpkgs v1.7.2). PRs created via `gt create`.
 - **Schedule idempotency** — try-create with `ErrScheduleAlreadyRunning` fallback on harness restart.
+- **Attempt-scoped Temporal workflow IDs** — `swarm-{agentIdx}-{ticketID}-a{attempt}` prevents ID collisions when retrying failed workflows within Temporal's retention period.
+- **Existing reaper exclusion** — `cm-swarm-` prefix added to `ReapOrphanedSessions` skip list so the existing Claude Code reaper doesn't kill swarm tmux sessions.
 
 ## Current State Analysis
 
@@ -108,9 +110,13 @@ A fully operational agent swarm where:
 
 ### Workflow IDs & Tmux Sessions
 
-- **Workflow ID**: `swarm-{agentIdx}-{ticketID}` (e.g., `swarm-0-CM-123`)
-- **Tmux session**: `cm-swarm-{agentIdx}-{ticketID}` (e.g., `cm-swarm-0-CM-123`)
+- **Temporal workflow ID**: `swarm-{agentIdx}-{ticketID}-a{attempt}` (e.g., `swarm-0-CM-123-a1`)
+- **SQLite workflow ID**: same as Temporal workflow ID — single source of truth
+- **Tmux session**: `cm-swarm-{agentIdx}-{ticketID}-a{attempt}` (e.g., `cm-swarm-0-CM-123-a1`)
 - **Agent index**: 0 through `max_sessions - 1`, assigned from first available slot
+- **Attempt suffix**: `-a{N}` ensures uniqueness within Temporal's workflow ID retention period. A "full restart" via `previous_workflow_id` increments the attempt counter.
+
+**Existing reaper exclusion**: The existing `ReapOrphanedSessions` in `harness/internal/claude/claude.go:312-315` matches `cm-*` sessions (excluding `cm-server-*` and `cm-trunk-*`). Swarm sessions MUST be excluded by adding `strings.HasPrefix(line, "cm-swarm-")` to the skip list — otherwise the reaper will kill them within 5 minutes (it looks up `cpID` from the session name, fails to find it in the checkpoints table, and kills the session).
 
 ### API Routes
 
@@ -348,6 +354,60 @@ const (
     WorkflowTypeCode     WorkflowType = "code"
     WorkflowTypeProject  WorkflowType = "project"
 )
+
+// EventType is a typed enum for swarm event types. Mapped to swarm_events.event_type
+// via sqlc.yaml overrides.
+type EventType string
+
+const (
+    EventWorkflowStarted   EventType = "workflow_started"
+    EventWorkflowCompleted EventType = "workflow_completed"
+    EventWorkflowFailed    EventType = "workflow_failed"
+    EventWorkflowCancelled EventType = "workflow_cancelled"
+    EventPhaseStarted      EventType = "phase_started"
+    EventPhaseCompleted    EventType = "phase_completed"
+    EventSessionSpawned    EventType = "session_spawned"
+    EventSessionCompleted  EventType = "session_completed"
+    EventPlanReviewVerdict EventType = "plan_review_verdict"
+    EventVerifyResult      EventType = "verify_result"
+    EventMilestonePassed   EventType = "milestone_passed"
+    EventMilestoneFailed   EventType = "milestone_failed"
+    EventRetryTriggered    EventType = "retry_triggered"
+    EventStallDetected     EventType = "stall_detected"
+    EventSessionReaped     EventType = "session_reaped"
+    EventTicketSynced      EventType = "ticket_synced"
+    EventTerminalFailure   EventType = "terminal_failure"
+)
+
+func (e EventType) Valid() bool {
+    switch e {
+    case EventWorkflowStarted, EventWorkflowCompleted, EventWorkflowFailed, EventWorkflowCancelled,
+        EventPhaseStarted, EventPhaseCompleted, EventSessionSpawned, EventSessionCompleted,
+        EventPlanReviewVerdict, EventVerifyResult, EventMilestonePassed, EventMilestoneFailed,
+        EventRetryTriggered, EventStallDetected, EventSessionReaped, EventTicketSynced,
+        EventTerminalFailure:
+        return true
+    }
+    return false
+}
+
+// MilestoneStatus is a typed enum for project milestone status. Mapped to
+// swarm_project_milestones.status via sqlc.yaml overrides.
+type MilestoneStatus string
+
+const (
+    MilestoneStatusPending MilestoneStatus = "pending"
+    MilestoneStatusPassed  MilestoneStatus = "passed"
+    MilestoneStatusFailed  MilestoneStatus = "failed"
+)
+
+func (m MilestoneStatus) Valid() bool {
+    switch m {
+    case MilestoneStatusPending, MilestoneStatusPassed, MilestoneStatusFailed:
+        return true
+    }
+    return false
+}
 ```
 
 ### sqlc.yaml Overrides
@@ -358,22 +418,36 @@ Add to the existing `overrides` list in `harness/sqlc.yaml`:
 overrides:
   # ... existing overrides ...
   - column: "swarm_workflows.phase"
-    go_type: "creative-mode/harness/internal/swarm.Phase"
+    go_type:
+      import: "creative-mode/harness/internal/swarm"
+      type: "Phase"
   - column: "swarm_workflows.status"
-    go_type: "creative-mode/harness/internal/swarm.WorkflowStatus"
+    go_type:
+      import: "creative-mode/harness/internal/swarm"
+      type: "WorkflowStatus"
   - column: "swarm_workflows.workflow_type"
-    go_type: "creative-mode/harness/internal/swarm.WorkflowType"
+    go_type:
+      import: "creative-mode/harness/internal/swarm"
+      type: "WorkflowType"
   - column: "swarm_sessions.phase"
-    go_type: "creative-mode/harness/internal/swarm.Phase"
+    go_type:
+      import: "creative-mode/harness/internal/swarm"
+      type: "Phase"
   - column: "swarm_sessions.result"
-    go_type: "creative-mode/harness/internal/swarm.SessionResult"
+    go_type:
+      import: "creative-mode/harness/internal/swarm"
+      type: "SessionResult"
   - column: "swarm_events.event_type"
-    go_type: "creative-mode/harness/internal/swarm.EventType"
+    go_type:
+      import: "creative-mode/harness/internal/swarm"
+      type: "EventType"
   - column: "swarm_project_milestones.status"
-    go_type: "creative-mode/harness/internal/swarm.MilestoneStatus"
+    go_type:
+      import: "creative-mode/harness/internal/swarm"
+      type: "MilestoneStatus"
 ```
 
-This gives **compile-time type safety** — sqlc-generated query functions accept and return `swarm.Phase`, `swarm.WorkflowStatus`, etc. instead of plain `string`. Passing wrong values is a compile error.
+Uses the structured `go_type: {import, type}` format for consistency with the existing `time.Time` override in `sqlc.yaml:57-59`. This gives **compile-time type safety** — sqlc-generated query functions accept and return `swarm.Phase`, `swarm.WorkflowStatus`, etc. instead of plain `string`. Passing wrong values is a compile error.
 
 ### Phase Transitions
 
@@ -477,18 +551,18 @@ Harness handler: handleSwarmSessionComplete
 
 type CompletionRegistry struct {
     mu       sync.Mutex
-    channels map[string]chan SessionResult // keyed by session ID
+    channels map[string]chan SessionOutcome // keyed by session ID
 }
 
-func (r *CompletionRegistry) Register(sessionID string) <-chan SessionResult {
+func (r *CompletionRegistry) Register(sessionID string) <-chan SessionOutcome {
     r.mu.Lock()
     defer r.mu.Unlock()
-    ch := make(chan SessionResult, 1)
+    ch := make(chan SessionOutcome, 1)
     r.channels[sessionID] = ch
     return ch
 }
 
-func (r *CompletionRegistry) Signal(sessionID string, result SessionResult) {
+func (r *CompletionRegistry) Signal(sessionID string, result SessionOutcome) {
     r.mu.Lock()
     defer r.mu.Unlock()
     if ch, ok := r.channels[sessionID]; ok {
@@ -507,7 +581,7 @@ func (r *CompletionRegistry) Deregister(sessionID string) {
 ### RunClaudeSession Activity (v4)
 
 ```go
-func (a *Activities) RunClaudeSession(ctx context.Context, params SessionParams) (SessionResult, error) {
+func (a *Activities) RunClaudeSession(ctx context.Context, params SessionParams) (SessionOutcome, error) {
     sessionID := generateID()
     sessionName := fmt.Sprintf("cm-%s", params.WorkflowID)
 
@@ -517,7 +591,7 @@ func (a *Activities) RunClaudeSession(ctx context.Context, params SessionParams)
 
     // 2. Create DB record
     a.store.CreateSession(ctx, sessionID, params.WorkflowID, sessionName, params.Skill, params.Phase)
-    a.publishEvent(params, "session_spawned", params.Phase, nil)
+    a.publishEvent(params, EventSessionSpawned, params.Phase, nil)
 
     // 3. Create tmux session with swarm-specific env vars
     extraEnv := []string{
@@ -534,11 +608,11 @@ func (a *Activities) RunClaudeSession(ctx context.Context, params SessionParams)
 
     for {
         select {
-        case result := <-completionCh:
+        case outcome := <-completionCh:
             // Hook fired — session complete
-            a.store.CompleteSession(ctx, sessionID, result.Status, result.Detail)
-            a.publishEvent(params, "session_completed", params.Phase, result)
-            return result, nil
+            a.store.CompleteSession(ctx, sessionID, outcome.Result, outcome.Detail)
+            a.publishEvent(params, EventSessionCompleted, params.Phase, outcome)
+            return outcome, nil
 
         case <-ticker.C:
             // Heartbeat to Temporal (keeps activity alive, enables recovery)
@@ -547,19 +621,19 @@ func (a *Activities) RunClaudeSession(ctx context.Context, params SessionParams)
             // Safety check: if tmux session died without hook firing
             if !tmuxHasSession(sessionName) {
                 // Session crashed — read RESULT comment as fallback
-                result := a.parseResultComment(params.TicketID, params.Phase)
-                if result.Status == "" {
-                    result = SessionResult{Status: ResultInfraFailure, Detail: "session crashed without RESULT comment"}
+                outcome := a.parseResultComment(params.TicketID, params.Phase)
+                if outcome.Result == "" {
+                    outcome = SessionOutcome{Result: ResultInfraFailure, Detail: "session crashed without RESULT comment"}
                 }
-                a.store.CompleteSession(ctx, sessionID, result.Status, result.Detail)
-                a.publishEvent(params, "session_completed", params.Phase, result)
-                return result, nil
+                a.store.CompleteSession(ctx, sessionID, outcome.Result, outcome.Detail)
+                a.publishEvent(params, EventSessionCompleted, params.Phase, outcome)
+                return outcome, nil
             }
 
         case <-ctx.Done():
             // Workflow cancelled or activity timed out
             killTmuxSession(sessionName)
-            return SessionResult{Status: ResultTimeout}, ctx.Err()
+            return SessionOutcome{Result: ResultTimeout}, ctx.Err()
         }
     }
 }
@@ -567,7 +641,7 @@ func (a *Activities) RunClaudeSession(ctx context.Context, params SessionParams)
 
 ### Swarm On-Stop Hook
 
-Each swarm tmux session gets a hook that fires on Claude Code exit. The hook script is injected at session creation time (written to a temp dir, referenced in `.claude/hooks/`).
+Each swarm tmux session gets a hook that fires on Claude Code exit. The hook is installed by `createSwarmTmuxSession` which writes the script to a workspace-local `.claude/hooks/` directory within the session's working directory. This is the same directory that Claude Code checks for hooks, so the swarm hook coexists with any template hooks. The session runs from the repo root (not a template directory), so there is no conflict with template-specific hooks in `templates/*/.claude/hooks/`.
 
 ```bash
 #!/usr/bin/env bash
@@ -620,13 +694,13 @@ func (s *Server) handleSwarmSessionComplete(c echo.Context) error {
     }
 
     // Read RESULT comment from Linear to get the session outcome
-    result := s.SwarmActivities.ParseResultComment(req.TicketID, "" /* latest */)
-    if result.Status == "" {
-        result = SessionResult{Status: ResultSuccess, Detail: "no RESULT comment found"}
+    outcome := s.SwarmActivities.ParseResultComment(req.TicketID, "" /* latest */)
+    if outcome.Result == "" {
+        outcome = SessionOutcome{Result: ResultSuccess, Detail: "no RESULT comment found"}
     }
 
     // Signal the waiting RunClaudeSession activity
-    s.CompletionRegistry.Signal(req.SessionID, result)
+    s.CompletionRegistry.Signal(req.SessionID, outcome)
 
     // Publish to EventBus for dashboard
     if s.EventBus != nil {
@@ -635,7 +709,7 @@ func (s *Server) handleSwarmSessionComplete(c echo.Context) error {
             "session_id":  req.SessionID,
             "workflow_id": req.WorkflowID,
             "ticket_id":   req.TicketID,
-            "result":      result.Status,
+            "result":      outcome.Result,
         })
     }
 
@@ -710,9 +784,9 @@ Queries for all 7 tables:
 - Dashboard queries: running workflows with latest session, recent events, capacity count
 
 #### 3. Enum Types
-**File**: `harness/internal/swarm/enums.go` (~80 lines)
+**File**: `harness/internal/swarm/enums.go` (~150 lines)
 
-Typed Go enum types for `Phase`, `SessionResult`, `WorkflowStatus`, `WorkflowType`, `EventType`, `MilestoneStatus` (as shown in State Machine section above). Each type has a `Valid()` method.
+Six typed Go enum types: `Phase`, `SessionResult`, `WorkflowStatus`, `WorkflowType`, `EventType`, `MilestoneStatus` (as shown in State Machine section above). Each type has a `Valid()` method. All six are referenced by sqlc.yaml overrides — missing any will cause a compile error after `sqlc generate`.
 
 #### 4. sqlc.yaml Overrides
 **File**: `harness/sqlc.yaml` — add overrides mapping swarm columns to typed enums (as shown in State Machine section above).
@@ -1175,6 +1249,21 @@ WantedBy=multi-user.target
 
 ### Changes Required
 
+#### 0. Existing Reaper Exclusion (CRITICAL)
+**File**: `harness/internal/claude/claude.go` — line 312-315
+
+Add `cm-swarm-` to the skip list in `ReapOrphanedSessions`. Without this, the existing reaper (which runs every 5 minutes via `main.go:224`) will kill swarm tmux sessions because it can't find a matching checkpoint ID in the database.
+
+```go
+// Match cm-{worldID}-{cpID} but NOT cm-server-*, cm-trunk-*, or cm-swarm-*.
+if !strings.HasPrefix(line, "cm-") ||
+    strings.HasPrefix(line, "cm-server-") ||
+    strings.HasPrefix(line, "cm-trunk-") ||
+    strings.HasPrefix(line, "cm-swarm-") {
+    continue
+}
+```
+
 #### 1. Completion Channel Registry
 **File**: `harness/internal/swarm/completion.go` (~60 lines)
 
@@ -1185,7 +1274,7 @@ The `CompletionRegistry` manages per-session completion signals (see Session Com
 
 ```go
 // SessionWorkflow — generic, short-lived: run one Claude Code skill session, wait for hook completion
-func SessionWorkflow(ctx workflow.Context, params SessionParams) (SessionResult, error) {
+func SessionWorkflow(ctx workflow.Context, params SessionParams) (SessionOutcome, error) {
     // Determine queue based on phase
     queue := "swarm-general"
     if params.Phase == PhaseVerify {
@@ -1199,9 +1288,9 @@ func SessionWorkflow(ctx workflow.Context, params SessionParams) (SessionResult,
         RetryPolicy:         &temporal.RetryPolicy{MaximumAttempts: 1}, // no auto-retry; state machine handles retries
     })
 
-    var result SessionResult
-    err := workflow.ExecuteActivity(actCtx, RunClaudeSession, params).Get(ctx, &result)
-    return result, err
+    var outcome SessionOutcome
+    err := workflow.ExecuteActivity(actCtx, RunClaudeSession, params).Get(ctx, &outcome)
+    return outcome, err
 }
 
 // HeartbeatWorkflow — scheduled every N seconds, short-lived
@@ -1261,20 +1350,20 @@ func HeartbeatWorkflow(ctx workflow.Context) error {
 **SessionParams**:
 ```go
 type SessionParams struct {
-    WorkflowID string // swarm-{idx}-{ticket}
-    TicketID   string // CM-123
-    Skill      string // swarm-research, swarm-code, etc.
-    Phase      string // research, code_plan, plan_review, etc.
+    WorkflowID string       // swarm-{idx}-{ticket}-a{attempt}
+    TicketID   string       // CM-123
+    Skill      string       // swarm-research, swarm-code, etc.
+    Phase      Phase        // typed enum: PhaseResearch, PhaseCodePlan, etc.
     AgentIndex int
 }
 ```
 
-**SessionResult**:
+**SessionOutcome** (named `SessionOutcome` to avoid collision with the `SessionResult` enum type):
 ```go
-type SessionResult struct {
-    Status  string // success, logic_failure, infra_failure, timeout
-    Phase   string // phase that completed
-    Detail  string // JSON: verdict, error, artifacts, etc.
+type SessionOutcome struct {
+    Result SessionResult // typed enum: ResultSuccess, ResultLogicFailure, etc.
+    Phase  Phase         // typed enum: phase that completed
+    Detail string        // JSON: verdict, error, artifacts, etc.
 }
 ```
 
@@ -1341,12 +1430,12 @@ func (a *Activities) ReadTicketQueue(ctx context.Context) ([]SessionParams, erro
             continue // at capacity
         }
 
-        // Build spawn decision
+        // Build spawn decision — workflow ID includes attempt to prevent Temporal ID collision
         agentIdx := a.findAvailableSlot(ctx, config.MaxSessions)
-        workflowID := fmt.Sprintf("swarm-%d-%s", agentIdx, wf.TicketID)
+        workflowID := fmt.Sprintf("swarm-%d-%s-a%d", agentIdx, wf.TicketID, wf.Attempt)
 
         a.store.UpdateWorkflowPhase(ctx, wf.ID, nextPhase, wf.Attempt)
-        a.publishEvent(wf, "phase_started", nextPhase, nil)
+        a.publishEvent(wf, EventPhaseStarted, nextPhase, nil)
 
         spawns = append(spawns, SessionParams{
             WorkflowID: workflowID,
@@ -1734,7 +1823,7 @@ Each skill includes standardized error handling:
 |------|-------|--------|
 | `harness/internal/db/migrations/006_swarm_tables.sql` | 1 | 100 |
 | `harness/internal/db/queries/swarm.sql` | 1 | 200 |
-| `harness/internal/swarm/enums.go` | 1 | 80 |
+| `harness/internal/swarm/enums.go` | 1 | 150 |
 | `harness/internal/swarm/statemachine.go` | 1 | 120 |
 | `harness/internal/swarm/statemachine_test.go` | 1 | 200 |
 | `.claude/skills/swarm-conventions/SKILL.md` | 1 | 150 |
@@ -1764,13 +1853,14 @@ Each skill includes standardized error handling:
 | `harness/internal/server/swarm_dashboard.go` | 4 | 150 |
 | `harness/views/swarm/dashboard.templ` | 4 | 200 |
 
-### Modified Files (9)
+### Modified Files (10)
 
 | File | Phase | Change |
 |------|-------|--------|
 | `harness/internal/db/db.go` | 1 | Add `006_swarm_tables.sql` to `migrationFiles` slice |
-| `harness/sqlc.yaml` | 1 | Add `overrides` mapping swarm columns to typed Go enum types |
+| `harness/sqlc.yaml` | 1 | Add `overrides` mapping swarm columns to typed Go enum types (structured format) |
 | `harness/internal/db/queries/` | 1 | sqlc query file for swarm tables |
+| `harness/internal/claude/claude.go` | 4 | Add `cm-swarm-` to `ReapOrphanedSessions` skip list (line 312-315) |
 | `CLAUDE.md` | 5 | Add Agent Swarm System section |
 | `harness/main.go` | 4 | Wire Temporal client + workers + heartbeat schedule + completion registry |
 | `harness/internal/server/server.go` | 4 | Add SwarmStore, CompletionRegistry fields, routes |
@@ -1788,6 +1878,7 @@ Each skill includes standardized error handling:
 | v2 | Temporal workflows, long-running CodeChangeWorkflow | Need queue management, durable state, observability |
 | v3 | Short-lived workflows + SQLite state machine | No long-running workflows; state queryable in SQLite; dashboard-driven observability; separate skills per operation |
 | v4 | Hook-based completion, child workflows, typed enums via sqlc overrides, Graphite `gt`, explicit user invocation | Fix polling race condition (use proven hook pattern); fix Temporal anti-pattern (child workflows instead of activity-spawned); compile-time type safety via sqlc overrides + custom Go enum types; Graphite CLI for PR stacking (in nixpkgs); simplify by removing auto-classification (user explicitly chooses workflow type; OpenClaw routing is future) |
+| v4.1 (review fixes) | Reaper exclusion, attempt-scoped workflow IDs, `SessionOutcome` struct rename, missing `EventType`/`MilestoneStatus` enums, structured sqlc overrides, hook injection clarification | v4 review found: (1) existing `ReapOrphanedSessions` kills `cm-swarm-*` sessions — add to skip list; (2) Temporal workflow ID `swarm-{idx}-{ticket}` collides on retry — append `-a{attempt}`; (3) `SessionResult` name used for both enum type and struct — rename struct to `SessionOutcome`; (4) `EventType` and `MilestoneStatus` referenced in sqlc.yaml but missing from `enums.go`; (5) sqlc overrides should use structured `{import, type}` format for consistency |
 
 ### Intentional Chestnut Flowchart Divergence
 
@@ -1802,11 +1893,14 @@ The Chestnut flowchart describes a two-level orchestration model: OpenClaw as hu
 
 ## References
 
+- **v4 review**: `thoughts/CoreyCole/reviews/2026-02-28_20-18-11_agent-swarm-primitives-v4_review.md`
 - v3 plan: `thoughts/CoreyCole/plans/2026-02-28_17-30-00_agent-swarm-primitives-v3.md`
 - v3 review: `thoughts/CoreyCole/reviews/2026-02-28_18-42-59_agent-swarm-primitives-v3_review.md`
 - v2 handoff: `thoughts/CoreyCole/handoffs/general/2026-02-28_16-53-51_agent-swarm-primitives-v2-temporal-update.md`
 - v1 review: `thoughts/CoreyCole/reviews/2026-02-28_14-28-09_agent-swarm-primitives_review.md`
 - Chestnut flowchart: `~/Downloads/chestnut-agent-primitives-flowchart.html`
 - Existing hook pattern: `harness/internal/claude/claude.go`, `harness/internal/server/server.go:688-711`
+- Existing reaper: `harness/internal/claude/claude.go:293-337` — must exclude `cm-swarm-*` prefix
 - Temporal Go SDK: `go.temporal.io/sdk` — child workflows, schedules, activity heartbeats
 - `temporal-cli` in nixpkgs: `pkgs.temporal-cli` v1.5.1
+- `graphite-cli` in nixpkgs: `pkgs.graphite-cli` v1.7.2 (unfree license)

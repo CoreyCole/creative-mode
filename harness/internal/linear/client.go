@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -133,8 +134,17 @@ type issueFilterVars struct {
 }
 
 type issueFilter struct {
-	Identifier *eqFilter `json:"identifier,omitempty"`
-	Parent     *idFilter `json:"parent,omitempty"`
+	Number *numberEqFilter `json:"number,omitempty"`
+	Team   *teamKeyFilter  `json:"team,omitempty"`
+	Parent *idFilter       `json:"parent,omitempty"`
+}
+
+type numberEqFilter struct {
+	Eq int `json:"eq"`
+}
+
+type teamKeyFilter struct {
+	Key *eqFilter `json:"key"`
 }
 
 type eqFilter struct {
@@ -389,8 +399,30 @@ func (c *Client) SetParent(ctx context.Context, issueID, parentID string) error 
 	return c.doQuery(ctx, issueUpdateMutation, vars, &resp)
 }
 
-// GetTicket fetches a ticket by its identifier (e.g. "CM-123").
+// parseIdentifier splits "CRE-5" into team key "CRE" and number 5.
+func parseIdentifier(identifier string) (string, int, error) {
+	parts := strings.SplitN(identifier, "-", 2)
+	if len(parts) != 2 {
+		return "", 0, fmt.Errorf("invalid identifier format: %s", identifier)
+	}
+
+	n, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return "", 0, fmt.Errorf("invalid issue number in %s: %w", identifier, err)
+	}
+
+	return parts[0], n, nil
+}
+
+// GetTicket fetches a ticket by its identifier (e.g. "CRE-5").
+// Parses the identifier into team key + number since Linear's IssueFilter
+// does not support filtering by identifier directly.
 func (c *Client) GetTicket(ctx context.Context, identifier string) (*Ticket, error) {
+	teamKey, number, err := parseIdentifier(identifier)
+	if err != nil {
+		return nil, fmt.Errorf("get ticket %s: %w", identifier, err)
+	}
+
 	query := `query($filter: IssueFilter) {
 		issues(filter: $filter, first: 1) {
 			nodes {
@@ -412,7 +444,8 @@ func (c *Client) GetTicket(ctx context.Context, identifier string) (*Ticket, err
 
 	vars := issueFilterVars{
 		Filter: issueFilter{
-			Identifier: &eqFilter{Eq: identifier},
+			Number: &numberEqFilter{Eq: number},
+			Team:   &teamKeyFilter{Key: &eqFilter{Eq: teamKey}},
 		},
 	}
 

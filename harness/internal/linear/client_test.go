@@ -130,10 +130,69 @@ func TestPostComment(t *testing.T) {
 	}
 }
 
+func TestParseIdentifier(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		input   string
+		team    string
+		number  int
+		wantErr bool
+	}{
+		{"CRE-5", "CRE", 5, false},
+		{"CM-123", "CM", 123, false},
+		{"TEAM-1", "TEAM", 1, false},
+		{"bad", "", 0, true},
+		{"CRE-abc", "", 0, true},
+	}
+
+	for _, tt := range tests {
+		team, number, err := parseIdentifier(tt.input)
+		if (err != nil) != tt.wantErr {
+			t.Errorf("parseIdentifier(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+			continue
+		}
+		if team != tt.team || number != tt.number {
+			t.Errorf("parseIdentifier(%q) = (%q, %d), want (%q, %d)", tt.input, team, number, tt.team, tt.number)
+		}
+	}
+}
+
 func TestGetTicket(t *testing.T) {
 	t.Parallel()
 
-	handler := func(w http.ResponseWriter, _ *http.Request) {
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Query     string `json:"query"`
+			Variables struct {
+				Filter struct {
+					Number *struct {
+						Eq int `json:"eq"`
+					} `json:"number"`
+					Team *struct {
+						Key *struct {
+							Eq string `json:"eq"`
+						} `json:"key"`
+					} `json:"team"`
+				} `json:"filter"`
+			} `json:"variables"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+
+		// Verify the filter uses number+team, not identifier.
+		if req.Variables.Filter.Number == nil {
+			t.Error("expected number filter, got nil")
+		} else if req.Variables.Filter.Number.Eq != 99 {
+			t.Errorf("expected number 99, got %d", req.Variables.Filter.Number.Eq)
+		}
+		if req.Variables.Filter.Team == nil || req.Variables.Filter.Team.Key == nil {
+			t.Error("expected team.key filter, got nil")
+		} else if req.Variables.Filter.Team.Key.Eq != "CM" {
+			t.Errorf("expected team key CM, got %s", req.Variables.Filter.Team.Key.Eq)
+		}
+
 		writeJSON(t, w, map[string]any{
 			"data": map[string]any{
 				"issues": map[string]any{

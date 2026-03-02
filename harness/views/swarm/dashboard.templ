@@ -505,7 +505,7 @@ templ sessionItem(s sqlc.SwarmSession) {
 
 templ gateReviewItem(gr sqlc.SwarmGateReview) {
 	<div class="flex items-start gap-3 py-2 border-b border-border last:border-0">
-		if gr.Action == "approve" {
+		if gr.Action == string(swarm.GateActionApprove) {
 			<span class="text-xs px-2 py-0.5 rounded bg-green-900/50 text-green-300">approved</span>
 		} else {
 			<span class="text-xs px-2 py-0.5 rounded bg-red-900/50 text-red-300">rejected</span>

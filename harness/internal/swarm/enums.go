@@ -160,6 +160,24 @@ func (e EventType) Valid() bool {
 	}
 }
 
+// GateAction is a typed enum for gate review actions.
+type GateAction string
+
+const (
+	GateActionApprove GateAction = "approve"
+	GateActionReject  GateAction = "reject"
+)
+
+// Valid returns true if the GateAction is a known value.
+func (a GateAction) Valid() bool {
+	switch a {
+	case GateActionApprove, GateActionReject:
+		return true
+	default:
+		return false
+	}
+}
+
 // MilestoneStatus is a typed enum for project milestone status.
 type MilestoneStatus string
 

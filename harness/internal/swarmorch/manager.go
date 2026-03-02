@@ -617,47 +617,11 @@ func (m *Manager) advanceWorkflow(
 
 	// Terminal: done.
 	if transition.NextPhase == swarm.PhaseDone {
-		if statusErr := m.db.UpdateSwarmWorkflowStatus(
-			ctx,
-			sqlc.UpdateSwarmWorkflowStatusParams{
-				Status: swarm.StatusComplete,
-				ID:     wf.ID,
-			},
-		); statusErr != nil {
-			m.logger.Error("mark workflow complete", "error", statusErr)
-		}
-
-		m.emitEvent(
-			ctx,
-			wf.ID,
-			"",
-			wf.TicketID,
-			swarm.EventWorkflowComplete,
-			swarm.PhaseDone,
-			result.Summary,
-		)
-
-		if m.eventBus != nil {
-			m.eventBus.PublishGlobal(WorkflowCompleteEvent{
-				Event:      events.EventSwarmWorkflowComplete,
-				WorkflowID: wf.ID,
-				TicketID:   wf.TicketID,
-			})
-		}
+		m.completeWorkflow(ctx, wf, result.Summary)
 
 		// Capture success pattern.
 		hadRetries := wf.Attempt > 1
 		_ = m.captureSuccessPattern(ctx, wf.ID, wf.TicketID, hadRetries)
-
-		m.linearComment(
-			wf.TicketID,
-			fmt.Sprintf(
-				"✅ Workflow `%s` completed\n- **Summary:** %s",
-				wf.ID,
-				result.Summary,
-			),
-		)
-		m.linearUpdateStatus(wf.TicketID, linear.StatusDone)
 
 		return
 	}
@@ -1291,18 +1255,19 @@ func (m *Manager) enterGate(
 	m.linearUpdateStatus(wf.TicketID, linear.StatusInReview)
 }
 
-// ApproveGate advances a workflow past a human review gate.
-func (m *Manager) ApproveGate(ctx context.Context, workflowID, reviewer string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
+// requireAwaitingReview fetches a workflow, validates it is awaiting review,
+// and extracts the gate phase. Caller must hold m.mu.
+func (m *Manager) requireAwaitingReview(
+	ctx context.Context,
+	workflowID string,
+) (sqlc.SwarmWorkflow, swarm.Phase, error) {
 	wf, err := m.db.GetSwarmWorkflow(ctx, workflowID)
 	if err != nil {
-		return fmt.Errorf("get workflow: %w", err)
+		return wf, "", fmt.Errorf("get workflow: %w", err)
 	}
 
 	if wf.Status != swarm.StatusAwaitingReview {
-		return fmt.Errorf(
+		return wf, "", fmt.Errorf(
 			"workflow %s is not awaiting review (status: %s)",
 			workflowID,
 			wf.Status,
@@ -1314,12 +1279,25 @@ func (m *Manager) ApproveGate(ctx context.Context, workflowID, reviewer string) 
 		gatePhase = swarm.Phase(wf.GatePhase.String)
 	}
 
+	return wf, gatePhase, nil
+}
+
+// ApproveGate advances a workflow past a human review gate.
+func (m *Manager) ApproveGate(ctx context.Context, workflowID, reviewer string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	wf, gatePhase, err := m.requireAwaitingReview(ctx, workflowID)
+	if err != nil {
+		return err
+	}
+
 	// Audit record.
 	_ = m.db.CreateSwarmGateReview(ctx, sqlc.CreateSwarmGateReviewParams{
 		ID:         uuid.New().String()[:8],
 		WorkflowID: workflowID,
 		GatePhase:  gatePhase,
-		Action:     "approve",
+		Action:     string(swarm.GateActionApprove),
 		Reviewer:   sql.NullString{String: reviewer, Valid: reviewer != ""},
 	})
 
@@ -1344,7 +1322,7 @@ func (m *Manager) ApproveGate(ctx context.Context, workflowID, reviewer string) 
 			WorkflowID: workflowID,
 			TicketID:   wf.TicketID,
 			GatePhase:  string(gatePhase),
-			Action:     "approve",
+			Action:     string(swarm.GateActionApprove),
 			Reviewer:   reviewer,
 		})
 	}
@@ -1379,40 +1357,7 @@ func (m *Manager) ApproveGate(ctx context.Context, workflowID, reviewer string) 
 		return nil
 
 	case swarm.PhasePR, swarm.PhaseHumanReview:
-		// Mark complete.
-		if statusErr := m.db.UpdateSwarmWorkflowStatus(
-			ctx,
-			sqlc.UpdateSwarmWorkflowStatusParams{
-				Status: swarm.StatusComplete,
-				ID:     wf.ID,
-			},
-		); statusErr != nil {
-			return fmt.Errorf("mark complete: %w", statusErr)
-		}
-
-		m.emitEvent(
-			ctx,
-			wf.ID,
-			"",
-			wf.TicketID,
-			swarm.EventWorkflowComplete,
-			swarm.PhaseDone,
-			"approved",
-		)
-
-		if m.eventBus != nil {
-			m.eventBus.PublishGlobal(WorkflowCompleteEvent{
-				Event:      events.EventSwarmWorkflowComplete,
-				WorkflowID: wf.ID,
-				TicketID:   wf.TicketID,
-			})
-		}
-
-		m.linearComment(
-			wf.TicketID,
-			fmt.Sprintf("✅ Workflow `%s` completed (approved)", wf.ID),
-		)
-		m.linearUpdateStatus(wf.TicketID, linear.StatusDone)
+		m.completeWorkflow(ctx, wf, "approved")
 
 		return nil
 
@@ -1429,22 +1374,9 @@ func (m *Manager) RejectGate(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	wf, err := m.db.GetSwarmWorkflow(ctx, workflowID)
+	wf, gatePhase, err := m.requireAwaitingReview(ctx, workflowID)
 	if err != nil {
-		return fmt.Errorf("get workflow: %w", err)
-	}
-
-	if wf.Status != swarm.StatusAwaitingReview {
-		return fmt.Errorf(
-			"workflow %s is not awaiting review (status: %s)",
-			workflowID,
-			wf.Status,
-		)
-	}
-
-	gatePhase := swarm.Phase("")
-	if wf.GatePhase.Valid {
-		gatePhase = swarm.Phase(wf.GatePhase.String)
+		return err
 	}
 
 	targetPhase, ok := swarm.GateRejectionTarget(gatePhase)
@@ -1457,12 +1389,18 @@ func (m *Manager) RejectGate(
 		ID:         uuid.New().String()[:8],
 		WorkflowID: workflowID,
 		GatePhase:  gatePhase,
-		Action:     "reject",
+		Action:     string(swarm.GateActionReject),
 		Feedback:   sql.NullString{String: feedback, Valid: feedback != ""},
 		Reviewer:   sql.NullString{String: reviewer, Valid: reviewer != ""},
 	})
 
-	// Store feedback on workflow.
+	// Clear gate, then store feedback (order matters: ClearSwarmWorkflowGate
+	// resets status to running, UpdateSwarmWorkflowReviewFeedback preserves
+	// the feedback for buildEnv to pass to the next session).
+	if clearErr := m.db.ClearSwarmWorkflowGate(ctx, workflowID); clearErr != nil {
+		return fmt.Errorf("clear gate: %w", clearErr)
+	}
+
 	if err := m.db.UpdateSwarmWorkflowReviewFeedback(
 		ctx,
 		sqlc.UpdateSwarmWorkflowReviewFeedbackParams{
@@ -1471,11 +1409,6 @@ func (m *Manager) RejectGate(
 		},
 	); err != nil {
 		return fmt.Errorf("store feedback: %w", err)
-	}
-
-	// Clear gate and set phase to rejection target.
-	if clearErr := m.db.ClearSwarmWorkflowGate(ctx, workflowID); clearErr != nil {
-		return fmt.Errorf("clear gate: %w", clearErr)
 	}
 
 	newAttempt := wf.Attempt + 1
@@ -1496,7 +1429,7 @@ func (m *Manager) RejectGate(
 			WorkflowID: workflowID,
 			TicketID:   wf.TicketID,
 			GatePhase:  string(gatePhase),
-			Action:     "reject",
+			Action:     string(swarm.GateActionReject),
 			Reviewer:   reviewer,
 		})
 	}
@@ -1530,6 +1463,47 @@ func (m *Manager) RejectGate(
 	}
 
 	return nil
+}
+
+// completeWorkflow marks a workflow as done with all side effects (DB, events, Linear).
+func (m *Manager) completeWorkflow(
+	ctx context.Context,
+	wf sqlc.SwarmWorkflow,
+	detail string,
+) {
+	if statusErr := m.db.UpdateSwarmWorkflowStatus(
+		ctx,
+		sqlc.UpdateSwarmWorkflowStatusParams{
+			Status: swarm.StatusComplete,
+			ID:     wf.ID,
+		},
+	); statusErr != nil {
+		m.logger.Error("mark workflow complete", "error", statusErr)
+	}
+
+	m.emitEvent(
+		ctx,
+		wf.ID,
+		"",
+		wf.TicketID,
+		swarm.EventWorkflowComplete,
+		swarm.PhaseDone,
+		detail,
+	)
+
+	if m.eventBus != nil {
+		m.eventBus.PublishGlobal(WorkflowCompleteEvent{
+			Event:      events.EventSwarmWorkflowComplete,
+			WorkflowID: wf.ID,
+			TicketID:   wf.TicketID,
+		})
+	}
+
+	m.linearComment(
+		wf.TicketID,
+		fmt.Sprintf("✅ Workflow `%s` completed\n- **Summary:** %s", wf.ID, detail),
+	)
+	m.linearUpdateStatus(wf.TicketID, linear.StatusDone)
 }
 
 // advanceFromGate advances a workflow to the given phase and spawns a session.

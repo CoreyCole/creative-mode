@@ -23,8 +23,13 @@ The harness is a Go server (Echo framework) that manages multiplayer creative wo
 | `internal/mayor/` | Mayor agent lifecycle: OpenClaw provisioning, workspace files, Discord posting |
 | `internal/president/` | President agent: provisioning, repo-level operations, deploy |
 | `internal/discord/` | Discord Gateway listener: mirrors messages to DB + EventBus |
+| `internal/swarm/` | Swarm domain types: enums, state machine, env config, handoffs, classification |
+| `internal/swarmorch/` | Swarm orchestrator: Manager, health, metrics, alerts, hooks, learnings, sessions |
+| `internal/linear/` | Linear API client: ticket CRUD, status updates, comments |
+| `internal/graphite/` | Graphite CLI wrapper: branch stacking for PRs |
 | `views/` | templ templates (login, lobby, overlay, chat, etc.) |
 | `views/mayor/` | Mayor Dashboard templ templates |
+| `views/swarm/` | Swarm Dashboard templ templates |
 | `static/` | CSS + JS served at `/static/` |
 
 ### Data Flow
@@ -86,6 +91,159 @@ Approved-user routes for world observability:
 | `/mayor/:worldID/events` | GET | SSE stream for live dashboard updates |
 | `/mayor/:worldID/file` | GET | Read workspace file (allowlist: SOUL.md, MEMORY.md, AGENTS.md, IDENTITY.md, USER.md) |
 | `/mayor/:worldID/file` | PUT | Edit workspace file (allowlist: SOUL.md, MEMORY.md, AGENTS.md) |
+
+### Swarm Agent System
+
+The swarm orchestrator takes Linear tickets through multi-phase AI workflows: research → planning → review → implementation → verification → PR → human review. Each phase runs a Claude Code session in tmux with a specialized skill.
+
+**Relationship to other agents**: Mayors handle per-world Discord chat and builds. The president oversees repo-level operations. The swarm handles structured feature work driven by Linear tickets.
+
+**Two packages**:
+- `internal/swarm/` — Pure domain types with no I/O dependencies: enums (`Phase`, `WorkflowStatus`, `SessionResult`, `GateAction`), state machine (`DetermineNextPhase`, `IsGatedTransition`, `GateRejectionTarget`), environment config (`SwarmEnv`), result parsing, handoff building, ticket classification
+- `internal/swarmorch/` — Orchestrator with DB/HTTP/integrations: `Manager` (workflow lifecycle, gate logic, session spawning), health monitoring, metrics (60s cache), Discord alerts, hook handlers, learning capture, JSONL logging, Temporal integration
+
+#### Workflow Types
+
+| Type | Phases | Purpose |
+|------|--------|---------|
+| `research` | `research` → `done` | Research-only — produces findings document |
+| `code` | `research` → `code_plan` → `plan_review` → `implement` → `verify` → `pr` → `human_review` → `done` | Full implementation with PR |
+| `project` | `research` → `project_plan` → `project_review` → `project_verify` → `done` | Decomposes into child `code` workflows |
+
+#### State Machine (`internal/swarm/statemachine.go`)
+
+`DetermineNextPhase()` maps `(workflowType, phase, attempt, result, config)` → `Transition{NextPhase, Retry, Failed}`.
+
+- **Success**: advances to next phase
+- **Logic failure**: retries (back to earlier phase, attempt++) up to `MaxPlanRevisions`/`MaxVerifyRetries`
+- **Infra failure**: retries same phase up to 2 times
+- **Context limit**: resumes same phase (no attempt increment)
+- **Timeout**: terminal failure
+
+Each phase maps to a skill via `SkillForPhase()` (e.g., `PhaseImplement` → `swarm-code`). Terminal phases (`done`, `failed`, `human_review`) return `""` — no session spawned.
+
+#### Human Review Gates
+
+Every code workflow pauses after PR creation at the `human_review` phase. Additional configurable gates at `plan_review` and `project_review` (opt-in via `SwarmConfig`).
+
+**Flow**: gate reached → status `awaiting_review` → Discord alert + Linear "In Review" → human approves/rejects via dashboard or API → workflow advances or loops back.
+
+**Two gate mechanisms**:
+- **Always-on**: `PhasePR` success → `PhaseHumanReview` (built into state machine). The orchestrator intercepts this transition and calls `enterGate()`.
+- **Configurable**: `IsGatedTransition()` checks `GatePlanReview`/`GateProjectReview` config flags before computing the state machine transition. Intercepted at the current phase.
+
+**Rejection**: `GateRejectionTarget()` returns the phase to loop back to (`plan_review` → `code_plan`, `project_review` → `project_plan`, `human_review` → `implement`). Feedback is stored as `CM_SWARM_REVIEW_FEEDBACK` and passed to the next session.
+
+**Audit**: `swarm_gate_reviews` table records all approve/reject actions with reviewer, feedback, and timestamp.
+
+#### Swarm API (`internal/server/swarm_api.go`)
+
+**Auth**: `hookSecretMiddleware` validates `X-Hook-Secret` header against `CM_HOOK_SECRET`.
+
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/api/swarm/start` | POST | Start a new workflow for a ticket |
+| `/api/swarm/status/:id` | GET | Get workflow status |
+| `/api/swarm/cancel` | POST | Cancel a running workflow |
+| `/api/swarm/session/:id/log` | GET | Get session JSONL log |
+| `/api/swarm/session/:id/status` | GET | Get session status |
+| `/api/swarm/metrics` | GET | Swarm metrics (cached 60s) |
+| `/api/swarm/health` | GET | Swarm health + stall detection |
+| `/api/swarm/learnings` | GET | List recent learnings |
+| `/api/swarm/learnings` | POST | Create a learning |
+| `/api/swarm/learnings/digest/latest` | GET | Latest learning digest |
+| `/api/swarm/gate/:id/approve` | POST | Approve a human review gate |
+| `/api/swarm/gate/:id/reject` | POST | Reject with feedback (required) |
+| `/api/swarm/gate/pending` | GET | List workflows awaiting review |
+
+#### Swarm Hooks (`internal/swarmorch/hooks.go`, `internal/server/swarm_hooks.go`)
+
+Claude Code sessions POST hook events to the harness during execution. The orchestrator generates a per-session `settings.json` with HTTP hooks pointing to these endpoints.
+
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/api/swarm/hook/session-started` | POST | Signals start registry |
+| `/api/swarm/hook/pre-tool-use` | POST | Enforces bash deny list |
+| `/api/swarm/hook/post-tool-use` | POST | Tracks context pressure |
+| `/api/swarm/hook/pre-compact` | POST | Context pressure threshold |
+| `/api/swarm/hook/session-complete` | POST | Triggers completion + `advanceWorkflow()` |
+| `/api/swarm/hook/session-ended` | POST | Cleanup |
+
+**Bash deny list** (`hooks.go`): blocks `cargo build/clippy/check`, `go build`, `templ generate`, `just generate` during swarm sessions to prevent build corruption.
+
+#### Swarm Dashboard (`views/swarm/dashboard.templ`)
+
+**Auth**: Approved user middleware (same as mayor dashboard).
+
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/swarm` | GET | Dashboard: workflows table, metrics/health, events, learnings, tool activity |
+| `/swarm/events` | GET | SSE: live updates (events with `swarm.` prefix trigger tab refreshes) |
+| `/swarm/:id` | GET | Workflow detail: phase timeline, sessions, events, gate review panel |
+| `/swarm/:id/cancel` | POST | Cancel workflow (accepts `running` or `awaiting_review`) |
+| `/swarm/:id/approve` | POST | Approve gate (reviewer from session user) |
+| `/swarm/:id/reject` | POST | Reject gate (requires `reject_feedback` Datastar signal) |
+| `/swarm/api/metrics` | GET | Swarm metrics (same handler as API, dashboard auth) |
+| `/swarm/api/health` | GET | Swarm health (same handler as API, dashboard auth) |
+| `/swarm/api/learnings` | GET | Learnings (same handler as API, dashboard auth) |
+| `/swarm/api/learnings/digest/latest` | GET | Latest digest (same handler as API, dashboard auth) |
+
+The gate review panel shows approve button + reject textarea when workflow status is `awaiting_review`. Gate review history displays a timeline of approve/reject actions from `swarm_gate_reviews`.
+
+#### Swarm Configuration
+
+`SwarmConfig` in `internal/swarm/statemachine.go`, stored as JSON in `swarm_config` DB table:
+
+| Field | Default | Purpose |
+|-------|---------|---------|
+| `maxSessions` | 4 | Max concurrent Claude Code sessions |
+| `heartbeatSeconds` | 120 | Health check polling interval |
+| `stallMinutes` | 45 | Minutes before a running workflow is flagged stalled |
+| `maxPlanRevisions` | 3 | Max plan_review → code_plan retry loops |
+| `maxVerifyRetries` | 3 | Max verify → implement retry loops |
+| `retryBackoffSecs` | 30 | Wait between retries |
+| `gatePlanReview` | false | Enable human gate at plan_review phase |
+| `gateProjectReview` | false | Enable human gate at project_review phase |
+
+#### Swarm Integrations
+
+- **Linear** (`internal/linear/`): Ticket status updates on phase transitions (`StatusInProgress`, `StatusInReview`, `StatusDone`), comment posting for key events (gate reached, approved, rejected, workflow complete)
+- **Graphite** (`internal/graphite/`): Branch stacking for code workflow PRs via Graphite CLI
+- **Discord**: Alerts via `AlertManager` with 1-hour dedup — fires on gate reached, workflow stall, terminal failure
+- **Temporal** (`internal/swarmorch/temporal.go`): Optional workflow engine. System works without it via goroutine-based polling (`watchSession` + `StartMaintenance`). When enabled, Temporal handles heartbeats and session orchestration.
+- **EventBus**: Swarm events published with `swarm.` prefix (e.g., `swarm.workflow_started`, `swarm.gate_reached`). The dashboard SSE handler catches all `swarm.*` events to refresh tabs.
+
+#### Swarm DB Schema
+
+Migrations in `internal/db/migrations/`:
+
+| Migration | Tables |
+|-----------|--------|
+| `006_swarm_tables.sql` | `swarm_workflows`, `swarm_sessions`, `swarm_events`, `swarm_learnings`, `swarm_learning_digests`, `swarm_config`, `swarm_project_milestones` |
+| `007_swarm_dependencies.sql` | `swarm_dependencies` |
+| `008_human_gates.sql` | `swarm_gate_reviews` + adds `gate_phase`, `review_feedback` columns to `swarm_workflows` + `awaiting_review` status + `human_review` phase + gate event types |
+
+#### Swarm Session Environment (`internal/swarm/env.go`)
+
+`SwarmEnv` struct defines all env vars passed to Claude Code skill sessions via `buildEnv()` → `ToMap()`:
+
+| Variable | Purpose |
+|----------|---------|
+| `CM_SWARM_TICKET_ID` | Linear ticket identifier |
+| `CM_SWARM_WORKFLOW_ID` | Workflow UUID |
+| `CM_SWARM_SESSION_ID` | Session UUID |
+| `CM_SWARM_PHASE` | Current phase (e.g., `implement`) |
+| `CM_SWARM_ATTEMPT` | Attempt number (1 = first, 2+ = retry) |
+| `CM_SWARM_RESULT_PATH` | Path to write session result JSON |
+| `CM_HARNESS_URL` | Harness base URL for API calls |
+| `CM_SWARM_BRANCH` | Git branch name |
+| `CM_HOOK_SECRET` | Hook auth secret |
+| `CM_SWARM_HANDOFF_PATH` | Handoff document from previous phase |
+| `CM_SWARM_LEARNING_CONTEXT_PATH` | Relevant historical learnings |
+| `CM_SWARM_REVIEW_FEEDBACK` | Feedback from human gate rejection |
+| `CM_SWARM_PREVIOUS_WORKFLOW_ID` | Previous workflow for full restart context |
+| `CM_SWARM_STACK_PARENT` | Parent ticket ID (project child workflows) |
+| `CM_SWARM_STACK_ORDER` | Child ticket order in project |
 
 ### Discord Listener (`internal/discord/listener.go`)
 

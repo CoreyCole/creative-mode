@@ -19,7 +19,7 @@ Multiplayer creative sandbox — Go harness server + Bevy/WASM game client.
 
 ## Agent System
 
-Creative Mode uses a hierarchical AI agent system: **mayors** (per-world) and a **president** (global).
+Creative Mode uses a hierarchical AI agent system: **mayors** (per-world), a **president** (global), and the **swarm orchestrator** (ticket-driven).
 
 ### Mayors
 
@@ -35,6 +35,24 @@ Every world gets a mayor — an OpenClaw agent with a personality, evolving memo
 
 One president agent oversees all mayors and the repo. It can query all mayor statuses, run `just check`, spawn Claude Code sessions for template updates, and trigger deploys. Auto-provisions on startup when `PRESIDENT_SECRET` and `DISCORD_PRESIDENT_CHANNEL_ID` env vars are set (currently disabled in production).
 
+### Swarm Orchestrator
+
+The swarm is a multi-phase AI orchestration system that takes Linear tickets through research → planning → implementation → verification → PR → human review. Unlike mayors (per-world, chat-driven), the swarm handles repo-level feature work autonomously.
+
+**Architecture**: `internal/swarm/` (pure domain: enums, state machine, env config) + `internal/swarmorch/` (orchestrator: Manager, health, metrics, hooks, integrations).
+
+**Workflow types**: `research` (research only), `code` (full implementation), `project` (decomposes into child code workflows).
+
+**Code workflow phases**: `research` → `code_plan` → `plan_review` → `implement` → `verify` → `pr` → `human_review` → `done`
+
+**Human review gates**: Every code workflow pauses at `human_review` after PR creation. Configurable gates at `plan_review` and `project_review` (opt-in). Humans approve/reject via dashboard (`/swarm/:id`) or API (`POST /api/swarm/gate/:id/approve|reject`).
+
+**Integrations**: Linear (ticket status/comments), Graphite (branch stacking), Discord (alerts), Temporal (optional workflow engine).
+
+**Swarm Dashboard**: `/swarm` — workflows table, metrics/health, events log, learnings. `/swarm/:id` — workflow detail with phase timeline, sessions, gate review panel.
+
+See `harness/CLAUDE.md` for full API routes, configuration, and architecture details.
+
 ### Architecture: Agent Hierarchy
 
 ```
@@ -43,6 +61,16 @@ President (global, optional)
 ├── Skills: mayor-status, repo-build, template-update, deploy
 ├── Channel: DISCORD_PRESIDENT_CHANNEL_ID
 └── Auto-provisions on startup if env vars set
+
+Swarm Orchestrator (ticket-driven)
+├── Takes Linear tickets through multi-phase workflows
+├── Phases: research → plan → review → implement → verify → PR → human_review
+├── Human gates: workflows pause for approval at configurable checkpoints
+├── Skills: swarm-research, swarm-code-plan, swarm-plan-review, swarm-code,
+│           swarm-code-verify, swarm-code-pr, swarm-project-plan/review/verify
+├── Dashboard: /swarm (all workflows), /swarm/:id (detail + gate actions)
+├── Integrations: Linear, Graphite, Discord alerts, Temporal (optional)
+└── Sessions: Claude Code in tmux, hooks POST to /api/swarm/hook/*
 
 Mayors (per-world)
 ├── OpenClaw agent with personality from onboarding
@@ -76,8 +104,11 @@ The codebase uses ONE `DISCORD_BOT_TOKEN` for all Discord operations via separat
 | `DISCORD_PRESIDENT_CHANNEL_ID` | President | #creative-mode-dev channel |
 | `PRESIDENT_SECRET` | President | Auth for `/api/president/*` |
 | `CM_HOOK_SECRET` | Site→Harness webhook | Shared secret for `/api/world-hatched` |
-| `ANTHROPIC_API_KEY` | Both | Claude API for OpenClaw agents + Claude Code builds |
-| `OPENCLAW_HOME` | Both | Data dir (default: `data/openclaw`) |
+| `ANTHROPIC_API_KEY` | All agents | Claude API for OpenClaw agents + Claude Code builds + swarm sessions |
+| `OPENCLAW_HOME` | Mayors + President | Data dir (default: `data/openclaw`) |
+| `LINEAR_API_KEY` | Swarm | Linear API for ticket status updates and comments |
+| `GRAPHITE_TOKEN` | Swarm | Graphite CLI auth for branch stacking |
+| `DISCORD_SWARM_CHANNEL_ID` | Swarm | Discord channel for swarm alerts |
 
 ### OpenClaw
 

@@ -59,15 +59,27 @@ func (s *Server) handleSwarmDashboard(c echo.Context) error {
 
 // handleSwarmWorkflowDetail renders the detail page for a single workflow.
 func (s *Server) handleSwarmWorkflowDetail(c echo.Context) error {
-	ctx := c.Request().Context()
 	workflowID := c.Param("id")
 
-	wf, err := s.DB.GetSwarmWorkflow(ctx, workflowID)
+	data, err := s.fetchWorkflowDetailData(c.Request().Context(), workflowID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return echo.NewHTTPError(http.StatusNotFound, "workflow not found")
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get workflow")
+	}
+
+	return render(c, swarmview.WorkflowPage(data))
+}
+
+// fetchWorkflowDetailData loads all data needed for the workflow detail page.
+func (s *Server) fetchWorkflowDetailData(
+	ctx context.Context,
+	workflowID string,
+) (swarmview.WorkflowDetailData, error) {
+	wf, err := s.DB.GetSwarmWorkflow(ctx, workflowID)
+	if err != nil {
+		return swarmview.WorkflowDetailData{}, err
 	}
 
 	sessions, _ := s.DB.ListSwarmSessionsByWorkflow(ctx, workflowID)
@@ -77,15 +89,13 @@ func (s *Server) handleSwarmWorkflowDetail(c echo.Context) error {
 	milestones, _ := s.DB.ListSwarmMilestonesByWorkflow(ctx, workflowID)
 	gateReviews, _ := s.DB.ListSwarmGateReviewsByWorkflow(ctx, workflowID)
 
-	data := swarmview.WorkflowDetailData{
+	return swarmview.WorkflowDetailData{
 		Workflow:    wf,
 		Sessions:    sessions,
 		Events:      wfEvents,
 		Milestones:  milestones,
 		GateReviews: gateReviews,
-	}
-
-	return render(c, swarmview.WorkflowPage(data))
+	}, nil
 }
 
 // handleSwarmDashboardSSE provides live updates for the swarm dashboard.
@@ -193,6 +203,14 @@ func (s *Server) patchMetricsAndLearnings(
 	)
 }
 
+// reviewerFromContext extracts the reviewer name from the session user, or "dashboard" as fallback.
+func reviewerFromContext(c echo.Context) string {
+	if user, ok := c.Get("user").(*sqlc.User); ok {
+		return user.DiscordUsername
+	}
+	return "dashboard"
+}
+
 // handleSwarmDashboardApprove approves a workflow gate from the dashboard.
 func (s *Server) handleSwarmDashboardApprove(c echo.Context) error {
 	if s.SwarmManager == nil {
@@ -203,10 +221,7 @@ func (s *Server) handleSwarmDashboardApprove(c echo.Context) error {
 	}
 
 	workflowID := c.Param("id")
-	reviewer := "dashboard"
-	if user, ok := c.Get("user").(*sqlc.User); ok {
-		reviewer = user.DiscordUsername
-	}
+	reviewer := reviewerFromContext(c)
 
 	if err := s.SwarmManager.ApproveGate(
 		c.Request().Context(),
@@ -230,10 +245,7 @@ func (s *Server) handleSwarmDashboardReject(c echo.Context) error {
 	}
 
 	workflowID := c.Param("id")
-	reviewer := "dashboard"
-	if user, ok := c.Get("user").(*sqlc.User); ok {
-		reviewer = user.DiscordUsername
-	}
+	reviewer := reviewerFromContext(c)
 
 	var signals struct {
 		Feedback string `json:"reject_feedback"` //nolint:tagliatelle // Datastar signal name
@@ -263,25 +275,9 @@ func (s *Server) handleSwarmDashboardReject(c echo.Context) error {
 
 // renderWorkflowDetail re-fetches and returns the workflow detail page as SSE.
 func (s *Server) renderWorkflowDetail(c echo.Context, workflowID string) error {
-	ctx := c.Request().Context()
-	wf, err := s.DB.GetSwarmWorkflow(ctx, workflowID)
+	data, err := s.fetchWorkflowDetailData(c.Request().Context(), workflowID)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get workflow")
-	}
-
-	sessions, _ := s.DB.ListSwarmSessionsByWorkflow(ctx, workflowID)
-	wfEvents, _ := s.DB.ListSwarmEventsByWorkflow(ctx, sql.NullString{
-		String: workflowID, Valid: true,
-	})
-	milestones, _ := s.DB.ListSwarmMilestonesByWorkflow(ctx, workflowID)
-	gateReviews, _ := s.DB.ListSwarmGateReviewsByWorkflow(ctx, workflowID)
-
-	data := swarmview.WorkflowDetailData{
-		Workflow:    wf,
-		Sessions:    sessions,
-		Events:      wfEvents,
-		Milestones:  milestones,
-		GateReviews: gateReviews,
 	}
 
 	sse := datastar.NewSSE(c.Response().Writer, c.Request())

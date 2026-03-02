@@ -13,7 +13,7 @@ import (
 )
 
 const clearSwarmWorkflowGate = `-- name: ClearSwarmWorkflowGate :exec
-UPDATE swarm_workflows SET status = 'running', gate_phase = NULL, review_feedback = NULL, updated_at = datetime('now') WHERE id = ?
+UPDATE swarm_workflows SET status = 'running', gate_phase = NULL, updated_at = datetime('now') WHERE id = ?
 `
 
 func (q *Queries) ClearSwarmWorkflowGate(ctx context.Context, id string) error {

@@ -181,7 +181,7 @@ LIMIT ?;
 UPDATE swarm_workflows SET status = 'awaiting_review', gate_phase = ?, updated_at = datetime('now') WHERE id = ?;
 
 -- name: ClearSwarmWorkflowGate :exec
-UPDATE swarm_workflows SET status = 'running', gate_phase = NULL, review_feedback = NULL, updated_at = datetime('now') WHERE id = ?;
+UPDATE swarm_workflows SET status = 'running', gate_phase = NULL, updated_at = datetime('now') WHERE id = ?;
 
 -- name: UpdateSwarmWorkflowReviewFeedback :exec
 UPDATE swarm_workflows SET review_feedback = ?, updated_at = datetime('now') WHERE id = ?;

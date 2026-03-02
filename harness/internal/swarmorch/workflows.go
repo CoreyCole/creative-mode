@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"time"
 
-	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 
@@ -213,37 +212,13 @@ func LeadFDEWorkflow(ctx workflow.Context) error {
 		)
 	}
 
-	// Read pending work and spawn child workflows for non-project work.
-	var spawns []SpawnRequest
-	if err := workflow.ExecuteActivity(opsCtx, "ReadTicketQueue").
-		Get(ctx, &spawns); err != nil {
-		return fmt.Errorf("ReadTicketQueue: %w", err)
-	}
-
-	for _, sp := range spawns {
-		params := SessionParams(sp)
-
-		// Route verify phase to the verify queue; everything else to general.
-		taskQueue := QueueGeneral
-		if sp.Phase == swarm.PhaseVerify ||
-			sp.Phase == swarm.PhaseProjectVerify {
-			taskQueue = QueueVerify
-		}
-
-		childOpts := workflow.ChildWorkflowOptions{
-			WorkflowID: fmt.Sprintf(
-				"session-%s-%s-%d",
-				sp.WorkflowID,
-				sp.Phase,
-				sp.Attempt,
-			),
-			TaskQueue:         taskQueue,
-			ParentClosePolicy: enumspb.PARENT_CLOSE_POLICY_ABANDON,
-		}
-		childCtx := workflow.WithChildOptions(ctx, childOpts)
-
-		// Fire-and-forget: start but don't wait for completion.
-		workflow.ExecuteChildWorkflow(childCtx, SessionWorkflow, params)
+	// Read pending work and spawn sessions directly via activity.
+	// Previous approach used fire-and-forget child workflows, but those
+	// silently failed because the parent completed before child start
+	// confirmation. Direct activity-based spawn is simpler and reliable.
+	if err := workflow.ExecuteActivity(opsCtx, "SpawnPendingSessions").
+		Get(ctx, nil); err != nil {
+		workflow.GetLogger(ctx).Warn("SpawnPendingSessions failed", "error", err)
 	}
 
 	return nil

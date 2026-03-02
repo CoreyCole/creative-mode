@@ -9,23 +9,23 @@ UPDATE swarm_config SET config = ? WHERE id = 'default';
 -- swarm_workflows
 
 -- name: CreateSwarmWorkflow :exec
-INSERT INTO swarm_workflows (id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO swarm_workflows (id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, linear_project_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, '');
 
 -- name: GetSwarmWorkflow :one
-SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, gate_phase, review_feedback, created_at, updated_at
+SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, gate_phase, review_feedback, created_at, updated_at, linear_project_id
 FROM swarm_workflows WHERE id = ?;
 
 -- name: GetSwarmWorkflowsByTicket :many
-SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, gate_phase, review_feedback, created_at, updated_at
+SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, gate_phase, review_feedback, created_at, updated_at, linear_project_id
 FROM swarm_workflows WHERE ticket_id = ? ORDER BY created_at DESC;
 
 -- name: ListRunningSwarmWorkflows :many
-SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, gate_phase, review_feedback, created_at, updated_at
+SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, gate_phase, review_feedback, created_at, updated_at, linear_project_id
 FROM swarm_workflows WHERE status = 'running' ORDER BY created_at ASC;
 
 -- name: ListActiveSwarmWorkflows :many
-SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, gate_phase, review_feedback, created_at, updated_at
+SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, gate_phase, review_feedback, created_at, updated_at, linear_project_id
 FROM swarm_workflows WHERE status IN ('pending', 'running') ORDER BY created_at ASC;
 
 -- name: UpdateSwarmWorkflowPhase :exec
@@ -37,8 +37,11 @@ UPDATE swarm_workflows SET status = ?, updated_at = datetime('now') WHERE id = ?
 -- name: UpdateSwarmWorkflowBranch :exec
 UPDATE swarm_workflows SET branch_name = ?, updated_at = datetime('now') WHERE id = ?;
 
+-- name: UpdateSwarmWorkflowLinearProject :exec
+UPDATE swarm_workflows SET linear_project_id = ?, updated_at = datetime('now') WHERE id = ?;
+
 -- name: GetSwarmWorkflowByPrevious :one
-SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, gate_phase, review_feedback, created_at, updated_at
+SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, gate_phase, review_feedback, created_at, updated_at, linear_project_id
 FROM swarm_workflows WHERE previous_workflow_id = ?;
 
 -- name: CountActiveSwarmSessions :one
@@ -117,6 +120,7 @@ UPDATE swarm_project_milestones SET status = ?, verified_at = ? WHERE id = ?;
 INSERT INTO swarm_tickets (id, identifier, title, description, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 ON CONFLICT(id) DO UPDATE SET
+    identifier = excluded.identifier,
     title = excluded.title,
     description = excluded.description,
     status = excluded.status,
@@ -199,5 +203,5 @@ UPDATE swarm_workflows SET status = 'running', gate_phase = NULL, updated_at = d
 UPDATE swarm_workflows SET review_feedback = ?, updated_at = datetime('now') WHERE id = ?;
 
 -- name: ListAwaitingReviewSwarmWorkflows :many
-SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, gate_phase, review_feedback, created_at, updated_at
+SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, gate_phase, review_feedback, created_at, updated_at, linear_project_id
 FROM swarm_workflows WHERE status = 'awaiting_review' ORDER BY updated_at ASC;

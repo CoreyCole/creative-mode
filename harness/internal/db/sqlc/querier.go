@@ -129,6 +129,7 @@ type Querier interface {
 	UpdateSwarmWorkflowBranch(ctx context.Context, arg UpdateSwarmWorkflowBranchParams) error
 	// Human gate queries
 	UpdateSwarmWorkflowGate(ctx context.Context, arg UpdateSwarmWorkflowGateParams) error
+	UpdateSwarmWorkflowLinearProject(ctx context.Context, arg UpdateSwarmWorkflowLinearProjectParams) error
 	UpdateSwarmWorkflowPhase(ctx context.Context, arg UpdateSwarmWorkflowPhaseParams) error
 	UpdateSwarmWorkflowReviewFeedback(ctx context.Context, arg UpdateSwarmWorkflowReviewFeedbackParams) error
 	UpdateSwarmWorkflowStatus(ctx context.Context, arg UpdateSwarmWorkflowStatusParams) error

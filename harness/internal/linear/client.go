@@ -86,9 +86,10 @@ type issueCreateVars struct {
 type issueCreateInput struct {
 	Title       string   `json:"title"`
 	Description string   `json:"description"`
-	TeamID      string   `json:"teamId"`             //nolint:tagliatelle // Linear API field name
-	LabelIDs    []string `json:"labelIds,omitempty"` //nolint:tagliatelle // Linear API field name
-	ParentID    string   `json:"parentId,omitempty"` //nolint:tagliatelle // Linear API field name
+	TeamID      string   `json:"teamId"`              //nolint:tagliatelle // Linear API field name
+	LabelIDs    []string `json:"labelIds,omitempty"`  //nolint:tagliatelle // Linear API field name
+	ParentID    string   `json:"parentId,omitempty"`  //nolint:tagliatelle // Linear API field name
+	ProjectID   string   `json:"projectId,omitempty"` //nolint:tagliatelle // Linear API field name
 }
 
 type issueUpdateVars struct {
@@ -106,6 +107,23 @@ type issueLabelInput struct {
 
 type issueParentInput struct {
 	ParentID string `json:"parentId"` //nolint:tagliatelle // Linear API field name
+}
+
+// ProjectResult holds the response from project creation.
+type ProjectResult struct {
+	ID   string
+	Name string
+	URL  string
+}
+
+type projectCreateVars struct {
+	Input projectCreateInput `json:"input"`
+}
+
+type projectCreateInput struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	TeamIDs     []string `json:"teamIds"`
 }
 
 type commentCreateVars struct {
@@ -247,7 +265,7 @@ func (c *Client) CreateTicket(
 	ctx context.Context,
 	title, description string,
 	labelIDs []string,
-	parentID string,
+	parentID, projectID string,
 ) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -263,6 +281,7 @@ func (c *Client) CreateTicket(
 		TeamID:      teamID,
 		LabelIDs:    labelIDs,
 		ParentID:    parentID,
+		ProjectID:   projectID,
 	}
 
 	query := `mutation($input: IssueCreateInput!) {
@@ -303,6 +322,7 @@ func (c *Client) CreateTicket(
 
 // CreateTicketResult holds the identifier and URL from ticket creation.
 type CreateTicketResult struct {
+	ID         string // Linear UUID
 	Identifier string
 	URL        string
 }
@@ -312,7 +332,7 @@ func (c *Client) CreateTicketWithURL(
 	ctx context.Context,
 	title, description string,
 	labelIDs []string,
-	parentID string,
+	parentID, projectID string,
 ) (CreateTicketResult, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -328,6 +348,7 @@ func (c *Client) CreateTicketWithURL(
 		TeamID:      teamID,
 		LabelIDs:    labelIDs,
 		ParentID:    parentID,
+		ProjectID:   projectID,
 	}
 
 	query := `mutation($input: IssueCreateInput!) {
@@ -364,8 +385,69 @@ func (c *Client) CreateTicketWithURL(
 		"title", title)
 
 	return CreateTicketResult{
+		ID:         resp.Data.IssueCreate.Issue.ID,
 		Identifier: resp.Data.IssueCreate.Issue.Identifier,
 		URL:        resp.Data.IssueCreate.Issue.URL,
+	}, nil
+}
+
+// CreateProject creates a new Linear project and returns its ID, name, and URL.
+func (c *Client) CreateProject(
+	ctx context.Context,
+	name, description string,
+) (ProjectResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	teamID, err := c.resolveTeamID(ctx)
+	if err != nil {
+		return ProjectResult{}, err
+	}
+
+	query := `mutation($input: ProjectCreateInput!) {
+		projectCreate(input: $input) {
+			success
+			project { id name url }
+		}
+	}`
+
+	var resp struct {
+		Data struct {
+			ProjectCreate struct {
+				Success bool `json:"success"`
+				Project struct {
+					ID   string `json:"id"`
+					Name string `json:"name"`
+					URL  string `json:"url"`
+				} `json:"project"`
+			} `json:"projectCreate"`
+		} `json:"data"`
+	}
+
+	vars := projectCreateVars{
+		Input: projectCreateInput{
+			Name:        name,
+			Description: description,
+			TeamIDs:     []string{teamID},
+		},
+	}
+
+	if err := c.doQuery(ctx, query, vars, &resp); err != nil {
+		return ProjectResult{}, fmt.Errorf("create project: %w", err)
+	}
+
+	if !resp.Data.ProjectCreate.Success {
+		return ProjectResult{}, errors.New("create project: API returned success=false")
+	}
+
+	c.logger.Info("linear project created",
+		"id", resp.Data.ProjectCreate.Project.ID,
+		"name", name)
+
+	return ProjectResult{
+		ID:   resp.Data.ProjectCreate.Project.ID,
+		Name: resp.Data.ProjectCreate.Project.Name,
+		URL:  resp.Data.ProjectCreate.Project.URL,
 	}, nil
 }
 

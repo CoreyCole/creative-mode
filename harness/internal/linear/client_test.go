@@ -88,7 +88,7 @@ func TestCreateTicket(t *testing.T) {
 	}
 
 	c := newTestClient(t, handler)
-	id, err := c.CreateTicket(t.Context(), "Test ticket", "description", nil, "")
+	id, err := c.CreateTicket(t.Context(), "Test ticket", "description", nil, "", "")
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
 	}
@@ -296,6 +296,58 @@ func TestHTTPError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "429") {
 		t.Errorf("expected 429 error, got: %v", err)
+	}
+}
+
+func TestCreateProject(t *testing.T) {
+	t.Parallel()
+
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Query string `json:"query"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+
+		if strings.Contains(req.Query, "teams(") {
+			writeJSON(t, w, map[string]any{
+				"data": map[string]any{
+					"teams": map[string]any{
+						"nodes": []map[string]any{
+							{"id": "team-uuid-123", "key": "CM"},
+						},
+					},
+				},
+			})
+
+			return
+		}
+
+		writeJSON(t, w, map[string]any{
+			"data": map[string]any{
+				"projectCreate": map[string]any{
+					"success": true,
+					"project": map[string]any{
+						"id":   "proj-uuid-789",
+						"name": "Test Project",
+						"url":  "https://linear.app/cm/project/test-project",
+					},
+				},
+			},
+		})
+	}
+
+	c := newTestClient(t, handler)
+	result, err := c.CreateProject(t.Context(), "Test Project", "A test project")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	if result.ID != "proj-uuid-789" {
+		t.Errorf("expected proj-uuid-789, got %s", result.ID)
+	}
+	if result.Name != "Test Project" {
+		t.Errorf("expected Test Project, got %s", result.Name)
 	}
 }
 

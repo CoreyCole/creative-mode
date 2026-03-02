@@ -61,9 +61,19 @@ Reviews a project plan and renders a verdict: approve (advance to child ticket c
    | 5 | **Milestone coverage** — Do milestones cover all major deliverables? Are criteria measurable? | Medium |
    | 6 | **Risk assessment** — Are integration risks identified with mitigations? | Medium |
    | 7 | **Convention compliance** — Follows swarm naming, paths, footer format? | Medium |
+   | 8 | **Codebase simplicity** — Do changes keep things simple? No unnecessary abstractions, premature generalization, or over-engineering? | Critical |
+   | 9 | **Maintainability** — Do changes improve codebase organization without gratuitous restructuring? Prefer iteration over big-bang rewrites. | High |
+   | 10 | **Dependency minimalism** — Are all ticket dependencies truly needed? Could the decomposition be simpler? | High |
+
+   **Simplicity Principles** (apply these when evaluating criteria 8-10):
+   - **YAGNI**: Every ticket should serve the stated goal. Remove hypothetical future-proofing.
+   - **Minimal surface area**: Fewer well-scoped tickets > many tiny ones with coordination overhead.
+   - **Avoid refactoring creep**: Flag tickets that restructure code not required by the project goal.
+   - **Question deep dependency chains**: If 4+ levels deep, the decomposition may be over-engineered.
+   - **Prefer iteration**: Can the project be delivered incrementally without a complex graph?
 
 6. **Render verdict**:
-   - **Approve** — All Critical criteria pass, no High criteria have blocking issues
+   - **Approve** — All Critical criteria pass, no High criteria have blocking issues. The plan is the simplest approach that meets the goals.
    - **Revise** — Any Critical criterion fails, or multiple High criteria have issues
 
 7. **Post Linear comment** — `PROJECT-REVIEW:` prefix:

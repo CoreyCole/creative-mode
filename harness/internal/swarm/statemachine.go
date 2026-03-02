@@ -34,6 +34,7 @@ var DefaultConfig = SwarmConfig{
 	MaxVerifyRetries:        defaultMaxVerifyRetries,
 	MaxProjectVerifyRetries: defaultMaxProjectVerifyRetries,
 	RetryBackoffSecs:        defaultRetryBackoffSecs,
+	GateProjectReview:       true,
 }
 
 // Transition holds the result of a state machine transition.
@@ -169,8 +170,9 @@ func transitionByPhase(
 			if attempt < config.MaxPlanRevisions {
 				return Transition{NextPhase: PhaseProjectPlan, Retry: true}
 			}
-
-			return Transition{NextPhase: PhaseFailed, Failed: true}
+			// Agent exhausted iterations — advance to project_verify.
+			// The orchestrator will intercept and enter human gate instead.
+			return Transition{NextPhase: PhaseProjectVerify}
 		}
 
 	case PhaseProjectVerify:
@@ -242,7 +244,7 @@ func IsGatedTransition(phase Phase, result SessionResult, config SwarmConfig) bo
 	case PhasePlanReview:
 		return config.GatePlanReview
 	case PhaseProjectReview:
-		return config.GateProjectReview
+		return true // Always gate project review after agent approval
 	default:
 		return false
 	}

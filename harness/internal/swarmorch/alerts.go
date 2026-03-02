@@ -21,12 +21,14 @@ type DiscordSender interface {
 
 // AlertManager sends Discord alerts for swarm operational events with
 // deduplication to avoid spam. All alert methods are fire-and-forget.
+// Operational alerts go to channelID; integration errors go to errChannelID.
 type AlertManager struct {
-	discord   DiscordSender
-	channelID string
-	logger    *slog.Logger
-	mu        sync.Mutex
-	dedup     map[string]time.Time // alertKey → lastFired
+	discord      DiscordSender
+	channelID    string
+	errChannelID string
+	logger       *slog.Logger
+	mu           sync.Mutex
+	dedup        map[string]time.Time // alertKey → lastFired
 }
 
 // NewAlertManager creates a new AlertManager. If discord is nil or channelID
@@ -34,13 +36,15 @@ type AlertManager struct {
 func NewAlertManager(
 	discord DiscordSender,
 	channelID string,
+	errChannelID string,
 	logger *slog.Logger,
 ) *AlertManager {
 	return &AlertManager{
-		discord:   discord,
-		channelID: channelID,
-		logger:    logger,
-		dedup:     make(map[string]time.Time),
+		discord:      discord,
+		channelID:    channelID,
+		errChannelID: errChannelID,
+		logger:       logger,
+		dedup:        make(map[string]time.Time),
 	}
 }
 
@@ -112,6 +116,35 @@ func (a *AlertManager) FireHighRetryRate(
 	)
 
 	a.fireAsync(key, msg)
+}
+
+// FireError sends an integration error to the errors channel. No dedup —
+// every unique error is reported. Used for Linear API failures, session
+// spawn failures, and other integration issues that should not be silent.
+func (a *AlertManager) FireError(component, detail string) {
+	msg := fmt.Sprintf(
+		"**[SWARM ERROR] %s**\n%s",
+		component,
+		detail,
+	)
+
+	a.logger.Error("swarm error", "component", component, "detail", detail)
+
+	chID := a.errChannelID
+	if chID == "" {
+		chID = a.channelID // fall back to main alerts channel
+	}
+
+	if a.discord == nil || chID == "" {
+		return
+	}
+
+	go func() {
+		if _, err := a.discord.SendMessage(chID, msg); err != nil {
+			a.logger.Error("failed to send swarm error alert",
+				"component", component, "error", err)
+		}
+	}()
 }
 
 // fireAsync sends a Discord alert in a goroutine with dedup.

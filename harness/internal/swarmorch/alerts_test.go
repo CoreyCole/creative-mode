@@ -34,7 +34,7 @@ func TestAlertManagerDedup(t *testing.T) {
 	t.Parallel()
 
 	sender := &mockDiscordSender{}
-	mgr := NewAlertManager(sender, "ch-1", testLogger())
+	mgr := NewAlertManager(sender, "ch-1", "ch-err-1", testLogger())
 
 	// First fire should succeed.
 	mgr.FireTerminalFailure("TKT-1", "out of retries")
@@ -67,7 +67,7 @@ func TestAlertManagerDifferentTypes(t *testing.T) {
 	t.Parallel()
 
 	sender := &mockDiscordSender{}
-	mgr := NewAlertManager(sender, "ch-1", testLogger())
+	mgr := NewAlertManager(sender, "ch-1", "ch-err-1", testLogger())
 
 	mgr.FireTerminalFailure("TKT-1", "failed")
 	mgr.FireCrashRecovery("TKT-1", swarm.PhaseImplement)
@@ -84,7 +84,7 @@ func TestAlertManagerNilDiscord(t *testing.T) {
 	t.Parallel()
 
 	// Should not panic with nil discord.
-	mgr := NewAlertManager(nil, "", testLogger())
+	mgr := NewAlertManager(nil, "", "", testLogger())
 	mgr.FireTerminalFailure("TKT-1", "test")
 	// Just verify no panic.
 }
@@ -92,7 +92,7 @@ func TestAlertManagerNilDiscord(t *testing.T) {
 func TestAlertManagerDedupExpiry(t *testing.T) {
 	t.Parallel()
 
-	mgr := NewAlertManager(nil, "", testLogger())
+	mgr := NewAlertManager(nil, "", "", testLogger())
 
 	// Fire once.
 	if !mgr.shouldFire("test-key") {

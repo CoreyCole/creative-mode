@@ -186,8 +186,8 @@ func (q *Queries) CreateSwarmSession(ctx context.Context, arg CreateSwarmSession
 
 const createSwarmWorkflow = `-- name: CreateSwarmWorkflow :exec
 
-INSERT INTO swarm_workflows (id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO swarm_workflows (id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, linear_project_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, '')
 `
 
 type CreateSwarmWorkflowParams struct {
@@ -403,7 +403,7 @@ func (q *Queries) GetSwarmTicketByIdentifier(ctx context.Context, identifier str
 }
 
 const getSwarmWorkflow = `-- name: GetSwarmWorkflow :one
-SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, gate_phase, review_feedback, created_at, updated_at
+SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, gate_phase, review_feedback, created_at, updated_at, linear_project_id
 FROM swarm_workflows WHERE id = ?
 `
 
@@ -423,12 +423,13 @@ func (q *Queries) GetSwarmWorkflow(ctx context.Context, id string) (SwarmWorkflo
 		&i.ReviewFeedback,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.LinearProjectID,
 	)
 	return i, err
 }
 
 const getSwarmWorkflowByPrevious = `-- name: GetSwarmWorkflowByPrevious :one
-SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, gate_phase, review_feedback, created_at, updated_at
+SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, gate_phase, review_feedback, created_at, updated_at, linear_project_id
 FROM swarm_workflows WHERE previous_workflow_id = ?
 `
 
@@ -448,12 +449,13 @@ func (q *Queries) GetSwarmWorkflowByPrevious(ctx context.Context, previousWorkfl
 		&i.ReviewFeedback,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.LinearProjectID,
 	)
 	return i, err
 }
 
 const getSwarmWorkflowsByTicket = `-- name: GetSwarmWorkflowsByTicket :many
-SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, gate_phase, review_feedback, created_at, updated_at
+SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, gate_phase, review_feedback, created_at, updated_at, linear_project_id
 FROM swarm_workflows WHERE ticket_id = ? ORDER BY created_at DESC
 `
 
@@ -479,6 +481,7 @@ func (q *Queries) GetSwarmWorkflowsByTicket(ctx context.Context, ticketID string
 			&i.ReviewFeedback,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.LinearProjectID,
 		); err != nil {
 			return nil, err
 		}
@@ -494,7 +497,7 @@ func (q *Queries) GetSwarmWorkflowsByTicket(ctx context.Context, ticketID string
 }
 
 const listActiveSwarmWorkflows = `-- name: ListActiveSwarmWorkflows :many
-SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, gate_phase, review_feedback, created_at, updated_at
+SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, gate_phase, review_feedback, created_at, updated_at, linear_project_id
 FROM swarm_workflows WHERE status IN ('pending', 'running') ORDER BY created_at ASC
 `
 
@@ -520,6 +523,7 @@ func (q *Queries) ListActiveSwarmWorkflows(ctx context.Context) ([]SwarmWorkflow
 			&i.ReviewFeedback,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.LinearProjectID,
 		); err != nil {
 			return nil, err
 		}
@@ -599,7 +603,7 @@ func (q *Queries) ListAllSwarmWorkflows(ctx context.Context, limit int64) ([]Lis
 }
 
 const listAwaitingReviewSwarmWorkflows = `-- name: ListAwaitingReviewSwarmWorkflows :many
-SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, gate_phase, review_feedback, created_at, updated_at
+SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, gate_phase, review_feedback, created_at, updated_at, linear_project_id
 FROM swarm_workflows WHERE status = 'awaiting_review' ORDER BY updated_at ASC
 `
 
@@ -625,6 +629,7 @@ func (q *Queries) ListAwaitingReviewSwarmWorkflows(ctx context.Context) ([]Swarm
 			&i.ReviewFeedback,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.LinearProjectID,
 		); err != nil {
 			return nil, err
 		}
@@ -677,7 +682,7 @@ func (q *Queries) ListRecentSwarmEvents(ctx context.Context, limit int64) ([]Swa
 }
 
 const listRunningSwarmWorkflows = `-- name: ListRunningSwarmWorkflows :many
-SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, gate_phase, review_feedback, created_at, updated_at
+SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, gate_phase, review_feedback, created_at, updated_at, linear_project_id
 FROM swarm_workflows WHERE status = 'running' ORDER BY created_at ASC
 `
 
@@ -703,6 +708,7 @@ func (q *Queries) ListRunningSwarmWorkflows(ctx context.Context) ([]SwarmWorkflo
 			&i.ReviewFeedback,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.LinearProjectID,
 		); err != nil {
 			return nil, err
 		}
@@ -1100,6 +1106,20 @@ func (q *Queries) UpdateSwarmWorkflowGate(ctx context.Context, arg UpdateSwarmWo
 	return err
 }
 
+const updateSwarmWorkflowLinearProject = `-- name: UpdateSwarmWorkflowLinearProject :exec
+UPDATE swarm_workflows SET linear_project_id = ?, updated_at = datetime('now') WHERE id = ?
+`
+
+type UpdateSwarmWorkflowLinearProjectParams struct {
+	LinearProjectID sql.NullString
+	ID              string
+}
+
+func (q *Queries) UpdateSwarmWorkflowLinearProject(ctx context.Context, arg UpdateSwarmWorkflowLinearProjectParams) error {
+	_, err := q.db.ExecContext(ctx, updateSwarmWorkflowLinearProject, arg.LinearProjectID, arg.ID)
+	return err
+}
+
 const updateSwarmWorkflowPhase = `-- name: UpdateSwarmWorkflowPhase :exec
 UPDATE swarm_workflows SET phase = ?, attempt = ?, updated_at = datetime('now') WHERE id = ?
 `
@@ -1148,6 +1168,7 @@ const upsertSwarmTicket = `-- name: UpsertSwarmTicket :exec
 INSERT INTO swarm_tickets (id, identifier, title, description, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 ON CONFLICT(id) DO UPDATE SET
+    identifier = excluded.identifier,
     title = excluded.title,
     description = excluded.description,
     status = excluded.status,

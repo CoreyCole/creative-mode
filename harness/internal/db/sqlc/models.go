@@ -239,6 +239,7 @@ type SwarmWorkflow struct {
 	ReviewFeedback     sql.NullString
 	CreatedAt          string
 	UpdatedAt          string
+	LinearProjectID    sql.NullString
 }
 
 type User struct {

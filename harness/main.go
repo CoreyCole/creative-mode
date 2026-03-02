@@ -251,6 +251,7 @@ func main() {
 	if swarmChannelID == "" {
 		swarmChannelID = os.Getenv("DISCORD_PRESIDENT_CHANNEL_ID")
 	}
+	swarmErrChannelID := os.Getenv("DISCORD_SWARM_ERRORS_CHANNEL_ID")
 	if botToken := os.Getenv(
 		"DISCORD_BOT_TOKEN",
 	); botToken != "" &&
@@ -264,13 +265,19 @@ func main() {
 			logger.Error("failed to create swarm alert discord client", "error", alertErr)
 		} else {
 			swarmManager.SetAlertManager(
-				swarmorch.NewAlertManager(alertClient, swarmChannelID, logger),
+				swarmorch.NewAlertManager(
+					alertClient,
+					swarmChannelID,
+					swarmErrChannelID,
+					logger,
+				),
 			)
-			logger.Info("Swarm alert manager enabled", "channel_id", swarmChannelID)
+			logger.Info("Swarm alert manager enabled",
+				"channel_id", swarmChannelID, "err_channel_id", swarmErrChannelID)
 		}
 	} else {
 		// Wire alert manager without Discord — alerts are logged only.
-		swarmManager.SetAlertManager(swarmorch.NewAlertManager(nil, "", logger))
+		swarmManager.SetAlertManager(swarmorch.NewAlertManager(nil, "", "", logger))
 	}
 
 	// Set up Linear client for swarm ticket management (optional — requires LINEAR_API_KEY).

@@ -112,6 +112,7 @@ func (d *DB) runMigrations(ctx context.Context) error {
 		"migrations/008_human_gates.sql",
 		"migrations/009_gate_revision_target.sql",
 		"migrations/010_project_create.sql",
+		"migrations/011_linear_project_id.sql",
 	}
 	for _, file := range migrationFiles {
 		// Check if already applied.

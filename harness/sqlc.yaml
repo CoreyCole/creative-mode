@@ -82,6 +82,7 @@ sql:
           gate_phase: "GatePhase"
           review_feedback: "ReviewFeedback"
           revision_target: "RevisionTarget"
+          linear_project_id: "LinearProjectID"
           description: "Description"
           input_tokens: "InputTokens"
           output_tokens: "OutputTokens"

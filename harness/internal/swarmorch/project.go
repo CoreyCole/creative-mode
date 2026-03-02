@@ -55,6 +55,26 @@ func (m *Manager) CreateProjectTicketsFromPlan(
 
 	projectID := wf.ID
 
+	// Create a Linear Project to group child tickets.
+	var linearProjectID string
+	if m.linearClient != nil {
+		projectResult, projErr := m.linearClient.CreateProject(ctx,
+			"Project: "+wf.TicketID,
+			"Child tickets for "+wf.TicketID)
+		if projErr != nil {
+			m.logger.Warn("linear create project", "error", projErr)
+		} else {
+			linearProjectID = projectResult.ID
+			_ = m.db.UpdateSwarmWorkflowLinearProject(
+				ctx,
+				sqlc.UpdateSwarmWorkflowLinearProjectParams{
+					LinearProjectID: sql.NullString{String: linearProjectID, Valid: true},
+					ID:              wf.ID,
+				},
+			)
+		}
+	}
+
 	numToID := make(map[int]string, len(tickets))
 
 	for _, pt := range tickets {
@@ -81,7 +101,14 @@ func (m *Manager) CreateProjectTicketsFromPlan(
 			continue
 		}
 
-		linearID, linearErr := m.linearClient.CreateTicket(ctx, pt.Title, "", nil, "")
+		linearResult, linearErr := m.linearClient.CreateTicketWithURL(
+			ctx,
+			pt.Title,
+			"",
+			nil,
+			"",
+			linearProjectID,
+		)
 		if linearErr != nil {
 			m.logger.Warn("linear create child ticket",
 				"num", pt.Num, "error", linearErr)
@@ -89,16 +116,16 @@ func (m *Manager) CreateProjectTicketsFromPlan(
 			continue
 		}
 
-		numToID[pt.Num] = linearID
+		numToID[pt.Num] = linearResult.Identifier
 
 		_ = m.db.UpsertSwarmTicket(ctx, sqlc.UpsertSwarmTicketParams{
 			ID:         childID,
-			Identifier: linearID,
+			Identifier: linearResult.Identifier,
 			Title:      pt.Title,
 			Status:     linear.StatusTodo,
 			ParentID:   sql.NullString{String: wf.TicketID, Valid: true},
 			ProjectID:  sql.NullString{String: projectID, Valid: true},
-			Url:        "",
+			Url:        linearResult.URL,
 			CreatedAt:  nowUTC(),
 			UpdatedAt:  nowUTC(),
 		})
@@ -637,6 +664,12 @@ func (m *Manager) SpawnProjectResearchChildren(
 
 	projectID := wf.ID
 
+	// Use existing Linear project ID from the workflow if available.
+	var linearProjectID string
+	if wf.LinearProjectID.Valid {
+		linearProjectID = wf.LinearProjectID.String
+	}
+
 	for _, topic := range topics {
 		childID := uuid.New().String()
 		identifier := fmt.Sprintf("%s-r%d", wf.TicketID, topic.Num)
@@ -658,7 +691,7 @@ func (m *Manager) SpawnProjectResearchChildren(
 		// Create in Linear if available.
 		if m.linearClient != nil {
 			linearID, linearErr := m.linearClient.CreateTicket(
-				ctx, topic.Title, topic.Description, nil, "",
+				ctx, topic.Title, topic.Description, nil, "", linearProjectID,
 			)
 			if linearErr != nil {
 				m.logger.Warn("linear create research child ticket",

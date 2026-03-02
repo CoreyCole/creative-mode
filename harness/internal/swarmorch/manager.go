@@ -126,6 +126,7 @@ func (m *Manager) CreateProjectTicket(
 			description,
 			nil,
 			"",
+			"",
 		)
 		if err != nil {
 			return "", "", fmt.Errorf("create linear ticket: %w", err)
@@ -231,6 +232,15 @@ func (m *Manager) StartWorkflow(
 		),
 	)
 
+	// Spawn the initial research session directly.
+	newWf, readErr := m.db.GetSwarmWorkflow(ctx, wfID)
+	if readErr == nil {
+		if spawnErr := m.spawnSession(ctx, newWf); spawnErr != nil {
+			m.logger.Warn("direct session spawn failed, heartbeat will retry",
+				"workflow_id", wfID, "error", spawnErr)
+		}
+	}
+
 	m.triggerHeartbeat()
 
 	return wfID, nil
@@ -321,6 +331,17 @@ func (m *Manager) RecoverWorkflows(ctx context.Context) error {
 // spawnSession creates a session DB record, builds env vars, creates a tmux
 // session, sends the skill prompt, and starts a watcher goroutine.
 func (m *Manager) spawnSession(ctx context.Context, wf sqlc.SwarmWorkflow) error {
+	// Idempotency: skip if an active session already exists for this phase.
+	if existing, err := m.db.GetLatestSwarmSession(ctx, wf.ID); err == nil {
+		if existing.Phase == wf.Phase && !existing.CompletedAt.Valid {
+			m.logger.Debug("session already active, skipping spawn",
+				"workflow_id", wf.ID, "phase", wf.Phase,
+				"session", existing.SessionName)
+
+			return nil
+		}
+	}
+
 	sessionID := uuid.New().String()[:8]
 	skill := swarm.SkillForPhase(wf.Phase)
 
@@ -759,6 +780,23 @@ func (m *Manager) advanceWorkflow(
 		"result", result.Result,
 	)
 
+	// Project review: agent exhausted max iterations without approval.
+	// Enter human gate instead of proceeding to project_verify.
+	if wf.Phase == swarm.PhaseProjectReview &&
+		result.Result == swarm.ResultLogicFailure &&
+		transition.NextPhase == swarm.PhaseProjectVerify {
+		m.linearComment(
+			wf.TicketID,
+			fmt.Sprintf(
+				"⚠️ Agent review exhausted %d iterations without full approval. Escalating to human review.",
+				wf.Attempt,
+			),
+		)
+		m.enterGate(ctx, wf, swarm.PhaseProjectReview)
+
+		return
+	}
+
 	// Terminal: done.
 	if transition.NextPhase == swarm.PhaseDone {
 		m.completeWorkflow(ctx, wf, result.Summary)
@@ -962,6 +1000,20 @@ func (m *Manager) advanceWorkflow(
 		}
 
 		return
+	}
+
+	// Spawn session for the new phase directly instead of relying solely on
+	// the Temporal heartbeat's fire-and-forget child workflow pattern (which
+	// silently fails due to parent completion before child start confirmation).
+	// The idempotency guard in spawnSession prevents double-spawning.
+	// Heartbeat serves as backup for edge cases.
+	updatedWf, readErr := m.db.GetSwarmWorkflow(ctx, wf.ID)
+	if readErr == nil {
+		if spawnErr := m.spawnSession(ctx, updatedWf); spawnErr != nil {
+			m.logger.Warn("direct session spawn failed, heartbeat will retry",
+				"workflow_id", wf.ID, "phase", transition.NextPhase,
+				"error", spawnErr)
+		}
 	}
 
 	m.triggerHeartbeat()
@@ -1351,21 +1403,24 @@ func (m *Manager) linearComment(ticketID, body string) {
 		if err != nil {
 			m.logger.Debug("linear comment skip: ticket not found", "ticket", ticketID)
 
+			if m.alertMgr != nil {
+				m.alertMgr.FireError("Linear API",
+					fmt.Sprintf("GetTicket failed for `%s`: %v", ticketID, err))
+			}
+
 			return
 		}
 
-		if commentErr := m.linearClient.PostComment(
-			ctx,
-			ticket.ID,
-			body,
-		); commentErr != nil {
-			m.logger.Warn(
-				"linear comment failed",
-				"ticket",
-				ticketID,
-				"error",
-				commentErr,
-			)
+		commentErr := m.linearClient.PostComment(ctx, ticket.ID, body)
+		if commentErr == nil {
+			return
+		}
+
+		m.logger.Warn("linear comment failed", "ticket", ticketID, "error", commentErr)
+
+		if m.alertMgr != nil {
+			m.alertMgr.FireError("Linear API",
+				fmt.Sprintf("PostComment failed for `%s`: %v", ticketID, commentErr))
 		}
 	}()
 }
@@ -1382,20 +1437,42 @@ func (m *Manager) linearUpdateStatus(ticketID, status string) {
 
 		ticket, err := m.linearClient.GetTicket(ctx, ticketID)
 		if err != nil {
+			if m.alertMgr != nil {
+				m.alertMgr.FireError(
+					"Linear API",
+					fmt.Sprintf(
+						"GetTicket failed for `%s` (status update): %v",
+						ticketID,
+						err,
+					),
+				)
+			}
+
 			return
 		}
 
-		if updateErr := m.linearClient.UpdateStatus(
-			ctx,
-			ticket.ID,
-			status,
-		); updateErr != nil {
-			m.logger.Warn(
-				"linear status update failed",
-				"ticket",
-				ticketID,
-				"error",
-				updateErr,
+		updateErr := m.linearClient.UpdateStatus(ctx, ticket.ID, status)
+		if updateErr == nil {
+			return
+		}
+
+		m.logger.Warn(
+			"linear status update failed",
+			"ticket",
+			ticketID,
+			"error",
+			updateErr,
+		)
+
+		if m.alertMgr != nil {
+			m.alertMgr.FireError(
+				"Linear API",
+				fmt.Sprintf(
+					"UpdateStatus failed for `%s` → %s: %v",
+					ticketID,
+					status,
+					updateErr,
+				),
 			)
 		}
 	}()
@@ -1709,6 +1786,22 @@ func (m *Manager) RejectGate(
 		),
 	)
 
+	// Spawn session directly for the rejection target phase.
+	updatedWf, readErr := m.db.GetSwarmWorkflow(ctx, wf.ID)
+	if readErr == nil {
+		if spawnErr := m.spawnSession(ctx, updatedWf); spawnErr != nil {
+			m.logger.Warn(
+				"direct session spawn after gate reject failed, heartbeat will retry",
+				"workflow_id",
+				wf.ID,
+				"phase",
+				targetPhase,
+				"error",
+				spawnErr,
+			)
+		}
+	}
+
 	m.triggerHeartbeat()
 
 	return nil
@@ -1778,6 +1871,15 @@ func (m *Manager) advanceFromGate(
 			nextPhase,
 		),
 	)
+
+	// Spawn session directly for the new phase.
+	updatedWf, readErr := m.db.GetSwarmWorkflow(ctx, wf.ID)
+	if readErr == nil {
+		if spawnErr := m.spawnSession(ctx, updatedWf); spawnErr != nil {
+			m.logger.Warn("direct session spawn after gate failed, heartbeat will retry",
+				"workflow_id", wf.ID, "phase", nextPhase, "error", spawnErr)
+		}
+	}
 
 	m.triggerHeartbeat()
 

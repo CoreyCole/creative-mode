@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS swarm_workflows (
     branch_name          TEXT,
     gate_phase           TEXT,
     review_feedback      TEXT,
+    linear_project_id    TEXT,
     created_at           TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
 );

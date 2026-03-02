@@ -167,6 +167,46 @@ func (a *Activities) ReadTicketQueue(ctx context.Context) ([]SpawnRequest, error
 	return spawns, nil
 }
 
+// SpawnPendingSessions finds running workflows that need sessions and spawns
+// them directly. Replaces the fire-and-forget child workflow pattern which
+// silently failed (parent completed before child start confirmation).
+func (a *Activities) SpawnPendingSessions(ctx context.Context) error {
+	spawns, err := a.ReadTicketQueue(ctx)
+	if err != nil {
+		return fmt.Errorf("read ticket queue: %w", err)
+	}
+
+	for _, sp := range spawns {
+		wf, wfErr := a.mgr.db.GetSwarmWorkflow(ctx, sp.WorkflowID)
+		if wfErr != nil {
+			a.mgr.logger.Warn("spawn pending: get workflow",
+				"workflow_id", sp.WorkflowID, "error", wfErr)
+
+			continue
+		}
+
+		// spawnSession has an idempotency guard — safe to call even if
+		// a session was already spawned by advanceWorkflow.
+		spawnErr := a.mgr.spawnSession(ctx, wf)
+		if spawnErr == nil {
+			continue
+		}
+
+		a.mgr.logger.Warn("spawn pending: spawn session",
+			"workflow_id", sp.WorkflowID,
+			"phase", sp.Phase,
+			"error", spawnErr)
+
+		if a.mgr.alertMgr != nil {
+			a.mgr.alertMgr.FireError("Session Spawn",
+				fmt.Sprintf("Failed to spawn `%s` for `%s` (phase: %s): %v",
+					sp.TicketID, sp.WorkflowID, sp.Phase, spawnErr))
+		}
+	}
+
+	return nil
+}
+
 // DetectStalls checks for stalled workflows and fires alerts.
 func (a *Activities) DetectStalls(ctx context.Context) error {
 	a.mgr.detectAndAlertStalls(ctx)

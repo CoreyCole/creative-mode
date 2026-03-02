@@ -224,13 +224,12 @@ func TestDetermineNextPhase(t *testing.T) {
 			wantRetry:    true,
 		},
 		{
-			name:         "project_review revise at max → failed",
+			name:         "project_review revise at max → project_verify (agent exhaustion)",
 			workflowType: WorkflowTypeProject,
 			phase:        PhaseProjectReview,
 			attempt:      3,
 			result:       ResultLogicFailure,
-			wantPhase:    PhaseFailed,
-			wantFailed:   true,
+			wantPhase:    PhaseProjectVerify,
 		},
 		{
 			name:         "project_verify success → done",
@@ -396,18 +395,18 @@ func TestIsGatedTransition(t *testing.T) {
 			want:   false,
 		},
 		{
-			name:   "project_review gated when enabled",
+			name:   "project_review always gated (config enabled)",
 			phase:  PhaseProjectReview,
 			result: ResultSuccess,
 			config: SwarmConfig{GateProjectReview: true},
 			want:   true,
 		},
 		{
-			name:   "project_review not gated when disabled",
+			name:   "project_review always gated (config disabled)",
 			phase:  PhaseProjectReview,
 			result: ResultSuccess,
 			config: SwarmConfig{GateProjectReview: false},
-			want:   false,
+			want:   true,
 		},
 		{
 			name:   "non-success result never gated",

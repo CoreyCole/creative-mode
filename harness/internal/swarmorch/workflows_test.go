@@ -95,8 +95,7 @@ func TestLeadFDEWorkflow_CallsAllActivities(t *testing.T) {
 	env.OnActivity("GenerateDigest", mock.Anything).Return(nil)
 	env.OnActivity("CheckProjectHealth", mock.Anything).
 		Return([]ProjectHealthStatus{}, nil)
-	env.OnActivity("ReadTicketQueue", mock.Anything).
-		Return([]SpawnRequest{}, nil)
+	env.OnActivity("SpawnPendingSessions", mock.Anything).Return(nil)
 
 	env.ExecuteWorkflow(LeadFDEWorkflow)
 
@@ -105,7 +104,7 @@ func TestLeadFDEWorkflow_CallsAllActivities(t *testing.T) {
 	env.AssertExpectations(t)
 }
 
-func TestLeadFDEWorkflow_SpawnsSessionsForPendingWork(t *testing.T) {
+func TestLeadFDEWorkflow_SpawnPendingSessionsFailureNonFatal(t *testing.T) {
 	t.Parallel()
 
 	suite := &testsuite.WorkflowTestSuite{}
@@ -118,19 +117,8 @@ func TestLeadFDEWorkflow_SpawnsSessionsForPendingWork(t *testing.T) {
 	env.OnActivity("GenerateDigest", mock.Anything).Return(nil)
 	env.OnActivity("CheckProjectHealth", mock.Anything).
 		Return([]ProjectHealthStatus{}, nil)
-
-	spawns := []SpawnRequest{
-		{
-			WorkflowID: "wf-1",
-			TicketID:   "CM-1",
-			Phase:      swarm.PhaseResearch,
-			Attempt:    1,
-		},
-	}
-	env.OnActivity("ReadTicketQueue", mock.Anything).Return(spawns, nil)
-	env.OnWorkflow(SessionWorkflow, mock.Anything, mock.Anything).Return(
-		SessionWorkflowResult{Result: swarm.ResultSuccess}, nil,
-	)
+	// SpawnPendingSessions failure should not fail the workflow.
+	env.OnActivity("SpawnPendingSessions", mock.Anything).Return(errTest)
 
 	env.ExecuteWorkflow(LeadFDEWorkflow)
 

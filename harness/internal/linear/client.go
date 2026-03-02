@@ -323,7 +323,7 @@ func (c *Client) CreateTicketWithURL(
 					Identifier string `json:"identifier"`
 					Title      string `json:"title"`
 					URL        string `json:"url"`
-				} `json:"issueCreate"`
+				} `json:"issue"`
 			} `json:"issueCreate"`
 		} `json:"data"`
 	}

@@ -433,25 +433,53 @@ func TestGateRejectionTarget(t *testing.T) {
 	tests := []struct {
 		name      string
 		gatePhase Phase
+		target    RevisionTarget
 		wantPhase Phase
 		wantOK    bool
 	}{
-		{"plan_review → code_plan", PhasePlanReview, PhaseCodePlan, true},
-		{"project_review → project_plan", PhaseProjectReview, PhaseProjectPlan, true},
-		{"pr → implement", PhasePR, PhaseImplement, true},
-		{"human_review → implement", PhaseHumanReview, PhaseImplement, true},
-		{"research → no target", PhaseResearch, "", false},
-		{"done → no target", PhaseDone, "", false},
+		{"plan_review → code_plan", PhasePlanReview, "", PhaseCodePlan, true},
+		{"project_review → project_plan", PhaseProjectReview, "", PhaseProjectPlan, true},
+		{"pr → implement", PhasePR, "", PhaseImplement, true},
+		{
+			"human_review → implement (default)",
+			PhaseHumanReview,
+			"",
+			PhaseImplement,
+			true,
+		},
+		{
+			"human_review → implement (explicit)",
+			PhaseHumanReview,
+			RevisionTargetImplement,
+			PhaseImplement,
+			true,
+		},
+		{
+			"human_review → code_plan (re-plan)",
+			PhaseHumanReview,
+			RevisionTargetCodePlan,
+			PhaseCodePlan,
+			true,
+		},
+		{
+			"pr → code_plan (re-plan)",
+			PhasePR,
+			RevisionTargetCodePlan,
+			PhaseCodePlan,
+			true,
+		},
+		{"research → no target", PhaseResearch, "", "", false},
+		{"done → no target", PhaseDone, "", "", false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			gotPhase, gotOK := GateRejectionTarget(tt.gatePhase)
+			gotPhase, gotOK := GateRejectionTarget(tt.gatePhase, tt.target)
 			if gotPhase != tt.wantPhase || gotOK != tt.wantOK {
-				t.Errorf("GateRejectionTarget(%q) = (%q, %v), want (%q, %v)",
-					tt.gatePhase, gotPhase, gotOK, tt.wantPhase, tt.wantOK)
+				t.Errorf("GateRejectionTarget(%q, %q) = (%q, %v), want (%q, %v)",
+					tt.gatePhase, tt.target, gotPhase, gotOK, tt.wantPhase, tt.wantOK)
 			}
 		})
 	}

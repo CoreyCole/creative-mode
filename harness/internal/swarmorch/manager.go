@@ -58,7 +58,11 @@ type Manager struct {
 	// mechanism. Tmux checks remain as a fallback.
 	completionReg *CompletionRegistry
 	startReg      *StartRegistry
-	ctxPressure   *ContextPressure
+
+	// Decay double-run guard: prevents relevance decay from running
+	// more frequently than the configured interval.
+	lastDecayAt time.Time
+	ctxPressure *ContextPressure
 
 	// Metrics cache with 60s TTL.
 	metricsCache *metricsCache
@@ -496,6 +500,9 @@ func (m *Manager) handleSessionComplete(ctx context.Context, sessionID string) {
 	resultPath := ResultFilePath(sessionID)
 	result, _ := swarm.ParseResultFile(resultPath)
 
+	// Best-effort token capture from tmux pane.
+	totalTokens := m.captureTokens(session.SessionName, sessionID)
+
 	// Compute duration from started_at.
 	var durationSec int64
 	if startedAt, parseErr := time.Parse(
@@ -509,6 +516,7 @@ func (m *Manager) handleSessionComplete(ctx context.Context, sessionID string) {
 		Result:      result.Result,
 		Detail:      toNullString(result.Summary),
 		DurationSec: sql.NullInt64{Int64: durationSec, Valid: durationSec > 0},
+		TotalTokens: sql.NullInt64{Int64: totalTokens, Valid: totalTokens > 0},
 		ID:          sessionID,
 	}); completeErr != nil {
 		m.logger.Error(
@@ -563,7 +571,66 @@ func (m *Manager) handleSessionComplete(ctx context.Context, sessionID string) {
 	// Clean up temp files and hooks config.
 	_ = os.Remove(resultPath)
 	_ = os.Remove(LearningFilePath(sessionID))
+	_ = os.Remove(TokenFilePath(sessionID))
 	CleanupHooksConfig(sessionID)
+}
+
+// captureTokens runs the token capture script and returns the total token count.
+// Returns 0 if capture fails (best-effort).
+func (m *Manager) captureTokens(sessionName, sessionID string) int64 {
+	scriptPath := filepath.Join(
+		m.baseDir,
+		"harness",
+		"scripts",
+		"swarm-capture-tokens.sh",
+	)
+	if _, err := os.Stat(scriptPath); err != nil {
+		return 0
+	}
+
+	const tokenCaptureTimeout = 10 * time.Second
+
+	ctx, cancel := context.WithTimeout(context.Background(), tokenCaptureTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, scriptPath, sessionName, sessionID)
+	if err := cmd.Run(); err != nil {
+		m.logger.Debug("token capture script failed", "error", err)
+		return 0
+	}
+
+	data, err := os.ReadFile(TokenFilePath(sessionID))
+	if err != nil {
+		return 0
+	}
+
+	tokens, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
+	if err != nil {
+		return 0
+	}
+
+	return tokens
+}
+
+// TokenFilePath returns the path where the token capture script writes token counts.
+func TokenFilePath(sessionID string) string {
+	return filepath.Join(os.TempDir(), "swarm-tokens-"+sessionID)
+}
+
+// isHighRetryRate returns true if the current attempt exceeds 50% of the max retries for the phase.
+func isHighRetryRate(phase swarm.Phase, attempt int, config swarm.SwarmConfig) bool {
+	switch phase { //nolint:exhaustive // only retry-capable phases
+	case swarm.PhaseCodePlan:
+		return attempt > config.MaxPlanRevisions/2
+	case swarm.PhaseImplement:
+		return attempt > config.MaxVerifyRetries/2
+	case swarm.PhaseProjectPlan:
+		return attempt > config.MaxPlanRevisions/2
+	case swarm.PhaseProjectVerify:
+		return attempt > config.MaxProjectVerifyRetries/2
+	default:
+		return false
+	}
 }
 
 // advanceWorkflow uses the state machine to determine the next phase and
@@ -737,6 +804,16 @@ func (m *Manager) advanceWorkflow(
 	)
 
 	if transition.Retry {
+		// Alert on high retry rate (>50% of max retries).
+		if m.alertMgr != nil &&
+			isHighRetryRate(transition.NextPhase, int(newAttempt), config) {
+			m.alertMgr.FireHighRetryRate(
+				wf.TicketID,
+				transition.NextPhase,
+				int(newAttempt),
+			)
+		}
+
 		m.linearComment(
 			wf.TicketID,
 			fmt.Sprintf(
@@ -1367,9 +1444,12 @@ func (m *Manager) ApproveGate(ctx context.Context, workflowID, reviewer string) 
 }
 
 // RejectGate sends a workflow back to an earlier phase with feedback.
+// revisionTarget allows the reviewer to choose where to route: "implement" (default)
+// or "code_plan" (for architectural changes, only valid at human_review gate).
 func (m *Manager) RejectGate(
 	ctx context.Context,
 	workflowID, reviewer, feedback string,
+	revisionTarget swarm.RevisionTarget,
 ) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1379,7 +1459,7 @@ func (m *Manager) RejectGate(
 		return err
 	}
 
-	targetPhase, ok := swarm.GateRejectionTarget(gatePhase)
+	targetPhase, ok := swarm.GateRejectionTarget(gatePhase, revisionTarget)
 	if !ok {
 		return fmt.Errorf("no rejection target for gate phase: %s", gatePhase)
 	}
@@ -1392,6 +1472,10 @@ func (m *Manager) RejectGate(
 		Action:     string(swarm.GateActionReject),
 		Feedback:   sql.NullString{String: feedback, Valid: feedback != ""},
 		Reviewer:   sql.NullString{String: reviewer, Valid: reviewer != ""},
+		RevisionTarget: sql.NullString{
+			String: string(revisionTarget),
+			Valid:  revisionTarget != "",
+		},
 	})
 
 	// Clear gate, then store feedback (order matters: ClearSwarmWorkflowGate

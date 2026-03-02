@@ -13,17 +13,18 @@ import (
 )
 
 const createSwarmGateReview = `-- name: CreateSwarmGateReview :exec
-INSERT INTO swarm_gate_reviews (id, workflow_id, gate_phase, action, feedback, reviewer)
-VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO swarm_gate_reviews (id, workflow_id, gate_phase, action, feedback, reviewer, revision_target)
+VALUES (?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateSwarmGateReviewParams struct {
-	ID         string
-	WorkflowID string
-	GatePhase  swarm.Phase
-	Action     string
-	Feedback   sql.NullString
-	Reviewer   sql.NullString
+	ID             string
+	WorkflowID     string
+	GatePhase      swarm.Phase
+	Action         string
+	Feedback       sql.NullString
+	Reviewer       sql.NullString
+	RevisionTarget sql.NullString
 }
 
 func (q *Queries) CreateSwarmGateReview(ctx context.Context, arg CreateSwarmGateReviewParams) error {
@@ -34,24 +35,36 @@ func (q *Queries) CreateSwarmGateReview(ctx context.Context, arg CreateSwarmGate
 		arg.Action,
 		arg.Feedback,
 		arg.Reviewer,
+		arg.RevisionTarget,
 	)
 	return err
 }
 
 const listSwarmGateReviewsByWorkflow = `-- name: ListSwarmGateReviewsByWorkflow :many
-SELECT id, workflow_id, gate_phase, action, feedback, reviewer, created_at
+SELECT id, workflow_id, gate_phase, action, feedback, reviewer, revision_target, created_at
 FROM swarm_gate_reviews WHERE workflow_id = ? ORDER BY created_at DESC
 `
 
-func (q *Queries) ListSwarmGateReviewsByWorkflow(ctx context.Context, workflowID string) ([]SwarmGateReview, error) {
+type ListSwarmGateReviewsByWorkflowRow struct {
+	ID             string
+	WorkflowID     string
+	GatePhase      swarm.Phase
+	Action         string
+	Feedback       sql.NullString
+	Reviewer       sql.NullString
+	RevisionTarget sql.NullString
+	CreatedAt      string
+}
+
+func (q *Queries) ListSwarmGateReviewsByWorkflow(ctx context.Context, workflowID string) ([]ListSwarmGateReviewsByWorkflowRow, error) {
 	rows, err := q.db.QueryContext(ctx, listSwarmGateReviewsByWorkflow, workflowID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []SwarmGateReview{}
+	items := []ListSwarmGateReviewsByWorkflowRow{}
 	for rows.Next() {
-		var i SwarmGateReview
+		var i ListSwarmGateReviewsByWorkflowRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.WorkflowID,
@@ -59,6 +72,7 @@ func (q *Queries) ListSwarmGateReviewsByWorkflow(ctx context.Context, workflowID
 			&i.Action,
 			&i.Feedback,
 			&i.Reviewer,
+			&i.RevisionTarget,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err

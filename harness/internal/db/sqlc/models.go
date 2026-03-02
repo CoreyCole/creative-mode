@@ -111,13 +111,14 @@ type SwarmEvent struct {
 }
 
 type SwarmGateReview struct {
-	ID         string
-	WorkflowID string
-	GatePhase  swarm.Phase
-	Action     string
-	Feedback   sql.NullString
-	Reviewer   sql.NullString
-	CreatedAt  string
+	ID             string
+	WorkflowID     string
+	GatePhase      swarm.Phase
+	Action         string
+	Feedback       sql.NullString
+	Reviewer       sql.NullString
+	CreatedAt      string
+	RevisionTarget sql.NullString
 }
 
 type SwarmLearning struct {

@@ -26,7 +26,7 @@ type WorkflowDetailData struct {
 	Sessions    []sqlc.SwarmSession
 	Events      []sqlc.SwarmEvent
 	Milestones  []sqlc.SwarmProjectMilestone
-	GateReviews []sqlc.SwarmGateReview
+	GateReviews []sqlc.ListSwarmGateReviewsByWorkflowRow
 }
 
 type DashboardSignals struct {
@@ -201,7 +201,7 @@ templ WorkflowPage(data WorkflowDetailData) {
 				}
 				<!-- Gate review panel -->
 				if data.Workflow.Status == swarm.StatusAwaitingReview {
-					<div class="rounded-lg border-2 border-purple-500/50 bg-purple-900/20 p-4" data-signals='{"reject_feedback": ""}'>
+					<div class="rounded-lg border-2 border-purple-500/50 bg-purple-900/20 p-4" data-signals='{"reject_feedback": "", "reject_revision_target": "implement"}'>
 						<div class="flex items-center gap-2 mb-3">
 							<span class="text-sm font-semibold text-purple-300">Awaiting Human Review</span>
 							if data.Workflow.GatePhase.Valid {
@@ -223,6 +223,19 @@ templ WorkflowPage(data WorkflowDetailData) {
 								placeholder="Rejection feedback (required)..."
 								data-bind:reject_feedback
 							></textarea>
+							if data.Workflow.GatePhase.Valid && data.Workflow.GatePhase.String == "human_review" {
+								<div class="flex items-center gap-4 text-sm text-muted-foreground">
+									<span class="font-medium">Route to:</span>
+									<label class="flex items-center gap-1.5 cursor-pointer">
+										<input type="radio" name="revision_target" value="implement" data-bind:reject_revision_target class="accent-red-500"/>
+										<span>Re-implement (minor fixes)</span>
+									</label>
+									<label class="flex items-center gap-1.5 cursor-pointer">
+										<input type="radio" name="revision_target" value="code_plan" data-bind:reject_revision_target class="accent-red-500"/>
+										<span>Re-plan (architectural changes)</span>
+									</label>
+								</div>
+							}
 							<button
 								class="inline-flex items-center justify-center rounded-md bg-red-700 hover:bg-red-600 text-white h-8 px-4 text-sm font-medium"
 								data-on:click={ datastar.PostSSE(fmt.Sprintf("/swarm/%s/reject", data.Workflow.ID)) }
@@ -503,7 +516,7 @@ templ sessionItem(s sqlc.SwarmSession) {
 	</div>
 }
 
-templ gateReviewItem(gr sqlc.SwarmGateReview) {
+templ gateReviewItem(gr sqlc.ListSwarmGateReviewsByWorkflowRow) {
 	<div class="flex items-start gap-3 py-2 border-b border-border last:border-0">
 		if gr.Action == string(swarm.GateActionApprove) {
 			<span class="text-xs px-2 py-0.5 rounded bg-green-900/50 text-green-300">approved</span>
@@ -514,6 +527,9 @@ templ gateReviewItem(gr sqlc.SwarmGateReview) {
 			<span class="text-sm">{ string(gr.GatePhase) }</span>
 			if gr.Reviewer.Valid {
 				<span class="text-xs text-muted-foreground ml-2">by { gr.Reviewer.String }</span>
+			}
+			if gr.RevisionTarget.Valid && gr.RevisionTarget.String != "" {
+				<span class="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground ml-2">→ { gr.RevisionTarget.String }</span>
 			}
 			if gr.Feedback.Valid && gr.Feedback.String != "" {
 				<p class="text-xs text-muted-foreground mt-0.5">{ gr.Feedback.String }</p>

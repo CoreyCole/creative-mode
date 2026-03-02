@@ -97,6 +97,23 @@ func (a *AlertManager) FireGateReached(ticketID string, phase swarm.Phase) {
 	a.fireAsync(key, msg)
 }
 
+// FireHighRetryRate alerts when a workflow has an unusually high retry rate.
+func (a *AlertManager) FireHighRetryRate(
+	ticketID string,
+	phase swarm.Phase,
+	attempt int,
+) {
+	key := "high-retry:" + ticketID
+	msg := fmt.Sprintf(
+		"**[SWARM ALERT] High Retry Rate**\nTicket: `%s`\nPhase: `%s`\nAttempt %d — consider investigating.",
+		ticketID,
+		phase,
+		attempt,
+	)
+
+	a.fireAsync(key, msg)
+}
+
 // fireAsync sends a Discord alert in a goroutine with dedup.
 func (a *AlertManager) fireAsync(key, msg string) {
 	if !a.shouldFire(key) {

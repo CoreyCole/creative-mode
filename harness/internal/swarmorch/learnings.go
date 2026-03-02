@@ -4,7 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -60,16 +63,59 @@ func (m *Manager) captureCodeBug(
 		extractTitle(detail), detail)
 }
 
-// captureTerminalFailure records a post-mortem for a terminal workflow failure.
+// captureTerminalFailure records a post-mortem for a terminal workflow failure
+// and writes a retrospective markdown file.
 func (m *Manager) captureTerminalFailure(
 	ctx context.Context,
 	workflowID, sessionID, ticketID string,
 	phase swarm.Phase,
 	detail string,
 ) error {
-	return m.createLearning(ctx, workflowID, sessionID, ticketID,
+	err := m.createLearning(ctx, workflowID, sessionID, ticketID,
 		swarm.LearningPostMortem, phase, swarm.SeverityCritical,
 		fmt.Sprintf("Terminal failure in %s", phase), detail)
+
+	// Best-effort retrospective file.
+	if retroErr := m.writeRetrospective(
+		workflowID,
+		ticketID,
+		phase,
+		detail,
+	); retroErr != nil {
+		m.logger.Warn("failed to write retrospective", "error", retroErr)
+	}
+
+	return err
+}
+
+// writeRetrospective writes a markdown retrospective file for a terminal failure.
+func (m *Manager) writeRetrospective(
+	workflowID, ticketID string,
+	phase swarm.Phase,
+	detail string,
+) error {
+	retroDir := filepath.Join(m.baseDir, "thoughts", "swarm", "retrospectives")
+	if err := os.MkdirAll(retroDir, 0o750); err != nil {
+		return fmt.Errorf("create retrospectives dir: %w", err)
+	}
+
+	now := time.Now()
+	filename := fmt.Sprintf("%s-%s-%s.md", now.Format("2006-01-02"), ticketID, phase)
+	retroPath := filepath.Join(retroDir, filename)
+
+	content := fmt.Sprintf(`# Retrospective: %s — %s
+
+**Ticket**: %s
+**Phase**: %s
+**Workflow**: %s
+**Timestamp**: %s
+
+## Failure Detail
+
+%s
+`, ticketID, phase, ticketID, phase, workflowID, now.Format(time.RFC3339), detail)
+
+	return os.WriteFile(retroPath, []byte(content), 0o600)
 }
 
 // captureSuccessPattern records a successful workflow pattern.
@@ -170,9 +216,17 @@ func (m *Manager) getLearningContext(
 	return b.String(), nil
 }
 
-// decayLearningRelevance applies a 0.95 multiplier to all active learning
+// minDecayInterval is the minimum time between decay runs to prevent double-execution.
+const minDecayInterval = 30 * time.Minute
+
+// decayLearningRelevance applies severity-weighted decay to all active learning
 // relevance scores, then archives old low-relevance entries.
+// Skips execution if called within minDecayInterval of the last run.
 func (m *Manager) decayLearningRelevance(ctx context.Context) error {
+	if !m.lastDecayAt.IsZero() && time.Since(m.lastDecayAt) < minDecayInterval {
+		return nil
+	}
+
 	if err := m.db.DecaySwarmLearningRelevance(ctx); err != nil {
 		return fmt.Errorf("decay relevance: %w", err)
 	}
@@ -180,6 +234,8 @@ func (m *Manager) decayLearningRelevance(ctx context.Context) error {
 	if err := m.db.ArchiveOldLowRelevanceLearnings(ctx); err != nil {
 		return fmt.Errorf("archive old learnings: %w", err)
 	}
+
+	m.lastDecayAt = time.Now()
 
 	return nil
 }

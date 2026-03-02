@@ -33,7 +33,12 @@ WHERE id = ?;
 
 -- name: DecaySwarmLearningRelevance :exec
 UPDATE swarm_learnings
-SET relevance_score = relevance_score * 0.95, updated_at = datetime('now')
+SET relevance_score = relevance_score * CASE severity
+    WHEN 'critical' THEN 0.98
+    WHEN 'warning' THEN 0.95
+    WHEN 'info' THEN 0.90
+    ELSE 0.95
+END, updated_at = datetime('now')
 WHERE archived_at IS NULL AND relevance_score > 0.1;
 
 -- name: ArchiveSwarmLearning :exec

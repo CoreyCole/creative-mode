@@ -50,6 +50,7 @@ type matcherGroup struct {
 type hookHandler struct {
 	Type           string            `json:"type"`
 	URL            string            `json:"url,omitempty"`
+	Command        string            `json:"command,omitempty"`
 	Headers        map[string]string `json:"headers,omitempty"`
 	AllowedEnvVars []string          `json:"allowedEnvVars,omitempty"`
 	Timeout        int               `json:"timeout,omitempty"`

@@ -394,8 +394,9 @@ func (s *Server) handleSwarmRejectGate(c echo.Context) error {
 	workflowID := c.Param("id")
 
 	var req struct {
-		Reviewer string `json:"reviewer"`
-		Feedback string `json:"feedback"`
+		Reviewer       string `json:"reviewer"`
+		Feedback       string `json:"feedback"`
+		RevisionTarget string `json:"revision_target"` //nolint:tagliatelle // API field name
 	}
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
@@ -408,11 +409,17 @@ func (s *Server) handleSwarmRejectGate(c echo.Context) error {
 		)
 	}
 
+	target := swarm.RevisionTarget(req.RevisionTarget)
+	if !target.Valid() {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid revision_target")
+	}
+
 	if err := s.SwarmManager.RejectGate(
 		c.Request().Context(),
 		workflowID,
 		req.Reviewer,
 		req.Feedback,
+		target,
 	); err != nil {
 		s.Logger.Error("failed to reject gate", "workflow_id", workflowID, "error", err)
 

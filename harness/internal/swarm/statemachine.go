@@ -2,35 +2,38 @@ package swarm
 
 // Default configuration constants.
 const (
-	defaultMaxSessions      = 4
-	defaultHeartbeatSeconds = 120
-	defaultStallMinutes     = 45
-	defaultMaxPlanRevisions = 3
-	defaultMaxVerifyRetries = 3
-	defaultRetryBackoffSecs = 30
-	maxInfraRetries         = 2
+	defaultMaxSessions             = 4
+	defaultHeartbeatSeconds        = 120
+	defaultStallMinutes            = 45
+	defaultMaxPlanRevisions        = 3
+	defaultMaxVerifyRetries        = 3
+	defaultMaxProjectVerifyRetries = 5
+	defaultRetryBackoffSecs        = 30
+	maxInfraRetries                = 2
 )
 
 // SwarmConfig holds swarm orchestration configuration.
 type SwarmConfig struct {
-	MaxSessions       int  `json:"maxSessions"`
-	HeartbeatSeconds  int  `json:"heartbeatSeconds"`
-	StallMinutes      int  `json:"stallMinutes"`
-	MaxPlanRevisions  int  `json:"maxPlanRevisions"`
-	MaxVerifyRetries  int  `json:"maxVerifyRetries"`
-	RetryBackoffSecs  int  `json:"retryBackoffSecs"`
-	GatePlanReview    bool `json:"gatePlanReview"`
-	GateProjectReview bool `json:"gateProjectReview"`
+	MaxSessions             int  `json:"maxSessions"`
+	HeartbeatSeconds        int  `json:"heartbeatSeconds"`
+	StallMinutes            int  `json:"stallMinutes"`
+	MaxPlanRevisions        int  `json:"maxPlanRevisions"`
+	MaxVerifyRetries        int  `json:"maxVerifyRetries"`
+	MaxProjectVerifyRetries int  `json:"maxProjectVerifyRetries"`
+	RetryBackoffSecs        int  `json:"retryBackoffSecs"`
+	GatePlanReview          bool `json:"gatePlanReview"`
+	GateProjectReview       bool `json:"gateProjectReview"`
 }
 
 // DefaultConfig is the default swarm configuration.
 var DefaultConfig = SwarmConfig{
-	MaxSessions:      defaultMaxSessions,
-	HeartbeatSeconds: defaultHeartbeatSeconds,
-	StallMinutes:     defaultStallMinutes,
-	MaxPlanRevisions: defaultMaxPlanRevisions,
-	MaxVerifyRetries: defaultMaxVerifyRetries,
-	RetryBackoffSecs: defaultRetryBackoffSecs,
+	MaxSessions:             defaultMaxSessions,
+	HeartbeatSeconds:        defaultHeartbeatSeconds,
+	StallMinutes:            defaultStallMinutes,
+	MaxPlanRevisions:        defaultMaxPlanRevisions,
+	MaxVerifyRetries:        defaultMaxVerifyRetries,
+	MaxProjectVerifyRetries: defaultMaxProjectVerifyRetries,
+	RetryBackoffSecs:        defaultRetryBackoffSecs,
 }
 
 // Transition holds the result of a state machine transition.
@@ -171,6 +174,10 @@ func transitionByPhase(
 		}
 
 		if lastResult == ResultLogicFailure {
+			if config.MaxProjectVerifyRetries > 0 &&
+				attempt >= config.MaxProjectVerifyRetries {
+				return Transition{NextPhase: PhaseFailed, Failed: true}
+			}
 			return Transition{NextPhase: PhaseProjectVerify, Retry: true}
 		}
 
@@ -235,13 +242,18 @@ func IsGatedTransition(phase Phase, result SessionResult, config SwarmConfig) bo
 }
 
 // GateRejectionTarget returns the phase to send the workflow back to when a gate is rejected.
-func GateRejectionTarget(gatePhase Phase) (Phase, bool) {
+// The target parameter allows reviewers to choose between re-implementation (default) and
+// re-planning (architectural changes) when rejecting at human_review.
+func GateRejectionTarget(gatePhase Phase, target RevisionTarget) (Phase, bool) {
 	switch gatePhase { //nolint:exhaustive // only gate phases have rejection targets
 	case PhasePlanReview:
 		return PhaseCodePlan, true
 	case PhaseProjectReview:
 		return PhaseProjectPlan, true
 	case PhasePR, PhaseHumanReview:
+		if target == RevisionTargetCodePlan {
+			return PhaseCodePlan, true
+		}
 		return PhaseImplement, true
 	default:
 		return "", false

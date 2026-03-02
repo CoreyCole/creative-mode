@@ -178,6 +178,24 @@ func (a GateAction) Valid() bool {
 	}
 }
 
+// RevisionTarget specifies where a gate rejection should route the workflow.
+type RevisionTarget string
+
+const (
+	RevisionTargetImplement RevisionTarget = "implement"
+	RevisionTargetCodePlan  RevisionTarget = "code_plan"
+)
+
+// Valid returns true if the RevisionTarget is a known value.
+func (r RevisionTarget) Valid() bool {
+	switch r {
+	case RevisionTargetImplement, RevisionTargetCodePlan, "":
+		return true
+	default:
+		return false
+	}
+}
+
 // MilestoneStatus is a typed enum for project milestone status.
 type MilestoneStatus string
 

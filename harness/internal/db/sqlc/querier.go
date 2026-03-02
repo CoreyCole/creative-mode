@@ -96,7 +96,7 @@ type Querier interface {
 	ListSwarmDependenciesByTicket(ctx context.Context, ticketID string) ([]SwarmTicketDependency, error)
 	ListSwarmEventsByType(ctx context.Context, arg ListSwarmEventsByTypeParams) ([]SwarmEvent, error)
 	ListSwarmEventsByWorkflow(ctx context.Context, workflowID sql.NullString) ([]SwarmEvent, error)
-	ListSwarmGateReviewsByWorkflow(ctx context.Context, workflowID string) ([]SwarmGateReview, error)
+	ListSwarmGateReviewsByWorkflow(ctx context.Context, workflowID string) ([]ListSwarmGateReviewsByWorkflowRow, error)
 	ListSwarmLearningDigests(ctx context.Context, limit int64) ([]SwarmLearningDigest, error)
 	ListSwarmLearningsByTicket(ctx context.Context, ticketID string) ([]SwarmLearning, error)
 	ListSwarmMilestonesByWorkflow(ctx context.Context, workflowID string) ([]SwarmProjectMilestone, error)

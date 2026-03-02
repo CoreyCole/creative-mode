@@ -99,8 +99,8 @@ The swarm orchestrator takes Linear tickets through multi-phase AI workflows: re
 **Relationship to other agents**: Mayors handle per-world Discord chat and builds. The president oversees repo-level operations. The swarm handles structured feature work driven by Linear tickets.
 
 **Two packages**:
-- `internal/swarm/` — Pure domain types with no I/O dependencies: enums (`Phase`, `WorkflowStatus`, `SessionResult`, `GateAction`), state machine (`DetermineNextPhase`, `IsGatedTransition`, `GateRejectionTarget`), environment config (`SwarmEnv`), result parsing, handoff building, ticket classification
-- `internal/swarmorch/` — Orchestrator with DB/HTTP/integrations: `Manager` (workflow lifecycle, gate logic, session spawning), health monitoring, metrics (60s cache), Discord alerts, hook handlers, learning capture, JSONL logging, Temporal integration
+- `internal/swarm/` — Pure domain types with no I/O dependencies: enums (`Phase`, `WorkflowStatus`, `SessionResult`, `GateAction`, `RevisionTarget`), state machine (`DetermineNextPhase`, `IsGatedTransition`, `GateRejectionTarget`), environment config (`SwarmEnv`), result parsing, handoff building, ticket classification
+- `internal/swarmorch/` — Orchestrator with DB/HTTP/integrations: `Manager` (workflow lifecycle, gate logic, session spawning), health monitoring, metrics (60s cache), Discord alerts (including high retry rate), hook handlers, learning capture (with retrospective file writing), token capture, JSONL logging, Temporal integration
 
 #### Workflow Types
 
@@ -132,9 +132,9 @@ Every code workflow pauses after PR creation at the `human_review` phase. Additi
 - **Always-on**: `PhasePR` success → `PhaseHumanReview` (built into state machine). The orchestrator intercepts this transition and calls `enterGate()`.
 - **Configurable**: `IsGatedTransition()` checks `GatePlanReview`/`GateProjectReview` config flags before computing the state machine transition. Intercepted at the current phase.
 
-**Rejection**: `GateRejectionTarget()` returns the phase to loop back to (`plan_review` → `code_plan`, `project_review` → `project_plan`, `human_review` → `implement`). Feedback is stored as `CM_SWARM_REVIEW_FEEDBACK` and passed to the next session.
+**Rejection**: `GateRejectionTarget()` accepts a `RevisionTarget` parameter and returns the phase to loop back to. At `human_review`, reviewers can choose between `"implement"` (minor fixes, default) or `"code_plan"` (architectural re-planning). Other gates have fixed targets: `plan_review` → `code_plan`, `project_review` → `project_plan`. Feedback is stored as `CM_SWARM_REVIEW_FEEDBACK` and passed to the next session. The dashboard shows radio buttons for routing when rejecting at `human_review`.
 
-**Audit**: `swarm_gate_reviews` table records all approve/reject actions with reviewer, feedback, and timestamp.
+**Audit**: `swarm_gate_reviews` table records all approve/reject actions with reviewer, feedback, revision target, and timestamp.
 
 #### Swarm API (`internal/server/swarm_api.go`)
 
@@ -201,6 +201,7 @@ The gate review panel shows approve button + reject textarea when workflow statu
 | `stallMinutes` | 45 | Minutes before a running workflow is flagged stalled |
 | `maxPlanRevisions` | 3 | Max plan_review → code_plan retry loops |
 | `maxVerifyRetries` | 3 | Max verify → implement retry loops |
+| `maxProjectVerifyRetries` | 5 | Max project_verify retry loops (0 = unlimited) |
 | `retryBackoffSecs` | 30 | Wait between retries |
 | `gatePlanReview` | false | Enable human gate at plan_review phase |
 | `gateProjectReview` | false | Enable human gate at project_review phase |
@@ -209,7 +210,7 @@ The gate review panel shows approve button + reject textarea when workflow statu
 
 - **Linear** (`internal/linear/`): Ticket status updates on phase transitions (`StatusInProgress`, `StatusInReview`, `StatusDone`), comment posting for key events (gate reached, approved, rejected, workflow complete)
 - **Graphite** (`internal/graphite/`): Branch stacking for code workflow PRs via Graphite CLI
-- **Discord**: Alerts via `AlertManager` with 1-hour dedup — fires on gate reached, workflow stall, terminal failure
+- **Discord**: Alerts via `AlertManager` with 1-hour dedup — fires on gate reached, workflow stall, terminal failure, high retry rate (>50% of max retries)
 - **Temporal** (`internal/swarmorch/temporal.go`): Optional workflow engine. System works without it via goroutine-based polling (`watchSession` + `StartMaintenance`). When enabled, Temporal handles heartbeats and session orchestration.
 - **EventBus**: Swarm events published with `swarm.` prefix (e.g., `swarm.workflow_started`, `swarm.gate_reached`). The dashboard SSE handler catches all `swarm.*` events to refresh tabs.
 
@@ -222,6 +223,7 @@ Migrations in `internal/db/migrations/`:
 | `006_swarm_tables.sql` | `swarm_workflows`, `swarm_sessions`, `swarm_events`, `swarm_learnings`, `swarm_learning_digests`, `swarm_config`, `swarm_project_milestones` |
 | `007_swarm_dependencies.sql` | `swarm_dependencies` |
 | `008_human_gates.sql` | `swarm_gate_reviews` + adds `gate_phase`, `review_feedback` columns to `swarm_workflows` + `awaiting_review` status + `human_review` phase + gate event types |
+| `009_gate_revision_target.sql` | Adds `revision_target` column to `swarm_gate_reviews` |
 
 #### Swarm Session Environment (`internal/swarm/env.go`)
 
@@ -244,6 +246,16 @@ Migrations in `internal/db/migrations/`:
 | `CM_SWARM_PREVIOUS_WORKFLOW_ID` | Previous workflow for full restart context |
 | `CM_SWARM_STACK_PARENT` | Parent ticket ID (project child workflows) |
 | `CM_SWARM_STACK_ORDER` | Child ticket order in project |
+
+#### Swarm Learning System
+
+The learning system (`internal/swarmorch/learnings.go`) captures insights from workflow execution and makes them available to future sessions.
+
+**Capture functions**: `capturePlanIssue` (plan review failures), `captureCodeBug` (verification failures), `captureTerminalFailure` (terminal failures + writes retrospective file to `thoughts/swarm/retrospectives/`), `captureSuccessPattern` (clean or retried successes).
+
+**Relevance decay**: Severity-weighted — critical learnings decay at 0.98/run, warning at 0.95, info at 0.90. Learnings below 0.1 relevance older than 60 days are auto-archived. A double-run guard prevents decay from executing within 30 minutes of the last run.
+
+**Token capture**: On session completion, `captureTokens()` runs `harness/scripts/swarm-capture-tokens.sh` to extract token counts from tmux pane output and stores them in `swarm_sessions.total_tokens`. Best-effort — returns 0 on failure.
 
 ### Discord Listener (`internal/discord/listener.go`)
 

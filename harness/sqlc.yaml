@@ -81,6 +81,7 @@ sql:
           depends_on_ticket_id: "DependsOnTicketID"
           gate_phase: "GatePhase"
           review_feedback: "ReviewFeedback"
+          revision_target: "RevisionTarget"
         overrides:
           - db_type: "TIMESTAMP"
             go_type:

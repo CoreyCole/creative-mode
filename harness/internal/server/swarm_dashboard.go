@@ -12,6 +12,7 @@ import (
 	"github.com/starfederation/datastar-go/datastar"
 
 	"creative-mode/harness/internal/db/sqlc"
+	"creative-mode/harness/internal/swarm"
 	"creative-mode/harness/internal/swarmorch"
 	swarmview "creative-mode/harness/views/swarm"
 )
@@ -248,7 +249,8 @@ func (s *Server) handleSwarmDashboardReject(c echo.Context) error {
 	reviewer := reviewerFromContext(c)
 
 	var signals struct {
-		Feedback string `json:"reject_feedback"` //nolint:tagliatelle // Datastar signal name
+		Feedback       string `json:"reject_feedback"`        //nolint:tagliatelle // Datastar signal name
+		RevisionTarget string `json:"reject_revision_target"` //nolint:tagliatelle // Datastar signal name
 	}
 	_ = c.Bind(&signals)
 
@@ -260,11 +262,17 @@ func (s *Server) handleSwarmDashboardReject(c echo.Context) error {
 		)
 	}
 
+	target := swarm.RevisionTarget(signals.RevisionTarget)
+	if !target.Valid() {
+		target = swarm.RevisionTargetImplement
+	}
+
 	if err := s.SwarmManager.RejectGate(
 		c.Request().Context(),
 		workflowID,
 		reviewer,
 		feedback,
+		target,
 	); err != nil {
 		s.Logger.Error("failed to reject gate", "workflow_id", workflowID, "error", err)
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())

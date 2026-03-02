@@ -38,7 +38,7 @@ const (
 
 // TemporalEnabled returns true if CM_SWARM_TEMPORAL=true.
 func TemporalEnabled() bool {
-	return os.Getenv("CM_SWARM_TEMPORAL") == "true"
+	return os.Getenv("CM_SWARM_TEMPORAL") == envTrue
 }
 
 // TemporalRuntime holds the Temporal client, workers, and schedule handle.

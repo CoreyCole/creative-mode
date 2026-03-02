@@ -40,6 +40,8 @@ const (
 
 	// Linear API call timeout.
 	linearTimeout = 30 * time.Second
+
+	envTrue = "true"
 )
 
 // Manager orchestrates swarm workflows: starting workflows, spawning Claude
@@ -317,17 +319,20 @@ func (m *Manager) spawnSession(ctx context.Context, wf sqlc.SwarmWorkflow) error
 	env, cleanupFn := m.buildEnv(ctx, wf, sessionID)
 
 	// Generate Claude Code hooks config pointing back to harness.
+	// Use localhost for hooks since Claude Code blocks private/link-local
+	// addresses in HTTP hooks (only loopback is allowed).
 	hookSecret := os.Getenv(swarm.EnvKey("HookSecret"))
 	hooksConfigDir, hooksErr := WriteHooksConfig(
 		sessionID,
 		wf.TicketID,
-		m.harnessURL,
+		"http://localhost:8080",
 		hookSecret,
 	)
+	var hooksSettingsPath string
 	if hooksErr != nil {
 		m.logger.Warn("failed to create hooks config", "error", hooksErr)
 	} else {
-		env["CLAUDE_CONFIG_DIR"] = hooksConfigDir
+		hooksSettingsPath = filepath.Join(hooksConfigDir, "settings.json")
 	}
 
 	// Register in start and completion registries before spawning.
@@ -361,7 +366,13 @@ func (m *Manager) spawnSession(ctx context.Context, wf sqlc.SwarmWorkflow) error
 		return fmt.Errorf("create tmux session: %w", err)
 	}
 
-	if err := m.sendSkillPrompt(ctx, sessionName, skill, sessionID); err != nil {
+	if err := m.sendSkillPrompt(
+		ctx,
+		sessionName,
+		skill,
+		sessionID,
+		hooksSettingsPath,
+	); err != nil {
 		cleanupFn()
 
 		return fmt.Errorf("send skill prompt: %w", err)
@@ -964,8 +975,8 @@ func (m *Manager) buildEnv(
 		se.HookSecret = hookSecret
 	}
 
-	if os.Getenv(swarm.EnvKey("DryRun")) == "true" { //nolint:goconst // env var check
-		se.DryRun = "true"
+	if os.Getenv(swarm.EnvKey("DryRun")) == envTrue {
+		se.DryRun = envTrue
 	}
 
 	// Resolve handoff path from previous phase.
@@ -1098,22 +1109,21 @@ func (m *Manager) createTmuxSession(
 	return nil
 }
 
-// sendSkillPrompt writes the skill invocation to a temp file and launches
-// Claude Code in the tmux session with --input-file.
+// sendSkillPrompt launches Claude Code in the tmux session with the skill
+// as the initial prompt.
 func (m *Manager) sendSkillPrompt(
 	ctx context.Context,
-	sessionName, skill, sessionID string,
+	sessionName, skill, _, hooksSettingsPath string,
 ) error {
-	promptContent := "/" + skill
-
-	promptPath := filepath.Join(os.TempDir(), promptFilePrefix+sessionID+".txt")
-	if err := os.WriteFile(promptPath, []byte(promptContent), 0o600); err != nil {
-		return fmt.Errorf("write prompt file: %w", err)
+	settingsFlag := ""
+	if hooksSettingsPath != "" {
+		settingsFlag = " --settings " + hooksSettingsPath
 	}
 
 	claudeCmd := fmt.Sprintf(
-		"claude --dangerously-skip-permissions --input-file %s ; exit",
-		promptPath,
+		"claude --dangerously-skip-permissions%s '/%s' ; exit",
+		settingsFlag,
+		skill,
 	)
 
 	cmd := exec.CommandContext(

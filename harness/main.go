@@ -250,11 +250,14 @@ func main() {
 	}
 
 	// Wire swarm alert manager (Discord alerts for failures/stalls/crashes).
-	presidentChannelID := os.Getenv("DISCORD_PRESIDENT_CHANNEL_ID")
+	swarmChannelID := os.Getenv("DISCORD_SWARM_CHANNEL_ID")
+	if swarmChannelID == "" {
+		swarmChannelID = os.Getenv("DISCORD_PRESIDENT_CHANNEL_ID")
+	}
 	if botToken := os.Getenv(
 		"DISCORD_BOT_TOKEN",
 	); botToken != "" &&
-		presidentChannelID != "" {
+		swarmChannelID != "" {
 		alertClient, alertErr := worldchannel.NewClient(worldchannel.Config{
 			BotToken:         botToken,
 			GuildID:          os.Getenv("DISCORD_GUILD_ID"),
@@ -264,9 +267,9 @@ func main() {
 			logger.Error("failed to create swarm alert discord client", "error", alertErr)
 		} else {
 			swarmManager.SetAlertManager(
-				swarmorch.NewAlertManager(alertClient, presidentChannelID, logger),
+				swarmorch.NewAlertManager(alertClient, swarmChannelID, logger),
 			)
-			logger.Info("Swarm alert manager enabled", "channel_id", presidentChannelID)
+			logger.Info("Swarm alert manager enabled", "channel_id", swarmChannelID)
 		}
 	} else {
 		// Wire alert manager without Discord — alerts are logged only.
@@ -492,8 +495,8 @@ func initPresidentManager(
 	database *db.DB,
 	logger *slog.Logger,
 ) *president.Manager {
-	presidentChannelID := os.Getenv("DISCORD_PRESIDENT_CHANNEL_ID")
-	if presidentChannelID == "" {
+	swarmChannelID := os.Getenv("DISCORD_PRESIDENT_CHANNEL_ID")
+	if swarmChannelID == "" {
 		return nil
 	}
 
@@ -510,14 +513,14 @@ func initPresidentManager(
 	openclawHome, openclawBin := resolveOpenclawPaths(dataDir)
 	mgr := president.NewManager(
 		openclawHome, openclawBin, baseURL,
-		presidentSecret, hookSecret, presidentChannelID,
+		presidentSecret, hookSecret, swarmChannelID,
 		database, logger,
 	)
 
 	if err := mgr.Provision(); err != nil {
 		logger.Error("failed to provision president agent", "error", err)
 	} else {
-		logger.Info("President agent ready", "channel_id", presidentChannelID)
+		logger.Info("President agent ready", "channel_id", swarmChannelID)
 	}
 
 	// Ensure skills are up-to-date (writes new skills even for existing workspaces).

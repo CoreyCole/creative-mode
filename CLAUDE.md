@@ -41,7 +41,7 @@ The swarm is a multi-phase AI orchestration system that takes Linear tickets thr
 
 **Architecture**: `internal/swarm/` (pure domain: enums, state machine, env config) + `internal/swarmorch/` (orchestrator: Manager, health, metrics, hooks, integrations).
 
-**Workflow types**: `research` (research only), `code` (full implementation), `project` (decomposes into child code workflows).
+**Workflow types**: `research` (research only), `code` (full implementation), `project` (decomposes into child research + code workflows).
 
 **Code workflow phases**: `research` → `code_plan` → `plan_review` → `implement` → `verify` → `pr` → `human_review` → `done`
 
@@ -67,7 +67,7 @@ Swarm Orchestrator (ticket-driven)
 ├── Phases: research → plan → review → implement → verify → PR → human_review
 ├── Human gates: workflows pause for approval at configurable checkpoints
 ├── Skills: swarm-research, swarm-code-plan, swarm-plan-review, swarm-code,
-│           swarm-code-verify, swarm-code-pr, swarm-project-plan/review/verify
+│           swarm-code-verify, swarm-code-pr, swarm-project-decompose/plan/review/verify
 ├── Dashboard: /swarm (all workflows), /swarm/:id (detail + gate actions)
 ├── Integrations: Linear, Graphite, Discord alerts, Temporal (optional)
 └── Sessions: Claude Code in tmux, hooks POST to /api/swarm/hook/*

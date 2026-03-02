@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -256,7 +257,8 @@ func (m *Manager) CheckProjectProgress(ctx context.Context) {
 			continue
 		}
 
-		if wf.Phase != swarm.PhaseProjectVerify {
+		if wf.Phase != swarm.PhaseProjectVerify &&
+			wf.Phase != swarm.PhaseProjectDecompose {
 			continue
 		}
 
@@ -265,8 +267,101 @@ func (m *Manager) CheckProjectProgress(ctx context.Context) {
 }
 
 // advanceProject checks a single project's child status and either starts
-// new waves or triggers project_verify when all children are complete.
+// new waves or triggers the next phase when all children are complete.
 func (m *Manager) advanceProject(ctx context.Context, wf sqlc.SwarmWorkflow) {
+	if wf.Phase == swarm.PhaseProjectDecompose {
+		m.advanceProjectDecompose(ctx, wf)
+
+		return
+	}
+
+	m.advanceProjectVerify(ctx, wf)
+}
+
+// advanceProjectDecompose checks research children spawned during the decompose
+// phase. When all complete, aggregates their findings and advances to project_plan.
+func (m *Manager) advanceProjectDecompose(ctx context.Context, wf sqlc.SwarmWorkflow) {
+	projectID := wf.ID
+	graph := m.buildProjectGraph(ctx, projectID)
+
+	if len(graph.Tickets) == 0 {
+		return
+	}
+
+	completed := m.completedChildTickets(ctx, graph)
+	if !graph.AllComplete(completed) {
+		// Not all research children done — start newly-unblocked ones.
+		ready := graph.ReadyTickets(completed)
+
+		for _, rt := range ready {
+			existing, existErr := m.db.GetSwarmWorkflowsByTicket(ctx, rt.TicketID)
+			if existErr == nil && len(existing) > 0 {
+				continue
+			}
+
+			if _, startErr := m.StartWorkflow(
+				ctx, rt.TicketID, rt.WorkflowType, "", "",
+			); startErr != nil {
+				m.logger.Warn("start unblocked research child",
+					"ticket", rt.TicketID, "error", startErr)
+			}
+		}
+
+		return
+	}
+
+	// All research children complete — aggregate findings.
+	aggregatedPath, aggErr := m.aggregateResearchFindings(ctx, wf, graph)
+	if aggErr != nil {
+		m.logger.Error("aggregate research findings",
+			"workflow_id", wf.ID, "error", aggErr)
+	}
+
+	// Advance to project_plan.
+	if phaseErr := m.db.UpdateSwarmWorkflowPhase(ctx, sqlc.UpdateSwarmWorkflowPhaseParams{
+		ID:      wf.ID,
+		Phase:   swarm.PhaseProjectPlan,
+		Attempt: 1,
+	}); phaseErr != nil {
+		m.logger.Error("advance decompose to project_plan",
+			"workflow_id", wf.ID, "error", phaseErr)
+
+		return
+	}
+
+	m.emitEvent(ctx, wf.ID, "", wf.TicketID, swarm.EventPhaseComplete, wf.Phase, "")
+	m.emitEvent(
+		ctx,
+		wf.ID,
+		"",
+		wf.TicketID,
+		swarm.EventPhaseStarted,
+		swarm.PhaseProjectPlan,
+		"",
+	)
+
+	m.linearComment(
+		wf.TicketID,
+		"➡️ All research children complete — advancing to `project_plan`\nAggregated research: "+aggregatedPath,
+	)
+
+	// Refresh and spawn project_plan session.
+	updatedWf, getErr := m.db.GetSwarmWorkflow(ctx, wf.ID)
+	if getErr != nil {
+		m.logger.Error("get updated workflow for project_plan", "error", getErr)
+
+		return
+	}
+
+	if spawnErr := m.spawnSession(ctx, updatedWf); spawnErr != nil {
+		m.logger.Error("spawn project_plan session",
+			"workflow_id", wf.ID, "error", spawnErr)
+	}
+}
+
+// advanceProjectVerify checks code children spawned during the verify phase
+// and triggers project_verify when all children are complete.
+func (m *Manager) advanceProjectVerify(ctx context.Context, wf sqlc.SwarmWorkflow) {
 	projectID := wf.ID
 	graph := m.buildProjectGraph(ctx, projectID)
 
@@ -383,6 +478,227 @@ func (m *Manager) completedChildTickets(
 	}
 
 	return completed
+}
+
+// DecomposeResearchTopic represents a parsed research topic from a decompose output document.
+type DecomposeResearchTopic struct {
+	Num         int
+	Title       string
+	Description string
+}
+
+// ParseDecomposeOutput extracts research topics from a decompose session output document.
+// Expected format:
+//
+//	## Research Topics
+//
+//	| # | Topic | Description |
+//	|---|-------|-------------|
+//	| 1 | Topic title | Research question |
+func ParseDecomposeOutput(content string) []DecomposeResearchTopic {
+	tableRe := regexp.MustCompile(
+		`(?m)^\|\s*(\d+)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|`,
+	)
+
+	matches := tableRe.FindAllStringSubmatch(content, -1)
+	topics := make([]DecomposeResearchTopic, 0, len(matches))
+
+	for _, match := range matches {
+		num := 0
+		_, _ = fmt.Sscanf(match[1], "%d", &num)
+
+		if num == 0 {
+			continue // skip header row
+		}
+
+		topics = append(topics, DecomposeResearchTopic{
+			Num:         num,
+			Title:       strings.TrimSpace(match[2]),
+			Description: strings.TrimSpace(match[3]),
+		})
+	}
+
+	return topics
+}
+
+// SpawnProjectResearchChildren is called when a project workflow transitions
+// from project_decompose to project_plan. It:
+// 1. Parses the decompose output document
+// 2. Creates child research tickets (in DB and optionally in Linear)
+// 3. Spawns child research workflows
+func (m *Manager) SpawnProjectResearchChildren(
+	ctx context.Context,
+	wf sqlc.SwarmWorkflow,
+) error {
+	decomposePath, err := swarm.ResolveDecomposePath(m.baseDir, wf.TicketID)
+	if err != nil {
+		return fmt.Errorf("resolve decompose path: %w", err)
+	}
+
+	if decomposePath == "" {
+		return fmt.Errorf("no decompose document found for ticket %s", wf.TicketID)
+	}
+
+	//nolint:gosec // path from trusted resolver
+	decomposeBytes, readErr := os.ReadFile(decomposePath)
+	if readErr != nil {
+		return fmt.Errorf("read decompose: %w", readErr)
+	}
+
+	topics := ParseDecomposeOutput(string(decomposeBytes))
+	if len(topics) == 0 {
+		m.logger.Info("decompose produced no research topics — advancing directly",
+			"workflow_id", wf.ID)
+
+		return nil
+	}
+
+	projectID := wf.ID
+
+	for _, topic := range topics {
+		childID := uuid.New().String()
+		identifier := fmt.Sprintf("%s-r%d", wf.TicketID, topic.Num)
+
+		if upsertErr := m.db.UpsertSwarmTicket(ctx, sqlc.UpsertSwarmTicketParams{
+			ID:         childID,
+			Identifier: identifier,
+			Title:      topic.Title,
+			Status:     linear.StatusTodo,
+			ParentID:   sql.NullString{String: wf.TicketID, Valid: true},
+			ProjectID:  sql.NullString{String: projectID, Valid: true},
+			Url:        "",
+			CreatedAt:  nowUTC(),
+			UpdatedAt:  nowUTC(),
+		}); upsertErr != nil {
+			return fmt.Errorf("upsert research child ticket %d: %w", topic.Num, upsertErr)
+		}
+
+		// Create in Linear if available.
+		if m.linearClient != nil {
+			linearID, linearErr := m.linearClient.CreateTicket(
+				ctx, topic.Title, topic.Description, nil, "",
+			)
+			if linearErr != nil {
+				m.logger.Warn("linear create research child ticket",
+					"num", topic.Num, "error", linearErr)
+			} else {
+				identifier = linearID
+				_ = m.db.UpsertSwarmTicket(ctx, sqlc.UpsertSwarmTicketParams{
+					ID:         childID,
+					Identifier: identifier,
+					Title:      topic.Title,
+					Status:     linear.StatusTodo,
+					ParentID:   sql.NullString{String: wf.TicketID, Valid: true},
+					ProjectID:  sql.NullString{String: projectID, Valid: true},
+					Url:        "",
+					CreatedAt:  nowUTC(),
+					UpdatedAt:  nowUTC(),
+				})
+			}
+		}
+
+		// Spawn research workflow for each topic.
+		if _, startErr := m.StartWorkflow(
+			ctx, identifier, swarm.WorkflowTypeResearch, "", "",
+		); startErr != nil {
+			m.logger.Warn("start research child workflow",
+				"ticket", identifier, "error", startErr)
+		}
+	}
+
+	m.logger.Info("project research children spawned",
+		"workflow_id", wf.ID,
+		"topics", len(topics),
+	)
+
+	m.linearComment(
+		wf.TicketID,
+		fmt.Sprintf(
+			"🔬 Research decomposition: %d child research workflows spawned",
+			len(topics),
+		),
+	)
+
+	return nil
+}
+
+// hasResearchChildren returns true if the project workflow has any child tickets.
+func (m *Manager) hasResearchChildren(ctx context.Context, workflowID string) bool {
+	graph := m.buildProjectGraph(ctx, workflowID)
+
+	return len(graph.Tickets) > 0
+}
+
+// aggregateResearchFindings builds an aggregated research document from all
+// completed child research workflows and writes it to thoughts/swarm/research-aggregated/.
+func (m *Manager) aggregateResearchFindings(
+	_ context.Context,
+	wf sqlc.SwarmWorkflow,
+	graph *swarm.DependencyGraph,
+) (string, error) {
+	var sb strings.Builder
+
+	sb.WriteString(fmt.Sprintf("# Aggregated Research: %s\n\n", wf.TicketID))
+	sb.WriteString(
+		fmt.Sprintf(
+			"Aggregated from %d child research workflows.\n\n",
+			len(graph.Tickets),
+		),
+	)
+
+	for _, t := range graph.Tickets {
+		researchPath, err := swarm.ResolveResearchPath(m.baseDir, t.TicketID)
+		if err != nil || researchPath == "" {
+			sb.WriteString(
+				fmt.Sprintf("## %s\n\n_No research document found._\n\n", t.Title),
+			)
+
+			continue
+		}
+
+		//nolint:gosec // path from trusted resolver
+		content, readErr := os.ReadFile(researchPath)
+		if readErr != nil {
+			sb.WriteString(
+				fmt.Sprintf(
+					"## %s\n\n_Error reading research: %v_\n\n",
+					t.Title,
+					readErr,
+				),
+			)
+
+			continue
+		}
+
+		sb.WriteString(fmt.Sprintf("## %s (%s)\n\n", t.Title, t.TicketID))
+		sb.WriteString(string(content))
+		sb.WriteString("\n\n---\n\n")
+	}
+
+	// Write to thoughts/swarm/research-aggregated/.
+	aggregatedDir := filepath.Join(m.baseDir, "thoughts", "swarm", "research-aggregated")
+	if mkdirErr := os.MkdirAll(aggregatedDir, 0o750); mkdirErr != nil {
+		return "", fmt.Errorf("create research-aggregated dir: %w", mkdirErr)
+	}
+
+	filename := swarm.FormatHandoffFilename(wf.TicketID, "aggregated")
+	aggregatedPath := filepath.Join(aggregatedDir, filename)
+
+	if writeErr := os.WriteFile(
+		aggregatedPath,
+		[]byte(sb.String()),
+		0o600,
+	); writeErr != nil {
+		return "", fmt.Errorf("write aggregated research: %w", writeErr)
+	}
+
+	m.logger.Info("aggregated research written",
+		"workflow_id", wf.ID,
+		"path", aggregatedPath,
+		"children", len(graph.Tickets),
+	)
+
+	return aggregatedPath, nil
 }
 
 // ParseProjectPlan extracts tickets and milestones from a project plan markdown document.

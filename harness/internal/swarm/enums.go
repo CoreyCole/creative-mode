@@ -4,18 +4,19 @@ package swarm
 type Phase string
 
 const (
-	PhaseResearch      Phase = "research"
-	PhaseCodePlan      Phase = "code_plan"
-	PhasePlanReview    Phase = "plan_review"
-	PhaseImplement     Phase = "implement"
-	PhaseVerify        Phase = "verify"
-	PhasePR            Phase = "pr"
-	PhaseProjectPlan   Phase = "project_plan"
-	PhaseProjectReview Phase = "project_review"
-	PhaseProjectVerify Phase = "project_verify"
-	PhaseHumanReview   Phase = "human_review"
-	PhaseDone          Phase = "done"
-	PhaseFailed        Phase = "failed"
+	PhaseResearch         Phase = "research"
+	PhaseCodePlan         Phase = "code_plan"
+	PhasePlanReview       Phase = "plan_review"
+	PhaseImplement        Phase = "implement"
+	PhaseVerify           Phase = "verify"
+	PhasePR               Phase = "pr"
+	PhaseProjectPlan      Phase = "project_plan"
+	PhaseProjectDecompose Phase = "project_decompose"
+	PhaseProjectReview    Phase = "project_review"
+	PhaseProjectVerify    Phase = "project_verify"
+	PhaseHumanReview      Phase = "human_review"
+	PhaseDone             Phase = "done"
+	PhaseFailed           Phase = "failed"
 )
 
 func (p Phase) Valid() bool {
@@ -27,6 +28,7 @@ func (p Phase) Valid() bool {
 		PhaseVerify,
 		PhasePR,
 		PhaseProjectPlan,
+		PhaseProjectDecompose,
 		PhaseProjectReview,
 		PhaseProjectVerify,
 		PhaseHumanReview,

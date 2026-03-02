@@ -104,6 +104,33 @@ func ResolvePlanPath(baseDir, ticketID string) (string, error) {
 	return "", nil
 }
 
+// ResolveDecomposePath finds the most recent decompose output document for a ticket.
+// Returns "" with nil error if no matches are found.
+func ResolveDecomposePath(baseDir, ticketID string) (string, error) {
+	pattern := filepath.Join(
+		baseDir,
+		"thoughts",
+		"swarm",
+		"decompose",
+		fmt.Sprintf("*_%s_*.md", ticketID),
+	)
+
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return "", fmt.Errorf("glob decompose: %w", err)
+	}
+
+	if len(matches) == 0 {
+		return "", nil
+	}
+
+	sort.Slice(matches, func(i, j int) bool {
+		return filepath.Base(matches[i]) > filepath.Base(matches[j])
+	})
+
+	return matches[0], nil
+}
+
 // HandoffDir returns the handoff subdirectory name for a given phase.
 func HandoffDir(phase Phase) string {
 	switch phase {
@@ -115,7 +142,7 @@ func HandoffDir(phase Phase) string {
 		return "handoffs-plan-reviews"
 	case PhaseVerify:
 		return "handoffs-code-reviews"
-	case PhaseProjectPlan, PhaseProjectVerify:
+	case PhaseProjectDecompose, PhaseProjectPlan, PhaseProjectVerify:
 		return "handoffs-project"
 	case PhaseProjectReview:
 		return "handoffs-project-reviews"

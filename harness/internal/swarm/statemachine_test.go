@@ -179,11 +179,26 @@ func TestDetermineNextPhase(t *testing.T) {
 
 		// Project workflow transitions.
 		{
-			name:         "research success (project) → project_plan",
+			name:         "research success (project) → project_decompose",
 			workflowType: WorkflowTypeProject,
 			phase:        PhaseResearch,
 			result:       ResultSuccess,
+			wantPhase:    PhaseProjectDecompose,
+		},
+		{
+			name:         "project_decompose success → project_plan",
+			workflowType: WorkflowTypeProject,
+			phase:        PhaseProjectDecompose,
+			result:       ResultSuccess,
 			wantPhase:    PhaseProjectPlan,
+		},
+		{
+			name:         "project_decompose logic_failure → failed",
+			workflowType: WorkflowTypeProject,
+			phase:        PhaseProjectDecompose,
+			result:       ResultLogicFailure,
+			wantPhase:    PhaseFailed,
+			wantFailed:   true,
 		},
 		{
 			name:         "project_plan success → project_review",
@@ -263,7 +278,8 @@ func TestSkillForPhase(t *testing.T) {
 
 	actionPhases := []Phase{
 		PhaseResearch, PhaseCodePlan, PhasePlanReview, PhaseImplement,
-		PhaseVerify, PhasePR, PhaseProjectPlan, PhaseProjectReview, PhaseProjectVerify,
+		PhaseVerify, PhasePR, PhaseProjectDecompose, PhaseProjectPlan,
+		PhaseProjectReview, PhaseProjectVerify,
 	}
 	for _, p := range actionPhases {
 		if skill := SkillForPhase(p); skill == "" {

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -844,6 +845,23 @@ func (m *Manager) advanceWorkflow(
 		)
 	}
 
+	// Project decompose → project_plan: spawn research children, don't spawn
+	// a plan session yet. The heartbeat will check child progress and advance
+	// when all children complete.
+	if wf.Phase == swarm.PhaseProjectDecompose &&
+		transition.NextPhase == swarm.PhaseProjectPlan {
+		if spawnErr := m.SpawnProjectResearchChildren(ctx, wf); spawnErr != nil {
+			m.logger.Error("spawn project research children",
+				"workflow_id", wf.ID, "error", spawnErr)
+		}
+
+		// If children were spawned, return (heartbeat monitors progress).
+		// If no children, fall through to normal advance.
+		if m.hasResearchChildren(ctx, wf.ID) {
+			return
+		}
+	}
+
 	// Project review → project_verify: spawn child tickets, don't spawn a
 	// verify session yet. The heartbeat will check child progress and spawn
 	// the verify session when all children complete.
@@ -983,6 +1001,27 @@ func (m *Manager) buildEnv(
 	handoffPath, handoffErr := swarm.ResolveHandoffPath(m.baseDir, wf.TicketID)
 	if handoffErr == nil {
 		se.HandoffPath = handoffPath
+	}
+
+	// Resolve aggregated research path for project_plan phase (from decompose children).
+	if wf.Phase == swarm.PhaseProjectPlan &&
+		wf.WorkflowType == swarm.WorkflowTypeProject {
+		aggPattern := filepath.Join(
+			m.baseDir, "thoughts", "swarm", "research-aggregated",
+			fmt.Sprintf("*_%s_*.md", wf.TicketID),
+		)
+
+		if aggMatches, globErr := filepath.Glob(
+			aggPattern,
+		); globErr == nil &&
+			len(aggMatches) > 0 {
+			// Most recent file (sorted by timestamp prefix).
+			sort.Slice(aggMatches, func(i, j int) bool {
+				return filepath.Base(aggMatches[i]) > filepath.Base(aggMatches[j])
+			})
+
+			se.AggregatedResearchPath = aggMatches[0]
+		}
 	}
 
 	// Build learning context and write to temp file.

@@ -29,6 +29,9 @@ type SwarmEnv struct {
 	HandoffPath         string `envconfig:"CM_SWARM_HANDOFF_PATH"`
 	LearningContextPath string `envconfig:"CM_SWARM_LEARNING_CONTEXT_PATH"`
 
+	// Aggregated research from project decompose phase.
+	AggregatedResearchPath string `envconfig:"CM_SWARM_AGGREGATED_RESEARCH_PATH"`
+
 	// Previous attempt context (full restart path).
 	PreviousWorkflowID   string `envconfig:"CM_SWARM_PREVIOUS_WORKFLOW_ID"`
 	PreviousBranch       string `envconfig:"CM_SWARM_PREVIOUS_BRANCH"`

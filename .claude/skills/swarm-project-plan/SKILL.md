@@ -24,14 +24,16 @@ Creates or revises a project plan that decomposes a project ticket into child ti
 | `CM_SWARM_PHASE` | Should be `project_plan` |
 | `CM_SWARM_ATTEMPT` | Attempt number (1 = first plan, 2+ = revision) |
 | `CM_SWARM_HANDOFF_PATH` | Previous handoff (research or project-review) |
+| `CM_SWARM_AGGREGATED_RESEARCH_PATH` | Aggregated research from decompose children (if available) |
 | `CM_SWARM_LEARNING_CONTEXT_PATH` | Learning context file |
 | `CM_SWARM_RESULT_PATH` | Path to write RESULT output as final action |
 | `CM_SWARM_DRY_RUN` | If `true`, no writes |
 
 ## Process
 
-1. **Read research** — Find and read the research document for this ticket:
-   - Glob: `thoughts/swarm/research/*_{ticketID}_*.md`
+1. **Read research** — Find and read research documents for this ticket:
+   - If `$CM_SWARM_AGGREGATED_RESEARCH_PATH` is set, read it — this contains aggregated findings from all child research workflows spawned during the decompose phase. This is the primary research input.
+   - Also glob: `thoughts/swarm/research/*_{ticketID}_*.md` for the initial research
    - If revision (attempt > 1), also read the previous project plan and the project-review handoff
 
 2. **Read review feedback** (revision only) — The handoff from `project_review` contains:

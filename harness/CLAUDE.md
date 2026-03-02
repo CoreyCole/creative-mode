@@ -108,7 +108,7 @@ The swarm orchestrator takes Linear tickets through multi-phase AI workflows: re
 |------|--------|---------|
 | `research` | `research` → `done` | Research-only — produces findings document |
 | `code` | `research` → `code_plan` → `plan_review` → `implement` → `verify` → `pr` → `human_review` → `done` | Full implementation with PR |
-| `project` | `research` → `project_plan` → `project_review` → `project_verify` → `done` | Decomposes into child `code` workflows |
+| `project` | `research` → `project_decompose` → [child research] → `project_plan` → `project_review` → `project_verify` → `done` | Decomposes into child research + code workflows |
 
 #### State Machine (`internal/swarm/statemachine.go`)
 
@@ -246,6 +246,7 @@ Migrations in `internal/db/migrations/`:
 | `CM_SWARM_PREVIOUS_WORKFLOW_ID` | Previous workflow for full restart context |
 | `CM_SWARM_STACK_PARENT` | Parent ticket ID (project child workflows) |
 | `CM_SWARM_STACK_ORDER` | Child ticket order in project |
+| `CM_SWARM_AGGREGATED_RESEARCH_PATH` | Aggregated research from decompose children |
 
 #### Swarm Learning System
 

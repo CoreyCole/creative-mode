@@ -100,7 +100,7 @@ func transitionByPhase(
 		case WorkflowTypeCode:
 			return Transition{NextPhase: PhaseCodePlan}
 		case WorkflowTypeProject:
-			return Transition{NextPhase: PhaseProjectPlan}
+			return Transition{NextPhase: PhaseProjectDecompose}
 		default:
 			return Transition{NextPhase: PhaseCodePlan}
 		}
@@ -144,6 +144,11 @@ func transitionByPhase(
 	case PhasePR:
 		if lastResult == ResultSuccess {
 			return Transition{NextPhase: PhaseHumanReview}
+		}
+
+	case PhaseProjectDecompose:
+		if lastResult == ResultSuccess {
+			return Transition{NextPhase: PhaseProjectPlan}
 		}
 
 	case PhaseProjectPlan:
@@ -211,6 +216,8 @@ func SkillForPhase(phase Phase) string {
 		return "swarm-code-verify"
 	case PhasePR:
 		return "swarm-code-pr"
+	case PhaseProjectDecompose:
+		return "swarm-project-decompose"
 	case PhaseProjectPlan:
 		return "swarm-project-plan"
 	case PhaseProjectReview:

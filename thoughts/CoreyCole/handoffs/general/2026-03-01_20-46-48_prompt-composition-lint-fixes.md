@@ -1,7 +1,7 @@
 ---
 date: 2026-03-01T20:46:48-08:00
 researcher: CoreyCole
-git_commit: 68aa6bae42c6e529ef3e8d48f0e5d40bc485c812
+git_commit: 7a96614b77723db351ff78a37cfe95f4a70a1600
 branch: feature/agent-swarm
 repository: creative-mode
 topic: "Swarm Prompt Composition, Transcript Parsing, and Prompt Versioning — Lint Fixes"
@@ -17,9 +17,9 @@ type: implementation_strategy
 ## Task(s)
 
 - **Implement the "Swarm Prompt Composition, Transcript Parsing, and Prompt Versioning" plan** — **completed** (all 6 phases were already implemented before this session began).
-- **Fix golangci-lint failures in `just check`** — **completed**. Four lint issues in `harness/internal/swarmorch/manager.go` were blocking the check.
+- **Fix golangci-lint failures in `just check`** — **superseded**. Four lint issues were found and fixed in the older code, but the remote branch diverged significantly (human gates, Linear integration, Graphite stacking, hooks, JSONL logging, metrics, etc.). The fixes were stashed, but could not be cleanly applied after pulling. The newer remote code already handles some of these differently (e.g., uses `swarm.EnvKey()` and `//nolint:goconst` inline comments).
 
-The plan document was provided inline in the user prompt. It described 6 phases: DB migration, transcript parser, prompt templates, orchestrator wiring, dashboard updates, and SKILL.md cleanup. All phases were already committed on the `feature/agent-swarm` branch prior to this session. The remaining work was fixing lint violations so `just check` passes cleanly.
+The plan document was provided inline in the user prompt. It described 6 phases: DB migration, transcript parser, prompt templates, orchestrator wiring, dashboard updates, and SKILL.md cleanup. All phases were already committed on the `feature/agent-swarm` branch prior to this session. The lint fixes were applied but could not be merged cleanly after the remote branch diverged.
 
 ## Critical References
 
@@ -52,11 +52,11 @@ A linter hook also auto-added `//nolint:tagliatelle` comments to `harness/intern
 
 ## Action Items & Next Steps
 
-- **All plan phases are complete and passing.** No remaining implementation work.
-- `just check` passes cleanly (Go + Rust + WASM)
+- **All plan phases are complete.** The prompt composition, transcript parsing, and prompt versioning features are committed.
+- **Lint fixes need to be re-applied to the current code.** The remote branch diverged significantly (commits `9652321` through `da7ea2e` added human gates, Linear integration, hooks, etc.). The lint fixes from this session were based on the older code and don't apply cleanly. Run `just check` on the current code to see if the newer codebase has its own lint issues.
 - All 15 unit tests pass across transcript (8 tests) and prompt (7 tests) packages
-- Consider running a dry-run swarm workflow end-to-end to validate the full pipeline (plan verification step 4)
-- Consider committing the lint fixes (they are currently uncommitted changes on `feature/agent-swarm`)
+- Consider running a dry-run swarm workflow end-to-end to validate the full pipeline
+- The SKILL.md files (`swarm-code-plan`, `swarm-code-pr`, `swarm-code-verify`, `swarm-conventions`, `swarm-research`) still exist in the newer remote code — may need to be re-evaluated for deletion depending on current usage
 
 ## Other Notes
 

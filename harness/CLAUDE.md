@@ -155,6 +155,7 @@ Every code workflow pauses after PR creation at the `human_review` phase. Additi
 | `/api/swarm/gate/:id/approve` | POST | Approve a human review gate |
 | `/api/swarm/gate/:id/reject` | POST | Reject with feedback (required) |
 | `/api/swarm/gate/pending` | GET | List workflows awaiting review |
+| `/api/swarm/create-project` | POST | Create Linear ticket and start self-directed project workflow |
 
 #### Swarm Hooks (`internal/swarmorch/hooks.go`, `internal/server/swarm_hooks.go`)
 

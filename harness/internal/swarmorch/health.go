@@ -36,12 +36,13 @@ type CapacityInfo struct {
 
 // ActiveWorkflowInfo summarizes an in-progress workflow.
 type ActiveWorkflowInfo struct {
-	WorkflowID string `json:"workflow_id"` //nolint:tagliatelle // API field name
-	TicketID   string `json:"ticket_id"`   //nolint:tagliatelle // API field name
-	Phase      string `json:"phase"`
-	Attempt    int64  `json:"attempt"`
-	StartedAt  string `json:"started_at"` //nolint:tagliatelle // API field name
-	Stalled    bool   `json:"stalled"`
+	WorkflowID     string `json:"workflow_id"` //nolint:tagliatelle // API field name
+	TicketID       string `json:"ticket_id"`   //nolint:tagliatelle // API field name
+	Phase          string `json:"phase"`
+	Attempt        int64  `json:"attempt"`
+	StartedAt      string `json:"started_at"` //nolint:tagliatelle // API field name
+	Stalled        bool   `json:"stalled"`
+	AwaitingReview bool   `json:"awaiting_review,omitempty"` //nolint:tagliatelle // API field name
 }
 
 // CompletionInfo summarizes a recently completed workflow.
@@ -109,9 +110,14 @@ func (m *Manager) GetHealth(ctx context.Context) (*SwarmHealth, error) {
 
 // determineHealthStatus computes healthy/degraded/unhealthy.
 func determineHealthStatus(h *SwarmHealth) string {
-	// Check for stalled workflows.
+	// Check for stalled workflows (exclude awaiting_review).
 	stalledCount := 0
+	runningCount := 0
 	for _, wf := range h.ActiveWorkflows {
+		if wf.AwaitingReview {
+			continue
+		}
+		runningCount++
 		if wf.Stalled {
 			stalledCount++
 		}
@@ -121,8 +127,8 @@ func determineHealthStatus(h *SwarmHealth) string {
 	atCapacity := h.Capacity.ActiveSessions >= h.Capacity.MaxSessions
 
 	// No workflows progressing + recent failures = unhealthy.
-	hasActive := len(h.ActiveWorkflows) > 0
-	allStalled := hasActive && stalledCount == len(h.ActiveWorkflows)
+	hasActive := runningCount > 0
+	allStalled := hasActive && stalledCount == runningCount
 
 	if allStalled {
 		return HealthStatusUnhealthy
@@ -136,12 +142,17 @@ func determineHealthStatus(h *SwarmHealth) string {
 }
 
 func queryActiveWorkflows(ctx context.Context, db *sql.DB) ([]ActiveWorkflowInfo, error) {
-	query := `SELECT id, ticket_id, phase, attempt, created_at, updated_at
+	query := `SELECT id, ticket_id, phase, attempt, status, created_at, updated_at
 	FROM swarm_workflows
-	WHERE status = ?
+	WHERE status IN (?, ?)
 	ORDER BY created_at DESC`
 
-	rows, err := db.QueryContext(ctx, query, string(swarm.StatusRunning))
+	rows, err := db.QueryContext(
+		ctx,
+		query,
+		string(swarm.StatusRunning),
+		string(swarm.StatusAwaitingReview),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -152,18 +163,25 @@ func queryActiveWorkflows(ctx context.Context, db *sql.DB) ([]ActiveWorkflowInfo
 
 	for rows.Next() {
 		var wf ActiveWorkflowInfo
-		var updatedAt string
+		var status, updatedAt string
 
 		if err := rows.Scan(
 			&wf.WorkflowID, &wf.TicketID, &wf.Phase, &wf.Attempt,
-			&wf.StartedAt, &updatedAt,
+			&status, &wf.StartedAt, &updatedAt,
 		); err != nil {
 			return nil, err
 		}
 
-		// Detect stalls: no update for stallCheckMinutes.
-		if t, parseErr := time.Parse("2006-01-02 15:04:05", updatedAt); parseErr == nil {
-			wf.Stalled = now.Sub(t) > time.Duration(stallCheckMinutes)*time.Minute
+		if status == string(swarm.StatusAwaitingReview) {
+			wf.AwaitingReview = true
+		} else {
+			// Only detect stalls for running workflows, not awaiting_review.
+			if t, parseErr := time.Parse(
+				"2006-01-02 15:04:05",
+				updatedAt,
+			); parseErr == nil {
+				wf.Stalled = now.Sub(t) > time.Duration(stallCheckMinutes)*time.Minute
+			}
 		}
 
 		results = append(results, wf)

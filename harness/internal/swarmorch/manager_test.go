@@ -28,6 +28,8 @@ CREATE TABLE IF NOT EXISTS swarm_workflows (
     attempt              INTEGER NOT NULL DEFAULT 1,
     previous_workflow_id TEXT,
     branch_name          TEXT,
+    gate_phase           TEXT,
+    review_feedback      TEXT,
     created_at           TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -129,6 +131,15 @@ CREATE TABLE IF NOT EXISTS swarm_ticket_dependencies (
     project_id           TEXT NOT NULL,
     created_at           TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(ticket_id, depends_on_ticket_id)
+);
+CREATE TABLE IF NOT EXISTS swarm_gate_reviews (
+    id           TEXT PRIMARY KEY,
+    workflow_id  TEXT NOT NULL REFERENCES swarm_workflows(id),
+    gate_phase   TEXT NOT NULL,
+    action       TEXT NOT NULL,
+    feedback     TEXT,
+    reviewer     TEXT,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 `
 

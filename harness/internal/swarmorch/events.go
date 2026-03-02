@@ -50,6 +50,24 @@ type WorkflowFailedEvent struct {
 	Reason     string `json:"reason"`
 }
 
+// GateReachedEvent is published when a workflow enters a human review gate.
+type GateReachedEvent struct {
+	Event      string `json:"event"`
+	WorkflowID string `json:"workflow_id"` //nolint:tagliatelle // EventBus compat
+	TicketID   string `json:"ticket_id"`   //nolint:tagliatelle // EventBus compat
+	GatePhase  string `json:"gate_phase"`  //nolint:tagliatelle // EventBus compat
+}
+
+// GateReviewedEvent is published when a human approves or rejects at a gate.
+type GateReviewedEvent struct {
+	Event      string `json:"event"`
+	WorkflowID string `json:"workflow_id"` //nolint:tagliatelle // EventBus compat
+	TicketID   string `json:"ticket_id"`   //nolint:tagliatelle // EventBus compat
+	GatePhase  string `json:"gate_phase"`  //nolint:tagliatelle // EventBus compat
+	Action     string `json:"action"`
+	Reviewer   string `json:"reviewer"`
+}
+
 // SessionJSONLEvent is the typed payload written to JSONL session logs when
 // a session is first spawned.
 type SessionJSONLEvent struct {

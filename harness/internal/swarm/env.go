@@ -35,6 +35,9 @@ type SwarmEnv struct {
 	PreviousHandoffPath  string `envconfig:"CM_SWARM_PREVIOUS_HANDOFF_PATH"`
 	PreviousResearchPath string `envconfig:"CM_SWARM_PREVIOUS_RESEARCH_PATH"`
 
+	// Review feedback from human gate rejection.
+	ReviewFeedback string `envconfig:"CM_SWARM_REVIEW_FEEDBACK"`
+
 	// Project context (set by project orchestrator for child workflows).
 	StackParent string `envconfig:"CM_SWARM_STACK_PARENT"`
 	StackOrder  string `envconfig:"CM_SWARM_STACK_ORDER"`

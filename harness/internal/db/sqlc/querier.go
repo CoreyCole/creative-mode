@@ -12,6 +12,7 @@ import (
 type Querier interface {
 	ArchiveOldLowRelevanceLearnings(ctx context.Context) error
 	ArchiveSwarmLearning(ctx context.Context, id string) error
+	ClearSwarmWorkflowGate(ctx context.Context, id string) error
 	CompleteSwarmSession(ctx context.Context, arg CompleteSwarmSessionParams) error
 	CountActiveBuilds(ctx context.Context, createdBy sql.NullString) (int64, error)
 	CountActiveSwarmSessions(ctx context.Context) (int64, error)
@@ -26,6 +27,7 @@ type Querier interface {
 	CreateSwarmDependency(ctx context.Context, arg CreateSwarmDependencyParams) error
 	// swarm_events
 	CreateSwarmEvent(ctx context.Context, arg CreateSwarmEventParams) error
+	CreateSwarmGateReview(ctx context.Context, arg CreateSwarmGateReviewParams) error
 	// swarm_learnings
 	CreateSwarmLearning(ctx context.Context, arg CreateSwarmLearningParams) error
 	// swarm_learning_digests
@@ -85,6 +87,7 @@ type Querier interface {
 	IncrementSwarmLearningReference(ctx context.Context, id string) error
 	ListActiveSwarmWorkflows(ctx context.Context) ([]SwarmWorkflow, error)
 	ListAllSwarmWorkflows(ctx context.Context, limit int64) ([]ListAllSwarmWorkflowsRow, error)
+	ListAwaitingReviewSwarmWorkflows(ctx context.Context) ([]SwarmWorkflow, error)
 	ListPendingUsers(ctx context.Context) ([]User, error)
 	ListRecentSwarmEvents(ctx context.Context, limit int64) ([]SwarmEvent, error)
 	ListRecentSwarmLearnings(ctx context.Context, createdAt string) ([]SwarmLearning, error)
@@ -93,6 +96,7 @@ type Querier interface {
 	ListSwarmDependenciesByTicket(ctx context.Context, ticketID string) ([]SwarmTicketDependency, error)
 	ListSwarmEventsByType(ctx context.Context, arg ListSwarmEventsByTypeParams) ([]SwarmEvent, error)
 	ListSwarmEventsByWorkflow(ctx context.Context, workflowID sql.NullString) ([]SwarmEvent, error)
+	ListSwarmGateReviewsByWorkflow(ctx context.Context, workflowID string) ([]SwarmGateReview, error)
 	ListSwarmLearningDigests(ctx context.Context, limit int64) ([]SwarmLearningDigest, error)
 	ListSwarmLearningsByTicket(ctx context.Context, ticketID string) ([]SwarmLearning, error)
 	ListSwarmMilestonesByWorkflow(ctx context.Context, workflowID string) ([]SwarmProjectMilestone, error)
@@ -119,7 +123,10 @@ type Querier interface {
 	UpdateSwarmConfig(ctx context.Context, config string) error
 	UpdateSwarmMilestoneStatus(ctx context.Context, arg UpdateSwarmMilestoneStatusParams) error
 	UpdateSwarmWorkflowBranch(ctx context.Context, arg UpdateSwarmWorkflowBranchParams) error
+	// Human gate queries
+	UpdateSwarmWorkflowGate(ctx context.Context, arg UpdateSwarmWorkflowGateParams) error
 	UpdateSwarmWorkflowPhase(ctx context.Context, arg UpdateSwarmWorkflowPhaseParams) error
+	UpdateSwarmWorkflowReviewFeedback(ctx context.Context, arg UpdateSwarmWorkflowReviewFeedbackParams) error
 	UpdateSwarmWorkflowStatus(ctx context.Context, arg UpdateSwarmWorkflowStatusParams) error
 	UpdateUserRole(ctx context.Context, arg UpdateUserRoleParams) (sql.Result, error)
 	UpdateWorldCoverImage(ctx context.Context, arg UpdateWorldCoverImageParams) error

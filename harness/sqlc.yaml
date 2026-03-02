@@ -79,6 +79,8 @@ sql:
           learning_count: "LearningCount"
           action_items: "ActionItems"
           depends_on_ticket_id: "DependsOnTicketID"
+          gate_phase: "GatePhase"
+          review_feedback: "ReviewFeedback"
         overrides:
           - db_type: "TIMESTAMP"
             go_type:
@@ -115,6 +117,10 @@ sql:
             go_type:
               import: "creative-mode/harness/internal/swarm"
               type: "MilestoneStatus"
+          - column: "swarm_gate_reviews.gate_phase"
+            go_type:
+              import: "creative-mode/harness/internal/swarm"
+              type: "Phase"
           - column: "swarm_learnings.category"
             go_type:
               import: "creative-mode/harness/internal/swarm"

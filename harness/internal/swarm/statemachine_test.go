@@ -83,9 +83,16 @@ func TestDetermineNextPhase(t *testing.T) {
 			wantPhase:    PhasePR,
 		},
 		{
-			name:         "pr success → done",
+			name:         "pr success → human_review",
 			workflowType: WorkflowTypeCode,
 			phase:        PhasePR,
+			result:       ResultSuccess,
+			wantPhase:    PhaseHumanReview,
+		},
+		{
+			name:         "human_review success → done",
+			workflowType: WorkflowTypeCode,
+			phase:        PhaseHumanReview,
 			result:       ResultSuccess,
 			wantPhase:    PhaseDone,
 		},
@@ -264,8 +271,8 @@ func TestSkillForPhase(t *testing.T) {
 		}
 	}
 
-	// Terminal phases should return empty.
-	for _, p := range []Phase{PhaseDone, PhaseFailed} {
+	// Terminal/gate phases should return empty.
+	for _, p := range []Phase{PhaseHumanReview, PhaseDone, PhaseFailed} {
 		if skill := SkillForPhase(p); skill != "" {
 			t.Errorf("SkillForPhase(%q) = %q, want empty", p, skill)
 		}
@@ -345,5 +352,107 @@ func TestFirstPhaseIsResearch(t *testing.T) {
 				PhaseResearch,
 			)
 		}
+	}
+}
+
+func TestIsGatedTransition(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		phase  Phase
+		result SessionResult
+		config SwarmConfig
+		want   bool
+	}{
+		{
+			name:   "plan_review gated when enabled",
+			phase:  PhasePlanReview,
+			result: ResultSuccess,
+			config: SwarmConfig{GatePlanReview: true},
+			want:   true,
+		},
+		{
+			name:   "plan_review not gated when disabled",
+			phase:  PhasePlanReview,
+			result: ResultSuccess,
+			config: SwarmConfig{GatePlanReview: false},
+			want:   false,
+		},
+		{
+			name:   "project_review gated when enabled",
+			phase:  PhaseProjectReview,
+			result: ResultSuccess,
+			config: SwarmConfig{GateProjectReview: true},
+			want:   true,
+		},
+		{
+			name:   "project_review not gated when disabled",
+			phase:  PhaseProjectReview,
+			result: ResultSuccess,
+			config: SwarmConfig{GateProjectReview: false},
+			want:   false,
+		},
+		{
+			name:   "non-success result never gated",
+			phase:  PhasePlanReview,
+			result: ResultLogicFailure,
+			config: SwarmConfig{GatePlanReview: true},
+			want:   false,
+		},
+		{
+			name:   "implement not gated",
+			phase:  PhaseImplement,
+			result: ResultSuccess,
+			config: SwarmConfig{GatePlanReview: true, GateProjectReview: true},
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := IsGatedTransition(tt.phase, tt.result, tt.config)
+			if got != tt.want {
+				t.Errorf(
+					"IsGatedTransition(%q, %q) = %v, want %v",
+					tt.phase,
+					tt.result,
+					got,
+					tt.want,
+				)
+			}
+		})
+	}
+}
+
+func TestGateRejectionTarget(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		gatePhase Phase
+		wantPhase Phase
+		wantOK    bool
+	}{
+		{"plan_review → code_plan", PhasePlanReview, PhaseCodePlan, true},
+		{"project_review → project_plan", PhaseProjectReview, PhaseProjectPlan, true},
+		{"pr → implement", PhasePR, PhaseImplement, true},
+		{"human_review → implement", PhaseHumanReview, PhaseImplement, true},
+		{"research → no target", PhaseResearch, "", false},
+		{"done → no target", PhaseDone, "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			gotPhase, gotOK := GateRejectionTarget(tt.gatePhase)
+			if gotPhase != tt.wantPhase || gotOK != tt.wantOK {
+				t.Errorf("GateRejectionTarget(%q) = (%q, %v), want (%q, %v)",
+					tt.gatePhase, gotPhase, gotOK, tt.wantPhase, tt.wantOK)
+			}
+		})
 	}
 }

@@ -21,4 +21,7 @@ const (
 	EventSwarmSessionComplete  = "swarm.session_completed"
 	EventSwarmToolUse          = "swarm.tool_use"
 	EventSwarmContextPressure  = "swarm.context_pressure"
+	EventSwarmGateReached      = "swarm.gate_reached"
+	EventSwarmGateApproved     = "swarm.gate_approved"
+	EventSwarmGateRejected     = "swarm.gate_rejected"
 )

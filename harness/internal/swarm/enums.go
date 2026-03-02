@@ -13,6 +13,7 @@ const (
 	PhaseProjectPlan   Phase = "project_plan"
 	PhaseProjectReview Phase = "project_review"
 	PhaseProjectVerify Phase = "project_verify"
+	PhaseHumanReview   Phase = "human_review"
 	PhaseDone          Phase = "done"
 	PhaseFailed        Phase = "failed"
 )
@@ -28,6 +29,7 @@ func (p Phase) Valid() bool {
 		PhaseProjectPlan,
 		PhaseProjectReview,
 		PhaseProjectVerify,
+		PhaseHumanReview,
 		PhaseDone,
 		PhaseFailed:
 		return true
@@ -64,16 +66,22 @@ func (r SessionResult) Valid() bool {
 type WorkflowStatus string
 
 const (
-	StatusPending  WorkflowStatus = "pending"
-	StatusRunning  WorkflowStatus = "running"
-	StatusComplete WorkflowStatus = "completed"
-	StatusFailed   WorkflowStatus = "failed"
-	StatusCanceled WorkflowStatus = "canceled"
+	StatusPending        WorkflowStatus = "pending"
+	StatusRunning        WorkflowStatus = "running"
+	StatusComplete       WorkflowStatus = "completed"
+	StatusFailed         WorkflowStatus = "failed"
+	StatusCanceled       WorkflowStatus = "canceled"
+	StatusAwaitingReview WorkflowStatus = "awaiting_review"
 )
 
 func (s WorkflowStatus) Valid() bool {
 	switch s {
-	case StatusPending, StatusRunning, StatusComplete, StatusFailed, StatusCanceled:
+	case StatusPending,
+		StatusRunning,
+		StatusComplete,
+		StatusFailed,
+		StatusCanceled,
+		StatusAwaitingReview:
 		return true
 	default:
 		return false
@@ -119,6 +127,9 @@ const (
 	EventSessionReaped     EventType = "session_reaped"
 	EventTicketSynced      EventType = "ticket_synced"
 	EventTerminalFailure   EventType = "terminal_failure"
+	EventGateReached       EventType = "gate_reached"
+	EventGateApproved      EventType = "gate_approved"
+	EventGateRejected      EventType = "gate_rejected"
 )
 
 func (e EventType) Valid() bool {
@@ -139,7 +150,10 @@ func (e EventType) Valid() bool {
 		EventStallDetected,
 		EventSessionReaped,
 		EventTicketSynced,
-		EventTerminalFailure:
+		EventTerminalFailure,
+		EventGateReached,
+		EventGateApproved,
+		EventGateRejected:
 		return true
 	default:
 		return false

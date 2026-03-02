@@ -85,6 +85,18 @@ func (a *AlertManager) FireStallDetected(
 	a.fireAsync(key, msg)
 }
 
+// FireGateReached alerts when a workflow enters a human review gate.
+func (a *AlertManager) FireGateReached(ticketID string, phase swarm.Phase) {
+	key := fmt.Sprintf("gate:%s:%s", ticketID, phase)
+	msg := fmt.Sprintf(
+		"**[SWARM] Gate Reached**\nTicket: `%s`\nPhase: `%s`\nHuman review required — approve or reject in the dashboard.",
+		ticketID,
+		phase,
+	)
+
+	a.fireAsync(key, msg)
+}
+
 // fireAsync sends a Discord alert in a goroutine with dedup.
 func (a *AlertManager) fireAsync(key, msg string) {
 	if !a.shouldFire(key) {

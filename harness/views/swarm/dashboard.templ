@@ -22,10 +22,11 @@ type DashboardData struct {
 }
 
 type WorkflowDetailData struct {
-	Workflow   sqlc.SwarmWorkflow
-	Sessions   []sqlc.SwarmSession
-	Events     []sqlc.SwarmEvent
-	Milestones []sqlc.SwarmProjectMilestone
+	Workflow    sqlc.SwarmWorkflow
+	Sessions    []sqlc.SwarmSession
+	Events      []sqlc.SwarmEvent
+	Milestones  []sqlc.SwarmProjectMilestone
+	GateReviews []sqlc.SwarmGateReview
 }
 
 type DashboardSignals struct {
@@ -175,7 +176,7 @@ templ WorkflowPage(data WorkflowDetailData) {
 				</div>
 				<div class="flex items-center gap-3">
 					<span class="text-sm text-muted-foreground">{ data.Workflow.TicketID }</span>
-					if data.Workflow.Status == swarm.StatusRunning || data.Workflow.Status == swarm.StatusPending {
+					if data.Workflow.Status == swarm.StatusRunning || data.Workflow.Status == swarm.StatusPending || data.Workflow.Status == swarm.StatusAwaitingReview {
 						<button
 							class="inline-flex items-center justify-center rounded-md border border-destructive bg-background shadow-xs hover:bg-destructive hover:text-destructive-foreground h-8 px-3 text-sm font-medium text-destructive"
 							data-on:click={ datastar.PostSSE(fmt.Sprintf("/swarm/%s/cancel", data.Workflow.ID)) }
@@ -196,6 +197,50 @@ templ WorkflowPage(data WorkflowDetailData) {
 				if data.Workflow.BranchName.Valid {
 					<div class="text-sm text-muted-foreground">
 						Branch: <code class="bg-muted px-1.5 py-0.5 rounded text-xs">{ data.Workflow.BranchName.String }</code>
+					</div>
+				}
+				<!-- Gate review panel -->
+				if data.Workflow.Status == swarm.StatusAwaitingReview {
+					<div class="rounded-lg border-2 border-purple-500/50 bg-purple-900/20 p-4" data-signals='{"reject_feedback": ""}'>
+						<div class="flex items-center gap-2 mb-3">
+							<span class="text-sm font-semibold text-purple-300">Awaiting Human Review</span>
+							if data.Workflow.GatePhase.Valid {
+								<span class="text-xs px-2 py-0.5 rounded bg-purple-900/50 text-purple-300">{ data.Workflow.GatePhase.String }</span>
+							}
+						</div>
+						<div class="flex items-center gap-3 mb-3">
+							<button
+								class="inline-flex items-center justify-center rounded-md bg-green-700 hover:bg-green-600 text-white h-8 px-4 text-sm font-medium"
+								data-on:click={ datastar.PostSSE(fmt.Sprintf("/swarm/%s/approve", data.Workflow.ID)) }
+							>
+								Approve
+							</button>
+						</div>
+						<div class="space-y-2">
+							<textarea
+								class="w-full rounded-md border border-border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground"
+								rows="3"
+								placeholder="Rejection feedback (required)..."
+								data-bind:reject_feedback
+							></textarea>
+							<button
+								class="inline-flex items-center justify-center rounded-md bg-red-700 hover:bg-red-600 text-white h-8 px-4 text-sm font-medium"
+								data-on:click={ datastar.PostSSE(fmt.Sprintf("/swarm/%s/reject", data.Workflow.ID)) }
+							>
+								Reject with Feedback
+							</button>
+						</div>
+					</div>
+				}
+				<!-- Gate review history -->
+				if len(data.GateReviews) > 0 {
+					<div>
+						<h2 class="text-sm font-semibold mb-3 text-muted-foreground">Gate Reviews</h2>
+						<div class="space-y-2">
+							for _, gr := range data.GateReviews {
+								@gateReviewItem(gr)
+							}
+						</div>
 					</div>
 				}
 				<!-- Sessions -->
@@ -458,6 +503,26 @@ templ sessionItem(s sqlc.SwarmSession) {
 	</div>
 }
 
+templ gateReviewItem(gr sqlc.SwarmGateReview) {
+	<div class="flex items-start gap-3 py-2 border-b border-border last:border-0">
+		if gr.Action == "approve" {
+			<span class="text-xs px-2 py-0.5 rounded bg-green-900/50 text-green-300">approved</span>
+		} else {
+			<span class="text-xs px-2 py-0.5 rounded bg-red-900/50 text-red-300">rejected</span>
+		}
+		<div class="flex-1 min-w-0">
+			<span class="text-sm">{ string(gr.GatePhase) }</span>
+			if gr.Reviewer.Valid {
+				<span class="text-xs text-muted-foreground ml-2">by { gr.Reviewer.String }</span>
+			}
+			if gr.Feedback.Valid && gr.Feedback.String != "" {
+				<p class="text-xs text-muted-foreground mt-0.5">{ gr.Feedback.String }</p>
+			}
+		</div>
+		<span class="text-xs text-muted-foreground whitespace-nowrap">{ gr.CreatedAt }</span>
+	</div>
+}
+
 templ milestoneItem(m sqlc.SwarmProjectMilestone) {
 	<div class="flex items-center gap-3 py-2 border-b border-border last:border-0">
 		@milestoneBadge(m.Status)
@@ -519,6 +584,8 @@ func statusClass(status swarm.WorkflowStatus) string {
 		return "bg-red-900/50 text-red-300"
 	case swarm.StatusCanceled:
 		return "bg-muted text-muted-foreground"
+	case swarm.StatusAwaitingReview:
+		return "bg-purple-900/50 text-purple-300"
 	default: // pending
 		return "bg-blue-900/50 text-blue-300"
 	}

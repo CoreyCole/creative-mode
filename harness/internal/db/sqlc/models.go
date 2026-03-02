@@ -110,6 +110,16 @@ type SwarmEvent struct {
 	CreatedAt  string
 }
 
+type SwarmGateReview struct {
+	ID         string
+	WorkflowID string
+	GatePhase  swarm.Phase
+	Action     string
+	Feedback   sql.NullString
+	Reviewer   sql.NullString
+	CreatedAt  string
+}
+
 type SwarmLearning struct {
 	ID               string
 	SourceWorkflowID sql.NullString
@@ -209,6 +219,8 @@ type SwarmWorkflow struct {
 	Attempt            int64
 	PreviousWorkflowID sql.NullString
 	BranchName         sql.NullString
+	GatePhase          sql.NullString
+	ReviewFeedback     sql.NullString
 	CreatedAt          string
 	UpdatedAt          string
 }

@@ -353,6 +353,88 @@ func (s *Server) handleSwarmCreateLearning(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"id": id, "status": "created"})
 }
 
+// handleSwarmApproveGate approves a workflow at a human review gate.
+func (s *Server) handleSwarmApproveGate(c echo.Context) error {
+	if s.SwarmManager == nil {
+		return echo.NewHTTPError(
+			http.StatusServiceUnavailable,
+			"swarm manager not configured",
+		)
+	}
+
+	workflowID := c.Param("id")
+
+	var req struct {
+		Reviewer string `json:"reviewer"`
+	}
+	_ = c.Bind(&req)
+
+	if err := s.SwarmManager.ApproveGate(
+		c.Request().Context(),
+		workflowID,
+		req.Reviewer,
+	); err != nil {
+		s.Logger.Error("failed to approve gate", "workflow_id", workflowID, "error", err)
+
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"status": "approved"})
+}
+
+// handleSwarmRejectGate rejects a workflow at a human review gate.
+func (s *Server) handleSwarmRejectGate(c echo.Context) error {
+	if s.SwarmManager == nil {
+		return echo.NewHTTPError(
+			http.StatusServiceUnavailable,
+			"swarm manager not configured",
+		)
+	}
+
+	workflowID := c.Param("id")
+
+	var req struct {
+		Reviewer string `json:"reviewer"`
+		Feedback string `json:"feedback"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
+	}
+
+	if req.Feedback == "" {
+		return echo.NewHTTPError(
+			http.StatusBadRequest,
+			"feedback is required for rejection",
+		)
+	}
+
+	if err := s.SwarmManager.RejectGate(
+		c.Request().Context(),
+		workflowID,
+		req.Reviewer,
+		req.Feedback,
+	); err != nil {
+		s.Logger.Error("failed to reject gate", "workflow_id", workflowID, "error", err)
+
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"status": "rejected"})
+}
+
+// handleSwarmListGated returns workflows awaiting human review.
+func (s *Server) handleSwarmListGated(c echo.Context) error {
+	workflows, err := s.DB.ListAwaitingReviewSwarmWorkflows(c.Request().Context())
+	if err != nil {
+		return echo.NewHTTPError(
+			http.StatusInternalServerError,
+			"failed to list gated workflows",
+		)
+	}
+
+	return c.JSON(http.StatusOK, workflows)
+}
+
 // handleSwarmLatestDigest returns the most recent learning digest.
 func (s *Server) handleSwarmLatestDigest(c echo.Context) error {
 	digest, err := s.DB.GetLatestSwarmLearningDigest(c.Request().Context())

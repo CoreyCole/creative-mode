@@ -75,12 +75,14 @@ func (s *Server) handleSwarmWorkflowDetail(c echo.Context) error {
 		String: workflowID, Valid: true,
 	})
 	milestones, _ := s.DB.ListSwarmMilestonesByWorkflow(ctx, workflowID)
+	gateReviews, _ := s.DB.ListSwarmGateReviewsByWorkflow(ctx, workflowID)
 
 	data := swarmview.WorkflowDetailData{
-		Workflow:   wf,
-		Sessions:   sessions,
-		Events:     wfEvents,
-		Milestones: milestones,
+		Workflow:    wf,
+		Sessions:    sessions,
+		Events:      wfEvents,
+		Milestones:  milestones,
+		GateReviews: gateReviews,
 	}
 
 	return render(c, swarmview.WorkflowPage(data))
@@ -191,6 +193,101 @@ func (s *Server) patchMetricsAndLearnings(
 	)
 }
 
+// handleSwarmDashboardApprove approves a workflow gate from the dashboard.
+func (s *Server) handleSwarmDashboardApprove(c echo.Context) error {
+	if s.SwarmManager == nil {
+		return echo.NewHTTPError(
+			http.StatusServiceUnavailable,
+			"swarm manager not configured",
+		)
+	}
+
+	workflowID := c.Param("id")
+	reviewer := "dashboard"
+	if user, ok := c.Get("user").(*sqlc.User); ok {
+		reviewer = user.DiscordUsername
+	}
+
+	if err := s.SwarmManager.ApproveGate(
+		c.Request().Context(),
+		workflowID,
+		reviewer,
+	); err != nil {
+		s.Logger.Error("failed to approve gate", "workflow_id", workflowID, "error", err)
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+
+	return s.renderWorkflowDetail(c, workflowID)
+}
+
+// handleSwarmDashboardReject rejects a workflow gate from the dashboard.
+func (s *Server) handleSwarmDashboardReject(c echo.Context) error {
+	if s.SwarmManager == nil {
+		return echo.NewHTTPError(
+			http.StatusServiceUnavailable,
+			"swarm manager not configured",
+		)
+	}
+
+	workflowID := c.Param("id")
+	reviewer := "dashboard"
+	if user, ok := c.Get("user").(*sqlc.User); ok {
+		reviewer = user.DiscordUsername
+	}
+
+	var signals struct {
+		Feedback string `json:"reject_feedback"` //nolint:tagliatelle // Datastar signal name
+	}
+	_ = c.Bind(&signals)
+
+	feedback := signals.Feedback
+	if feedback == "" {
+		return echo.NewHTTPError(
+			http.StatusBadRequest,
+			"feedback is required for rejection",
+		)
+	}
+
+	if err := s.SwarmManager.RejectGate(
+		c.Request().Context(),
+		workflowID,
+		reviewer,
+		feedback,
+	); err != nil {
+		s.Logger.Error("failed to reject gate", "workflow_id", workflowID, "error", err)
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+
+	return s.renderWorkflowDetail(c, workflowID)
+}
+
+// renderWorkflowDetail re-fetches and returns the workflow detail page as SSE.
+func (s *Server) renderWorkflowDetail(c echo.Context, workflowID string) error {
+	ctx := c.Request().Context()
+	wf, err := s.DB.GetSwarmWorkflow(ctx, workflowID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get workflow")
+	}
+
+	sessions, _ := s.DB.ListSwarmSessionsByWorkflow(ctx, workflowID)
+	wfEvents, _ := s.DB.ListSwarmEventsByWorkflow(ctx, sql.NullString{
+		String: workflowID, Valid: true,
+	})
+	milestones, _ := s.DB.ListSwarmMilestonesByWorkflow(ctx, workflowID)
+	gateReviews, _ := s.DB.ListSwarmGateReviewsByWorkflow(ctx, workflowID)
+
+	data := swarmview.WorkflowDetailData{
+		Workflow:    wf,
+		Sessions:    sessions,
+		Events:      wfEvents,
+		Milestones:  milestones,
+		GateReviews: gateReviews,
+	}
+
+	sse := datastar.NewSSE(c.Response().Writer, c.Request())
+	return sse.PatchElementTempl(swarmview.WorkflowPage(data))
+}
+
 // handleSwarmDashboardCancel cancels a workflow from the dashboard.
 func (s *Server) handleSwarmDashboardCancel(c echo.Context) error {
 	if s.SwarmManager == nil {
@@ -209,26 +306,5 @@ func (s *Server) handleSwarmDashboardCancel(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 
-	// Re-fetch and return updated workflow detail as SSE patch.
-	ctx := c.Request().Context()
-	wf, err := s.DB.GetSwarmWorkflow(ctx, workflowID)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get workflow")
-	}
-
-	sessions, _ := s.DB.ListSwarmSessionsByWorkflow(ctx, workflowID)
-	wfEvents, _ := s.DB.ListSwarmEventsByWorkflow(ctx, sql.NullString{
-		String: workflowID, Valid: true,
-	})
-	milestones, _ := s.DB.ListSwarmMilestonesByWorkflow(ctx, workflowID)
-
-	data := swarmview.WorkflowDetailData{
-		Workflow:   wf,
-		Sessions:   sessions,
-		Events:     wfEvents,
-		Milestones: milestones,
-	}
-
-	sse := datastar.NewSSE(c.Response().Writer, c.Request())
-	return sse.PatchElementTempl(swarmview.WorkflowPage(data))
+	return s.renderWorkflowDetail(c, workflowID)
 }

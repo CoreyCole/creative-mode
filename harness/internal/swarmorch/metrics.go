@@ -34,6 +34,7 @@ type WorkflowMetrics struct {
 	Failed         int     `json:"failed"`
 	Running        int     `json:"running"`
 	Canceled       int     `json:"canceled"`
+	AwaitingReview int     `json:"awaiting_review"` //nolint:tagliatelle // API field name
 	CompletionRate float64 `json:"completion_rate"` //nolint:tagliatelle // API field name
 }
 
@@ -192,18 +193,25 @@ func queryWorkflowMetrics(
 		COALESCE(SUM(CASE WHEN status = '%s' THEN 1 ELSE 0 END), 0) AS completed,
 		COALESCE(SUM(CASE WHEN status = '%s' THEN 1 ELSE 0 END), 0) AS failed,
 		COALESCE(SUM(CASE WHEN status = '%s' THEN 1 ELSE 0 END), 0) AS running,
-		COALESCE(SUM(CASE WHEN status = '%s' THEN 1 ELSE 0 END), 0) AS canceled
+		COALESCE(SUM(CASE WHEN status = '%s' THEN 1 ELSE 0 END), 0) AS canceled,
+		COALESCE(SUM(CASE WHEN status = '%s' THEN 1 ELSE 0 END), 0) AS awaiting_review
 	FROM swarm_workflows WHERE created_at >= %s`,
 		swarm.StatusComplete,
 		swarm.StatusFailed,
 		swarm.StatusRunning,
 		swarm.StatusCanceled,
+		swarm.StatusAwaitingReview,
 		sinceExpr,
 	)
 
 	row := db.QueryRowContext(ctx, query)
 	if err := row.Scan(
-		&out.Total, &out.Completed, &out.Failed, &out.Running, &out.Canceled,
+		&out.Total,
+		&out.Completed,
+		&out.Failed,
+		&out.Running,
+		&out.Canceled,
+		&out.AwaitingReview,
 	); err != nil {
 		return err
 	}

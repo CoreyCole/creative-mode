@@ -119,7 +119,7 @@ func HandoffDir(phase Phase) string {
 		return "handoffs-project"
 	case PhaseProjectReview:
 		return "handoffs-project-reviews"
-	case PhaseDone, PhaseFailed:
+	case PhaseHumanReview, PhaseDone, PhaseFailed:
 		return ""
 	default:
 		return ""

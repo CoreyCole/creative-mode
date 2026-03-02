@@ -13,12 +13,14 @@ const (
 
 // SwarmConfig holds swarm orchestration configuration.
 type SwarmConfig struct {
-	MaxSessions      int `json:"maxSessions"`
-	HeartbeatSeconds int `json:"heartbeatSeconds"`
-	StallMinutes     int `json:"stallMinutes"`
-	MaxPlanRevisions int `json:"maxPlanRevisions"`
-	MaxVerifyRetries int `json:"maxVerifyRetries"`
-	RetryBackoffSecs int `json:"retryBackoffSecs"`
+	MaxSessions       int  `json:"maxSessions"`
+	HeartbeatSeconds  int  `json:"heartbeatSeconds"`
+	StallMinutes      int  `json:"stallMinutes"`
+	MaxPlanRevisions  int  `json:"maxPlanRevisions"`
+	MaxVerifyRetries  int  `json:"maxVerifyRetries"`
+	RetryBackoffSecs  int  `json:"retryBackoffSecs"`
+	GatePlanReview    bool `json:"gatePlanReview"`
+	GateProjectReview bool `json:"gateProjectReview"`
 }
 
 // DefaultConfig is the default swarm configuration.
@@ -138,7 +140,7 @@ func transitionByPhase(
 
 	case PhasePR:
 		if lastResult == ResultSuccess {
-			return Transition{NextPhase: PhaseDone}
+			return Transition{NextPhase: PhaseHumanReview}
 		}
 
 	case PhaseProjectPlan:
@@ -172,6 +174,11 @@ func transitionByPhase(
 			return Transition{NextPhase: PhaseProjectVerify, Retry: true}
 		}
 
+	case PhaseHumanReview:
+		if lastResult == ResultSuccess {
+			return Transition{NextPhase: PhaseDone}
+		}
+
 	case PhaseDone, PhaseFailed:
 		// Terminal phases — no transition.
 
@@ -203,9 +210,40 @@ func SkillForPhase(phase Phase) string {
 		return "swarm-project-review"
 	case PhaseProjectVerify:
 		return "swarm-project-verify"
-	case PhaseDone, PhaseFailed:
+	case PhaseHumanReview, PhaseDone, PhaseFailed:
 		return ""
 	default:
 		return ""
+	}
+}
+
+// IsGatedTransition returns true if the phase+result+config combination should
+// pause for human review instead of advancing automatically.
+func IsGatedTransition(phase Phase, result SessionResult, config SwarmConfig) bool {
+	if result != ResultSuccess {
+		return false
+	}
+
+	switch phase { //nolint:exhaustive // only specific phases are gated
+	case PhasePlanReview:
+		return config.GatePlanReview
+	case PhaseProjectReview:
+		return config.GateProjectReview
+	default:
+		return false
+	}
+}
+
+// GateRejectionTarget returns the phase to send the workflow back to when a gate is rejected.
+func GateRejectionTarget(gatePhase Phase) (Phase, bool) {
+	switch gatePhase { //nolint:exhaustive // only gate phases have rejection targets
+	case PhasePlanReview:
+		return PhaseCodePlan, true
+	case PhaseProjectReview:
+		return PhaseProjectPlan, true
+	case PhasePR, PhaseHumanReview:
+		return PhaseImplement, true
+	default:
+		return "", false
 	}
 }

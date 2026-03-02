@@ -12,6 +12,15 @@ import (
 	"creative-mode/harness/internal/swarm"
 )
 
+const clearSwarmWorkflowGate = `-- name: ClearSwarmWorkflowGate :exec
+UPDATE swarm_workflows SET status = 'running', gate_phase = NULL, review_feedback = NULL, updated_at = datetime('now') WHERE id = ?
+`
+
+func (q *Queries) ClearSwarmWorkflowGate(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, clearSwarmWorkflowGate, id)
+	return err
+}
+
 const completeSwarmSession = `-- name: CompleteSwarmSession :exec
 UPDATE swarm_sessions
 SET result = ?, detail = ?, duration_sec = ?, total_tokens = ?, completed_at = datetime('now')
@@ -322,7 +331,7 @@ func (q *Queries) GetSwarmTicketByIdentifier(ctx context.Context, identifier str
 }
 
 const getSwarmWorkflow = `-- name: GetSwarmWorkflow :one
-SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, created_at, updated_at
+SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, gate_phase, review_feedback, created_at, updated_at
 FROM swarm_workflows WHERE id = ?
 `
 
@@ -338,6 +347,8 @@ func (q *Queries) GetSwarmWorkflow(ctx context.Context, id string) (SwarmWorkflo
 		&i.Attempt,
 		&i.PreviousWorkflowID,
 		&i.BranchName,
+		&i.GatePhase,
+		&i.ReviewFeedback,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -345,7 +356,7 @@ func (q *Queries) GetSwarmWorkflow(ctx context.Context, id string) (SwarmWorkflo
 }
 
 const getSwarmWorkflowByPrevious = `-- name: GetSwarmWorkflowByPrevious :one
-SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, created_at, updated_at
+SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, gate_phase, review_feedback, created_at, updated_at
 FROM swarm_workflows WHERE previous_workflow_id = ?
 `
 
@@ -361,6 +372,8 @@ func (q *Queries) GetSwarmWorkflowByPrevious(ctx context.Context, previousWorkfl
 		&i.Attempt,
 		&i.PreviousWorkflowID,
 		&i.BranchName,
+		&i.GatePhase,
+		&i.ReviewFeedback,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -368,7 +381,7 @@ func (q *Queries) GetSwarmWorkflowByPrevious(ctx context.Context, previousWorkfl
 }
 
 const getSwarmWorkflowsByTicket = `-- name: GetSwarmWorkflowsByTicket :many
-SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, created_at, updated_at
+SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, gate_phase, review_feedback, created_at, updated_at
 FROM swarm_workflows WHERE ticket_id = ? ORDER BY created_at DESC
 `
 
@@ -390,6 +403,8 @@ func (q *Queries) GetSwarmWorkflowsByTicket(ctx context.Context, ticketID string
 			&i.Attempt,
 			&i.PreviousWorkflowID,
 			&i.BranchName,
+			&i.GatePhase,
+			&i.ReviewFeedback,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -407,7 +422,7 @@ func (q *Queries) GetSwarmWorkflowsByTicket(ctx context.Context, ticketID string
 }
 
 const listActiveSwarmWorkflows = `-- name: ListActiveSwarmWorkflows :many
-SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, created_at, updated_at
+SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, gate_phase, review_feedback, created_at, updated_at
 FROM swarm_workflows WHERE status IN ('pending', 'running') ORDER BY created_at ASC
 `
 
@@ -429,6 +444,8 @@ func (q *Queries) ListActiveSwarmWorkflows(ctx context.Context) ([]SwarmWorkflow
 			&i.Attempt,
 			&i.PreviousWorkflowID,
 			&i.BranchName,
+			&i.GatePhase,
+			&i.ReviewFeedback,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -509,6 +526,47 @@ func (q *Queries) ListAllSwarmWorkflows(ctx context.Context, limit int64) ([]Lis
 	return items, nil
 }
 
+const listAwaitingReviewSwarmWorkflows = `-- name: ListAwaitingReviewSwarmWorkflows :many
+SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, gate_phase, review_feedback, created_at, updated_at
+FROM swarm_workflows WHERE status = 'awaiting_review' ORDER BY updated_at ASC
+`
+
+func (q *Queries) ListAwaitingReviewSwarmWorkflows(ctx context.Context) ([]SwarmWorkflow, error) {
+	rows, err := q.db.QueryContext(ctx, listAwaitingReviewSwarmWorkflows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SwarmWorkflow{}
+	for rows.Next() {
+		var i SwarmWorkflow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TicketID,
+			&i.WorkflowType,
+			&i.Phase,
+			&i.Status,
+			&i.Attempt,
+			&i.PreviousWorkflowID,
+			&i.BranchName,
+			&i.GatePhase,
+			&i.ReviewFeedback,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRecentSwarmEvents = `-- name: ListRecentSwarmEvents :many
 SELECT id, workflow_id, session_id, ticket_id, event_type, phase, detail, created_at
 FROM swarm_events ORDER BY created_at DESC LIMIT ?
@@ -547,7 +605,7 @@ func (q *Queries) ListRecentSwarmEvents(ctx context.Context, limit int64) ([]Swa
 }
 
 const listRunningSwarmWorkflows = `-- name: ListRunningSwarmWorkflows :many
-SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, created_at, updated_at
+SELECT id, ticket_id, workflow_type, phase, status, attempt, previous_workflow_id, branch_name, gate_phase, review_feedback, created_at, updated_at
 FROM swarm_workflows WHERE status = 'running' ORDER BY created_at ASC
 `
 
@@ -569,6 +627,8 @@ func (q *Queries) ListRunningSwarmWorkflows(ctx context.Context) ([]SwarmWorkflo
 			&i.Attempt,
 			&i.PreviousWorkflowID,
 			&i.BranchName,
+			&i.GatePhase,
+			&i.ReviewFeedback,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -923,6 +983,22 @@ func (q *Queries) UpdateSwarmWorkflowBranch(ctx context.Context, arg UpdateSwarm
 	return err
 }
 
+const updateSwarmWorkflowGate = `-- name: UpdateSwarmWorkflowGate :exec
+
+UPDATE swarm_workflows SET status = 'awaiting_review', gate_phase = ?, updated_at = datetime('now') WHERE id = ?
+`
+
+type UpdateSwarmWorkflowGateParams struct {
+	GatePhase sql.NullString
+	ID        string
+}
+
+// Human gate queries
+func (q *Queries) UpdateSwarmWorkflowGate(ctx context.Context, arg UpdateSwarmWorkflowGateParams) error {
+	_, err := q.db.ExecContext(ctx, updateSwarmWorkflowGate, arg.GatePhase, arg.ID)
+	return err
+}
+
 const updateSwarmWorkflowPhase = `-- name: UpdateSwarmWorkflowPhase :exec
 UPDATE swarm_workflows SET phase = ?, attempt = ?, updated_at = datetime('now') WHERE id = ?
 `
@@ -935,6 +1011,20 @@ type UpdateSwarmWorkflowPhaseParams struct {
 
 func (q *Queries) UpdateSwarmWorkflowPhase(ctx context.Context, arg UpdateSwarmWorkflowPhaseParams) error {
 	_, err := q.db.ExecContext(ctx, updateSwarmWorkflowPhase, arg.Phase, arg.Attempt, arg.ID)
+	return err
+}
+
+const updateSwarmWorkflowReviewFeedback = `-- name: UpdateSwarmWorkflowReviewFeedback :exec
+UPDATE swarm_workflows SET review_feedback = ?, updated_at = datetime('now') WHERE id = ?
+`
+
+type UpdateSwarmWorkflowReviewFeedbackParams struct {
+	ReviewFeedback sql.NullString
+	ID             string
+}
+
+func (q *Queries) UpdateSwarmWorkflowReviewFeedback(ctx context.Context, arg UpdateSwarmWorkflowReviewFeedbackParams) error {
+	_, err := q.db.ExecContext(ctx, updateSwarmWorkflowReviewFeedback, arg.ReviewFeedback, arg.ID)
 	return err
 }
 

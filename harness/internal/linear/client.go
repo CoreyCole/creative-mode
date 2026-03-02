@@ -401,8 +401,9 @@ func (c *Client) SetParent(ctx context.Context, issueID, parentID string) error 
 
 // parseIdentifier splits "CRE-5" into team key "CRE" and number 5.
 func parseIdentifier(identifier string) (string, int, error) {
-	parts := strings.SplitN(identifier, "-", 2)
-	if len(parts) != 2 {
+	const nParts = 2
+	parts := strings.SplitN(identifier, "-", nParts)
+	if len(parts) != nParts {
 		return "", 0, fmt.Errorf("invalid identifier format: %s", identifier)
 	}
 

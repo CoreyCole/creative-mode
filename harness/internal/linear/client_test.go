@@ -149,11 +149,23 @@ func TestParseIdentifier(t *testing.T) {
 	for _, tt := range tests {
 		team, number, err := parseIdentifier(tt.input)
 		if (err != nil) != tt.wantErr {
-			t.Errorf("parseIdentifier(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+			t.Errorf(
+				"parseIdentifier(%q) error = %v, wantErr %v",
+				tt.input,
+				err,
+				tt.wantErr,
+			)
 			continue
 		}
 		if team != tt.team || number != tt.number {
-			t.Errorf("parseIdentifier(%q) = (%q, %d), want (%q, %d)", tt.input, team, number, tt.team, tt.number)
+			t.Errorf(
+				"parseIdentifier(%q) = (%q, %d), want (%q, %d)",
+				tt.input,
+				team,
+				number,
+				tt.team,
+				tt.number,
+			)
 		}
 	}
 }

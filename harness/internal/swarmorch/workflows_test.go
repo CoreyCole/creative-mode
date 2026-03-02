@@ -19,91 +19,6 @@ func registerActivities(env *testsuite.TestWorkflowEnvironment) {
 	env.RegisterActivity(&Activities{})
 }
 
-func TestHeartbeatWorkflow_CallsAllActivities(t *testing.T) {
-	t.Parallel()
-
-	suite := &testsuite.WorkflowTestSuite{}
-	env := suite.NewTestWorkflowEnvironment()
-	registerActivities(env)
-
-	// Mock all maintenance activities to succeed.
-	env.OnActivity("DetectStalls", mock.Anything).Return(nil)
-	env.OnActivity("ReapSessions", mock.Anything).Return(nil)
-	env.OnActivity("DecayLearnings", mock.Anything).Return(nil)
-	env.OnActivity("GenerateDigest", mock.Anything).Return(nil)
-
-	// ReadTicketQueue returns no spawns.
-	env.OnActivity("ReadTicketQueue", mock.Anything).Return([]SpawnRequest{}, nil)
-
-	env.ExecuteWorkflow(HeartbeatWorkflow)
-
-	require.True(t, env.IsWorkflowCompleted())
-	require.NoError(t, env.GetWorkflowError())
-
-	env.AssertExpectations(t)
-}
-
-func TestHeartbeatWorkflow_SpawnsChildrenForPendingWork(t *testing.T) {
-	t.Parallel()
-
-	suite := &testsuite.WorkflowTestSuite{}
-	env := suite.NewTestWorkflowEnvironment()
-	registerActivities(env)
-
-	env.OnActivity("DetectStalls", mock.Anything).Return(nil)
-	env.OnActivity("ReapSessions", mock.Anything).Return(nil)
-	env.OnActivity("DecayLearnings", mock.Anything).Return(nil)
-	env.OnActivity("GenerateDigest", mock.Anything).Return(nil)
-
-	// Return 2 pending spawns.
-	spawns := []SpawnRequest{
-		{WorkflowID: "wf-1", TicketID: "CM-1", Phase: swarm.PhaseResearch, Attempt: 1},
-		{WorkflowID: "wf-2", TicketID: "CM-2", Phase: swarm.PhaseImplement, Attempt: 1},
-	}
-	env.OnActivity("ReadTicketQueue", mock.Anything).Return(spawns, nil)
-
-	// Mock child SessionWorkflows.
-	env.OnWorkflow(SessionWorkflow, mock.Anything, mock.Anything).Return(
-		SessionWorkflowResult{Result: swarm.ResultSuccess}, nil,
-	)
-
-	env.ExecuteWorkflow(HeartbeatWorkflow)
-
-	require.True(t, env.IsWorkflowCompleted())
-	require.NoError(t, env.GetWorkflowError())
-
-	env.AssertExpectations(t)
-}
-
-func TestHeartbeatWorkflow_VerifyPhaseUsesVerifyQueue(t *testing.T) {
-	t.Parallel()
-
-	suite := &testsuite.WorkflowTestSuite{}
-	env := suite.NewTestWorkflowEnvironment()
-	registerActivities(env)
-
-	env.OnActivity("DetectStalls", mock.Anything).Return(nil)
-	env.OnActivity("ReapSessions", mock.Anything).Return(nil)
-	env.OnActivity("DecayLearnings", mock.Anything).Return(nil)
-	env.OnActivity("GenerateDigest", mock.Anything).Return(nil)
-
-	// Return a verify phase spawn.
-	spawns := []SpawnRequest{
-		{WorkflowID: "wf-v", TicketID: "CM-V", Phase: swarm.PhaseVerify, Attempt: 1},
-	}
-	env.OnActivity("ReadTicketQueue", mock.Anything).Return(spawns, nil)
-
-	// Track child workflow options to verify queue routing.
-	env.OnWorkflow(SessionWorkflow, mock.Anything, mock.Anything).Return(
-		SessionWorkflowResult{Result: swarm.ResultSuccess}, nil,
-	)
-
-	env.ExecuteWorkflow(HeartbeatWorkflow)
-
-	require.True(t, env.IsWorkflowCompleted())
-	require.NoError(t, env.GetWorkflowError())
-}
-
 func TestSessionWorkflow_ReturnsActivityResult(t *testing.T) {
 	t.Parallel()
 
@@ -167,28 +82,6 @@ func TestSessionWorkflow_ActivityFailure_ReturnsInfraFailure(t *testing.T) {
 	require.Contains(t, result.Summary, "activity error")
 }
 
-func TestHeartbeatWorkflow_MaintenanceFailuresContinue(t *testing.T) {
-	t.Parallel()
-
-	suite := &testsuite.WorkflowTestSuite{}
-	env := suite.NewTestWorkflowEnvironment()
-	registerActivities(env)
-
-	// DetectStalls fails, but everything else should still run.
-	env.OnActivity("DetectStalls", mock.Anything).Return(errTest)
-	env.OnActivity("ReapSessions", mock.Anything).Return(nil)
-	env.OnActivity("DecayLearnings", mock.Anything).Return(nil)
-	env.OnActivity("GenerateDigest", mock.Anything).Return(nil)
-	env.OnActivity("ReadTicketQueue", mock.Anything).Return([]SpawnRequest{}, nil)
-
-	env.ExecuteWorkflow(HeartbeatWorkflow)
-
-	require.True(t, env.IsWorkflowCompleted())
-	require.NoError(t, env.GetWorkflowError())
-
-	env.AssertExpectations(t)
-}
-
 func TestLeadFDEWorkflow_CallsAllActivities(t *testing.T) {
 	t.Parallel()
 
@@ -202,7 +95,6 @@ func TestLeadFDEWorkflow_CallsAllActivities(t *testing.T) {
 	env.OnActivity("GenerateDigest", mock.Anything).Return(nil)
 	env.OnActivity("CheckProjectHealth", mock.Anything).
 		Return([]ProjectHealthStatus{}, nil)
-	env.OnActivity("CheckProjectProgress", mock.Anything).Return(nil)
 	env.OnActivity("ReadTicketQueue", mock.Anything).
 		Return([]SpawnRequest{}, nil)
 
@@ -226,7 +118,6 @@ func TestLeadFDEWorkflow_SpawnsSessionsForPendingWork(t *testing.T) {
 	env.OnActivity("GenerateDigest", mock.Anything).Return(nil)
 	env.OnActivity("CheckProjectHealth", mock.Anything).
 		Return([]ProjectHealthStatus{}, nil)
-	env.OnActivity("CheckProjectProgress", mock.Anything).Return(nil)
 
 	spawns := []SpawnRequest{
 		{

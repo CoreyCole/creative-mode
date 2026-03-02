@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"time"
 
 	enumspb "go.temporal.io/api/enums/v1"
@@ -35,11 +34,6 @@ const (
 	triggerTimeout  = 5 * time.Second
 	scheduleTimeout = 10 * time.Second
 )
-
-// TemporalEnabled returns true if CM_SWARM_TEMPORAL=true.
-func TemporalEnabled() bool {
-	return os.Getenv("CM_SWARM_TEMPORAL") == envTrue
-}
 
 // TemporalRuntime holds the Temporal client, workers, and schedule handle.
 type TemporalRuntime struct {
@@ -80,10 +74,7 @@ func StartRuntime(
 	generalWorker := worker.New(c, QueueGeneral, worker.Options{
 		MaxConcurrentActivityExecutionSize: concurrencyGeneral,
 	})
-	generalWorker.RegisterWorkflow(HeartbeatWorkflow)
-	generalWorker.RegisterWorkflow(LeadFDEWorkflow)
 	generalWorker.RegisterWorkflow(SessionWorkflow)
-	generalWorker.RegisterWorkflow(ProjectOrchestratorWorkflow)
 	generalWorker.RegisterActivity(activities)
 
 	verifyWorker := worker.New(c, QueueVerify, worker.Options{
@@ -95,7 +86,6 @@ func StartRuntime(
 	opsWorker := worker.New(c, QueueOps, worker.Options{
 		MaxConcurrentActivityExecutionSize: concurrencyOps,
 	})
-	opsWorker.RegisterWorkflow(HeartbeatWorkflow)
 	opsWorker.RegisterWorkflow(LeadFDEWorkflow)
 	opsWorker.RegisterWorkflow(ProjectOrchestratorWorkflow)
 	opsWorker.RegisterActivity(activities)

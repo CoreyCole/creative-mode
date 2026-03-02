@@ -48,76 +48,6 @@ type SpawnRequest struct {
 	Attempt    int64
 }
 
-// HeartbeatWorkflow runs maintenance tasks and spawns sessions for pending work.
-// Executed every 2min by the Temporal schedule on the ops queue.
-func HeartbeatWorkflow(ctx workflow.Context) error {
-	opsCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
-		TaskQueue:           QueueOps,
-		StartToCloseTimeout: maintenanceActivityTimeout,
-		RetryPolicy: &temporal.RetryPolicy{
-			MaximumAttempts: 1,
-		},
-	})
-
-	// Run maintenance activities sequentially.
-	if err := workflow.ExecuteActivity(opsCtx, "DetectStalls").Get(ctx, nil); err != nil {
-		workflow.GetLogger(ctx).Warn("DetectStalls failed", "error", err)
-	}
-
-	if err := workflow.ExecuteActivity(opsCtx, "ReapSessions").Get(ctx, nil); err != nil {
-		workflow.GetLogger(ctx).Warn("ReapSessions failed", "error", err)
-	}
-
-	if err := workflow.ExecuteActivity(opsCtx, "DecayLearnings").
-		Get(ctx, nil); err != nil {
-		workflow.GetLogger(ctx).Warn("DecayLearnings failed", "error", err)
-	}
-
-	if err := workflow.ExecuteActivity(opsCtx, "GenerateDigest").
-		Get(ctx, nil); err != nil {
-		workflow.GetLogger(ctx).Warn("GenerateDigest failed", "error", err)
-	}
-
-	if err := workflow.ExecuteActivity(opsCtx, "CheckProjectProgress").
-		Get(ctx, nil); err != nil {
-		workflow.GetLogger(ctx).Warn("CheckProjectProgress failed", "error", err)
-	}
-
-	// Read pending work and spawn child workflows.
-	var spawns []SpawnRequest
-	if err := workflow.ExecuteActivity(opsCtx, "ReadTicketQueue").
-		Get(ctx, &spawns); err != nil {
-		return fmt.Errorf("ReadTicketQueue: %w", err)
-	}
-
-	for _, sp := range spawns {
-		params := SessionParams(sp)
-
-		// Route verify phase to the verify queue; everything else to general.
-		taskQueue := QueueGeneral
-		if sp.Phase == swarm.PhaseVerify || sp.Phase == swarm.PhaseProjectVerify {
-			taskQueue = QueueVerify
-		}
-
-		childOpts := workflow.ChildWorkflowOptions{
-			WorkflowID: fmt.Sprintf(
-				"session-%s-%s-%d",
-				sp.WorkflowID,
-				sp.Phase,
-				sp.Attempt,
-			),
-			TaskQueue:         taskQueue,
-			ParentClosePolicy: enumspb.PARENT_CLOSE_POLICY_ABANDON,
-		}
-		childCtx := workflow.WithChildOptions(ctx, childOpts)
-
-		// Fire-and-forget: start but don't wait for completion.
-		workflow.ExecuteChildWorkflow(childCtx, SessionWorkflow, params)
-	}
-
-	return nil
-}
-
 // SessionWorkflow wraps a single Claude Code session as a child workflow.
 func SessionWorkflow(
 	ctx workflow.Context,
@@ -279,16 +209,6 @@ func LeadFDEWorkflow(ctx workflow.Context) error {
 		Get(ctx, &projects); err != nil {
 		workflow.GetLogger(ctx).Warn(
 			"CheckProjectHealth failed",
-			"error", err,
-		)
-	}
-
-	// Fallback: also run CheckProjectProgress for projects without
-	// an active orchestrator workflow (goroutine-mode compatibility).
-	if err := workflow.ExecuteActivity(opsCtx, "CheckProjectProgress").
-		Get(ctx, nil); err != nil {
-		workflow.GetLogger(ctx).Warn(
-			"CheckProjectProgress failed",
 			"error", err,
 		)
 	}

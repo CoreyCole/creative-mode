@@ -202,7 +202,11 @@ func TestParseProjectPlan(t *testing.T) {
 				t.Errorf("tickets count = %d, want %d", len(tickets), tt.wantTickets)
 			}
 			if len(milestones) != tt.wantMilestones {
-				t.Errorf("milestones count = %d, want %d", len(milestones), tt.wantMilestones)
+				t.Errorf(
+					"milestones count = %d, want %d",
+					len(milestones),
+					tt.wantMilestones,
+				)
 			}
 
 			if tt.checkTickets != nil {
@@ -269,7 +273,10 @@ func TestCreateProjectTicketsFromPlan(t *testing.T) {
 	}
 
 	// Verify child tickets were created.
-	tickets, err := database.ListSwarmTicketsByProject(ctx, sql.NullString{String: wfID, Valid: true})
+	tickets, err := database.ListSwarmTicketsByProject(
+		ctx,
+		sql.NullString{String: wfID, Valid: true},
+	)
 	if err != nil {
 		t.Fatalf("list tickets: %v", err)
 	}
@@ -359,7 +366,10 @@ func TestReconcileProjectTickets(t *testing.T) {
 	})
 
 	// Verify data exists before reconcile.
-	ticketsBefore, _ := database.ListSwarmTicketsByProject(ctx, sql.NullString{String: projectID, Valid: true})
+	ticketsBefore, _ := database.ListSwarmTicketsByProject(
+		ctx,
+		sql.NullString{String: projectID, Valid: true},
+	)
 	if len(ticketsBefore) != 2 {
 		t.Fatalf("setup: expected 2 tickets, got %d", len(ticketsBefore))
 	}
@@ -380,7 +390,10 @@ func TestReconcileProjectTickets(t *testing.T) {
 	}
 
 	// Verify tickets were deleted.
-	ticketsAfter, _ := database.ListSwarmTicketsByProject(ctx, sql.NullString{String: projectID, Valid: true})
+	ticketsAfter, _ := database.ListSwarmTicketsByProject(
+		ctx,
+		sql.NullString{String: projectID, Valid: true},
+	)
 	if len(ticketsAfter) != 0 {
 		t.Errorf("tickets after reconcile = %d, want 0", len(ticketsAfter))
 	}
@@ -416,7 +429,14 @@ func TestSpawnProjectWorkflowsCreatesChildWorkflows(t *testing.T) {
 	t.Parallel()
 
 	database := newManagerTestDB(t)
-	mgr := NewManager(database, testLogger(), nil, t.TempDir(), t.TempDir(), "http://localhost:8080")
+	mgr := NewManager(
+		database,
+		testLogger(),
+		nil,
+		t.TempDir(),
+		t.TempDir(),
+		"http://localhost:8080",
+	)
 
 	ctx := t.Context()
 	projectID := "wf-proj-spawn"

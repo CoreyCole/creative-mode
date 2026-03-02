@@ -19,7 +19,7 @@
             just git curl jq sqlite
             go_1_24 golangci-lint gcc pkg-config
             tmux sqlc nodejs_22
-            python3 uv
+            python3 uv temporal-cli
           ];
         };
 

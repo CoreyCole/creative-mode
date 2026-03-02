@@ -212,7 +212,7 @@ The gate review panel shows approve button + reject textarea when workflow statu
 - **Linear** (`internal/linear/`): Ticket status updates on phase transitions (`StatusInProgress`, `StatusInReview`, `StatusDone`), comment posting for key events (gate reached, approved, rejected, workflow complete)
 - **Graphite** (`internal/graphite/`): Branch stacking for code workflow PRs via Graphite CLI
 - **Discord**: Alerts via `AlertManager` with 1-hour dedup — fires on gate reached, workflow stall, terminal failure, high retry rate (>50% of max retries)
-- **Temporal** (`internal/swarmorch/temporal.go`): Optional workflow engine. System works without it via goroutine-based polling (`watchSession` + `StartMaintenance`). When enabled, Temporal handles heartbeats and session orchestration.
+- **Temporal** (`internal/swarmorch/temporal.go`): Required workflow engine. Runs as `temporal-dev.service` (systemd) on port 7233, UI on 8233. Handles heartbeats (2-min schedule), session orchestration, and project orchestrator workflows. The `creative-mode` service depends on `temporal-dev`.
 - **EventBus**: Swarm events published with `swarm.` prefix (e.g., `swarm.workflow_started`, `swarm.gate_reached`). The dashboard SSE handler catches all `swarm.*` events to refresh tabs.
 
 #### Swarm DB Schema

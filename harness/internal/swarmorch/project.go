@@ -199,9 +199,7 @@ func (m *Manager) SpawnProjectWorkflows(
 		),
 	)
 
-	if m.temporalRuntime != nil {
-		m.startProjectOrchestrator(ctx, wf)
-	}
+	m.startProjectOrchestrator(ctx, wf)
 
 	return nil
 }
@@ -295,7 +293,7 @@ func (m *Manager) startProjectOrchestrator(
 	ctx context.Context,
 	wf sqlc.SwarmWorkflow,
 ) {
-	if m.temporalRuntime == nil || m.temporalRuntime.client == nil {
+	if m.temporalRuntime == nil {
 		return
 	}
 

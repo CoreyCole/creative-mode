@@ -34,11 +34,6 @@ const (
 	learningFilePrefix   = "swarm-learning-"
 	promptFilePrefix     = "swarm-prompt-"
 
-	// Maintenance intervals.
-	stallCheckInterval = 2 * time.Minute
-	decayInterval      = time.Hour
-	digestInterval     = 24 * time.Hour
-
 	// Linear API call timeout.
 	linearTimeout = 30 * time.Second
 
@@ -83,11 +78,8 @@ type Manager struct {
 	// Graphite client for branch stacking (nil when gt CLI is not available).
 	graphiteClient *graphite.Client
 
-	// Temporal runtime (nil when CM_SWARM_TEMPORAL=false).
+	// Temporal runtime for durable orchestration.
 	temporalRuntime *TemporalRuntime
-
-	// Maintenance loop cancellation.
-	maintenanceCancel context.CancelFunc
 }
 
 // NewManager creates a new swarm orchestrator.
@@ -232,21 +224,7 @@ func (m *Manager) StartWorkflow(
 		),
 	)
 
-	// Temporal mode: trigger heartbeat to pick up new workflow; don't spawn directly.
-	if m.temporalRuntime != nil {
-		m.temporalRuntime.TriggerHeartbeat()
-
-		return wfID, nil
-	}
-
-	wf, err := m.db.GetSwarmWorkflow(ctx, wfID)
-	if err != nil {
-		return "", fmt.Errorf("get workflow: %w", err)
-	}
-
-	if err := m.spawnSession(ctx, wf); err != nil {
-		return wfID, fmt.Errorf("spawn first session: %w", err)
-	}
+	m.triggerHeartbeat()
 
 	return wfID, nil
 }
@@ -290,16 +268,9 @@ func (m *Manager) CancelWorkflow(ctx context.Context, workflowID string) error {
 	return nil
 }
 
-// RecoverWorkflows finds running workflows with dead tmux sessions and
-// re-advances them. Called on startup to handle unclean restarts.
-// When Temporal is enabled, recovery is handled by the heartbeat schedule.
+// RecoverWorkflows re-attaches watchSession goroutines for surviving tmux
+// sessions after harness restart. Dead sessions are handled via completion.
 func (m *Manager) RecoverWorkflows(ctx context.Context) error {
-	if m.temporalRuntime != nil {
-		m.logger.Info("temporal enabled — skipping goroutine-based recovery")
-
-		return nil
-	}
-
 	workflows, err := m.db.ListRunningSwarmWorkflows(ctx)
 	if err != nil {
 		return fmt.Errorf("list running workflows: %w", err)
@@ -944,32 +915,7 @@ func (m *Manager) advanceWorkflow(
 		return
 	}
 
-	// Temporal mode: trigger heartbeat to spawn next session; don't spawn directly.
-	if m.temporalRuntime != nil {
-		m.temporalRuntime.TriggerHeartbeat()
-
-		return
-	}
-
-	// Refresh workflow and spawn next session.
-	updatedWf, getErr := m.db.GetSwarmWorkflow(ctx, wf.ID)
-	if getErr != nil {
-		m.logger.Error("get updated workflow", "error", getErr)
-
-		return
-	}
-
-	if spawnErr := m.spawnSession(ctx, updatedWf); spawnErr != nil {
-		m.logger.Error(
-			"spawn next session",
-			"workflow_id",
-			wf.ID,
-			"phase",
-			transition.NextPhase,
-			"error",
-			spawnErr,
-		)
-	}
+	m.triggerHeartbeat()
 }
 
 // captureLearnings routes to the appropriate learning capture function based
@@ -1696,21 +1642,7 @@ func (m *Manager) RejectGate(
 		),
 	)
 
-	// Spawn next session at rejection target.
-	updatedWf, getErr := m.db.GetSwarmWorkflow(ctx, wf.ID)
-	if getErr != nil {
-		return fmt.Errorf("get updated workflow: %w", getErr)
-	}
-
-	if m.temporalRuntime != nil {
-		m.temporalRuntime.TriggerHeartbeat()
-
-		return nil
-	}
-
-	if spawnErr := m.spawnSession(ctx, updatedWf); spawnErr != nil {
-		return fmt.Errorf("spawn session after rejection: %w", spawnErr)
-	}
+	m.triggerHeartbeat()
 
 	return nil
 }
@@ -1780,18 +1712,9 @@ func (m *Manager) advanceFromGate(
 		),
 	)
 
-	if m.temporalRuntime != nil {
-		m.temporalRuntime.TriggerHeartbeat()
+	m.triggerHeartbeat()
 
-		return nil
-	}
-
-	updatedWf, getErr := m.db.GetSwarmWorkflow(ctx, wf.ID)
-	if getErr != nil {
-		return fmt.Errorf("get updated workflow: %w", getErr)
-	}
-
-	return m.spawnSession(ctx, updatedWf)
+	return nil
 }
 
 // classifyTicket determines the workflow type for a ticket by checking
@@ -1818,6 +1741,14 @@ func (m *Manager) classifyTicket(
 	return swarm.ClassifyTicket(title, description)
 }
 
+// triggerHeartbeat triggers an immediate Temporal heartbeat.
+// Nil-safe so callers (and tests without Temporal) don't panic.
+func (m *Manager) triggerHeartbeat() {
+	if m.temporalRuntime != nil {
+		m.temporalRuntime.TriggerHeartbeat()
+	}
+}
+
 // SetAlertManager configures the alert manager for Discord notifications.
 func (m *Manager) SetAlertManager(alertMgr *AlertManager) {
 	m.alertMgr = alertMgr
@@ -1836,60 +1767,6 @@ func (m *Manager) SetGraphiteClient(gc *graphite.Client) {
 // SetTemporalRuntime configures the Temporal runtime for durable orchestration.
 func (m *Manager) SetTemporalRuntime(rt *TemporalRuntime) {
 	m.temporalRuntime = rt
-}
-
-// StartMaintenance launches periodic background tasks: stall detection (2min),
-// relevance decay (1hr), and digest generation (24hr). Call StopMaintenance to
-// cancel.
-func (m *Manager) StartMaintenance() {
-	if m.temporalRuntime != nil {
-		m.logger.Info("temporal enabled — skipping goroutine-based maintenance")
-
-		return
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	m.maintenanceCancel = cancel
-
-	go m.maintenanceLoop(ctx)
-}
-
-// StopMaintenance cancels the periodic maintenance loop.
-func (m *Manager) StopMaintenance() {
-	if m.maintenanceCancel != nil {
-		m.maintenanceCancel()
-	}
-}
-
-func (m *Manager) maintenanceLoop(ctx context.Context) {
-	stallTicker := time.NewTicker(stallCheckInterval)
-	decayTicker := time.NewTicker(decayInterval)
-	digestTicker := time.NewTicker(digestInterval)
-
-	defer stallTicker.Stop()
-	defer decayTicker.Stop()
-	defer digestTicker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-
-		case <-stallTicker.C:
-			m.detectAndAlertStalls(ctx)
-			m.CheckProjectProgress(ctx)
-
-		case <-decayTicker.C:
-			if err := m.decayLearningRelevance(ctx); err != nil {
-				m.logger.Error("decay learning relevance", "error", err)
-			}
-
-		case <-digestTicker.C:
-			if err := GenerateDigest(ctx, m.db, m.baseDir); err != nil {
-				m.logger.Error("generate digest", "error", err)
-			}
-		}
-	}
 }
 
 // detectAndAlertStalls checks for stalled workflows and fires alerts.

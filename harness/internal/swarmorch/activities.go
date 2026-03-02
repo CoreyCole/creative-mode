@@ -350,7 +350,7 @@ func (a *Activities) PostProjectUpdate(
 
 // DecayLearnings applies relevance decay to stored learnings.
 func (a *Activities) DecayLearnings(ctx context.Context) error {
-	return swarm.DecayLearningRelevance(ctx, a.mgr.db.SQLDB())
+	return a.mgr.decayLearningRelevance(ctx)
 }
 
 // GenerateDigest generates a learning digest if enough time has passed.

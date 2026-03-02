@@ -589,17 +589,16 @@ func TestBuildEnvLearningContextWritten(t *testing.T) {
 
 	database := newManagerTestDB(t)
 
-	// Seed a learning so GetLearningContext returns content.
-	_ = swarm.CapturePlanIssue(
+	mgr := NewManager(database, testLogger(), nil, t.TempDir(), t.TempDir(), "")
+
+	// Seed a learning so getLearningContext returns content.
+	_ = mgr.capturePlanIssue(
 		t.Context(),
-		database.SQLDB(),
 		"",
 		"",
 		"CM-LC",
 		"Test learning for context",
 	)
-
-	mgr := NewManager(database, testLogger(), nil, t.TempDir(), t.TempDir(), "")
 
 	wf := sqlc.SwarmWorkflow{
 		ID:       "wf-lc",

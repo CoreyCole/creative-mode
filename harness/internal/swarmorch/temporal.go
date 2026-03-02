@@ -38,7 +38,7 @@ const (
 
 // TemporalEnabled returns true if CM_SWARM_TEMPORAL=true.
 func TemporalEnabled() bool {
-	return os.Getenv("CM_SWARM_TEMPORAL") == "true" //nolint:goconst // env var check
+	return os.Getenv("CM_SWARM_TEMPORAL") == "true"
 }
 
 // TemporalRuntime holds the Temporal client, workers, and schedule handle.
@@ -180,7 +180,7 @@ func ensureHeartbeatSchedule(
 
 	scheduleAction := &client.ScheduleWorkflowAction{
 		ID:        "swarm-heartbeat-run",
-		Workflow:  HeartbeatWorkflow,
+		Workflow:  LeadFDEWorkflow,
 		TaskQueue: QueueOps,
 	}
 

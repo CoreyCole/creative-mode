@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -17,10 +18,21 @@ const (
 	apiURL         = "https://api.linear.app/graphql"
 	requestTimeout = 15 * time.Second
 
+	// Linear workflow state names.
+	StatusTriage     = "Triage"
+	StatusBacklog    = "Backlog"
+	StatusTodo       = "Todo"
+	StatusInProgress = "In Progress"
+	StatusInReview   = "In Review"
+	StatusDone       = "Done"
+
 	// issueUpdateMutation is reused for status, label, and parent updates.
 	issueUpdateMutation = `mutation($id: String!, $input: IssueUpdateInput!) {
 		issueUpdate(id: $id, input: $input) { success }
 	}`
+
+	// Default retry-after duration when 429 header is missing.
+	defaultRetryAfter = 60 * time.Second
 )
 
 // errCreateFailed is returned when the Linear API reports success=false.
@@ -59,6 +71,97 @@ type Ticket struct {
 	} `json:"parent"`
 }
 
+// Typed GraphQL variable structs replace map[string]any at call sites.
+
+type graphqlRequest struct {
+	Query     string `json:"query"`
+	Variables any    `json:"variables"`
+}
+
+type issueCreateVars struct {
+	Input issueCreateInput `json:"input"`
+}
+
+type issueCreateInput struct {
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	TeamID      string   `json:"teamId"`             //nolint:tagliatelle // Linear API field name
+	LabelIDs    []string `json:"labelIds,omitempty"` //nolint:tagliatelle // Linear API field name
+	ParentID    string   `json:"parentId,omitempty"` //nolint:tagliatelle // Linear API field name
+}
+
+type issueUpdateVars struct {
+	ID    string `json:"id"`
+	Input any    `json:"input"`
+}
+
+type issueStatusInput struct {
+	StateID string `json:"stateId"` //nolint:tagliatelle // Linear API field name
+}
+
+type issueLabelInput struct {
+	LabelIDs []string `json:"labelIds"`
+}
+
+type issueParentInput struct {
+	ParentID string `json:"parentId"` //nolint:tagliatelle // Linear API field name
+}
+
+type commentCreateVars struct {
+	Input commentCreateInput `json:"input"`
+}
+
+type commentCreateInput struct {
+	IssueID string `json:"issueId"` //nolint:tagliatelle // Linear API field name
+	Body    string `json:"body"`
+}
+
+type issueRelationVars struct {
+	Input issueRelationInput `json:"input"`
+}
+
+type issueRelationInput struct {
+	IssueID        string `json:"issueId"`        //nolint:tagliatelle // Linear API field name
+	RelatedIssueID string `json:"relatedIssueId"` //nolint:tagliatelle // Linear API field name
+	Type           string `json:"type"`
+}
+
+// Filter types for queries.
+
+type issueFilterVars struct {
+	Filter issueFilter `json:"filter"`
+}
+
+type issueFilter struct {
+	Identifier *eqFilter `json:"identifier,omitempty"`
+	Parent     *idFilter `json:"parent,omitempty"`
+}
+
+type eqFilter struct {
+	Eq string `json:"eq"`
+}
+
+type idFilter struct {
+	ID *eqFilter `json:"id"`
+}
+
+type stateFilterVars struct {
+	Filter stateFilter `json:"filter"`
+}
+
+type stateFilter struct {
+	Team *idFilter `json:"team"`
+	Name *eqFilter `json:"name"`
+}
+
+type teamKeyVars struct {
+	Key string `json:"key"`
+}
+
+type issueIDVars struct {
+	ID string `json:"id"`
+}
+
 // NewClient creates a Linear API client.
 // teamKey is the short team prefix (e.g. "CM").
 func NewClient(apiKey, teamKey string, logger *slog.Logger) *Client {
@@ -93,7 +196,7 @@ func (c *Client) resolveTeamID(ctx context.Context) (string, error) {
 		} `json:"data"`
 	}
 
-	if err := c.doQuery(ctx, query, map[string]any{"key": c.teamKey}, &resp); err != nil {
+	if err := c.doQuery(ctx, query, teamKeyVars{Key: c.teamKey}, &resp); err != nil {
 		return "", fmt.Errorf("resolve team: %w", err)
 	}
 
@@ -121,16 +224,12 @@ func (c *Client) CreateTicket(
 		return "", err
 	}
 
-	input := map[string]any{
-		"title":       title,
-		"description": description,
-		"teamId":      teamID,
-	}
-	if len(labelIDs) > 0 {
-		input["labelIds"] = labelIDs
-	}
-	if parentID != "" {
-		input["parentId"] = parentID
+	input := issueCreateInput{
+		Title:       title,
+		Description: description,
+		TeamID:      teamID,
+		LabelIDs:    labelIDs,
+		ParentID:    parentID,
 	}
 
 	query := `mutation($input: IssueCreateInput!) {
@@ -154,7 +253,7 @@ func (c *Client) CreateTicket(
 		} `json:"data"`
 	}
 
-	if err := c.doQuery(ctx, query, map[string]any{"input": input}, &resp); err != nil {
+	if err := c.doQuery(ctx, query, issueCreateVars{Input: input}, &resp); err != nil {
 		return "", fmt.Errorf("create ticket: %w", err)
 	}
 
@@ -193,9 +292,9 @@ func (c *Client) UpdateStatus(ctx context.Context, issueID, stateName string) er
 		} `json:"data"`
 	}
 
-	vars := map[string]any{
-		"id":    issueID,
-		"input": map[string]any{"stateId": stateID},
+	vars := issueUpdateVars{
+		ID:    issueID,
+		Input: issueStatusInput{StateID: stateID},
 	}
 
 	if err := c.doQuery(ctx, issueUpdateMutation, vars, &resp); err != nil {
@@ -222,10 +321,10 @@ func (c *Client) PostComment(ctx context.Context, issueID, body string) error {
 		} `json:"data"`
 	}
 
-	vars := map[string]any{
-		"input": map[string]any{
-			"issueId": issueID,
-			"body":    body,
+	vars := commentCreateVars{
+		Input: commentCreateInput{
+			IssueID: issueID,
+			Body:    body,
 		},
 	}
 
@@ -261,9 +360,9 @@ func (c *Client) AddLabel(ctx context.Context, issueID, labelID string) error {
 		} `json:"data"`
 	}
 
-	vars := map[string]any{
-		"id":    issueID,
-		"input": map[string]any{"labelIds": labelIDs},
+	vars := issueUpdateVars{
+		ID:    issueID,
+		Input: issueLabelInput{LabelIDs: labelIDs},
 	}
 
 	return c.doQuery(ctx, issueUpdateMutation, vars, &resp)
@@ -282,9 +381,9 @@ func (c *Client) SetParent(ctx context.Context, issueID, parentID string) error 
 		} `json:"data"`
 	}
 
-	vars := map[string]any{
-		"id":    issueID,
-		"input": map[string]any{"parentId": parentID},
+	vars := issueUpdateVars{
+		ID:    issueID,
+		Input: issueParentInput{ParentID: parentID},
 	}
 
 	return c.doQuery(ctx, issueUpdateMutation, vars, &resp)
@@ -311,9 +410,9 @@ func (c *Client) GetTicket(ctx context.Context, identifier string) (*Ticket, err
 		} `json:"data"`
 	}
 
-	vars := map[string]any{
-		"filter": map[string]any{
-			"identifier": map[string]any{"eq": identifier},
+	vars := issueFilterVars{
+		Filter: issueFilter{
+			Identifier: &eqFilter{Eq: identifier},
 		},
 	}
 
@@ -349,9 +448,9 @@ func (c *Client) ListChildren(ctx context.Context, parentID string) ([]Ticket, e
 		} `json:"data"`
 	}
 
-	vars := map[string]any{
-		"filter": map[string]any{
-			"parent": map[string]any{"id": map[string]any{"eq": parentID}},
+	vars := issueFilterVars{
+		Filter: issueFilter{
+			Parent: &idFilter{ID: &eqFilter{Eq: parentID}},
 		},
 	}
 
@@ -379,11 +478,11 @@ func (c *Client) AddDependency(ctx context.Context, issueID, dependsOnID string)
 		} `json:"data"`
 	}
 
-	vars := map[string]any{
-		"input": map[string]any{
-			"issueId":        issueID,
-			"relatedIssueId": dependsOnID,
-			"type":           "blocks",
+	vars := issueRelationVars{
+		Input: issueRelationInput{
+			IssueID:        issueID,
+			RelatedIssueID: dependsOnID,
+			Type:           "blocks",
 		},
 	}
 
@@ -407,7 +506,7 @@ func (c *Client) getIssue(ctx context.Context, issueID string) (*Ticket, error) 
 		} `json:"data"`
 	}
 
-	if err := c.doQuery(ctx, query, map[string]any{"id": issueID}, &resp); err != nil {
+	if err := c.doQuery(ctx, query, issueIDVars{ID: issueID}, &resp); err != nil {
 		return nil, err
 	}
 
@@ -440,10 +539,10 @@ func (c *Client) resolveStateID(
 		} `json:"data"`
 	}
 
-	vars := map[string]any{
-		"filter": map[string]any{
-			"team": map[string]any{"id": map[string]any{"eq": teamID}},
-			"name": map[string]any{"eq": stateName},
+	vars := stateFilterVars{
+		Filter: stateFilter{
+			Team: &idFilter{ID: &eqFilter{Eq: teamID}},
+			Name: &eqFilter{Eq: stateName},
 		},
 	}
 
@@ -459,46 +558,24 @@ func (c *Client) resolveStateID(
 }
 
 // doQuery executes a GraphQL query against the Linear API.
+// Variables accepts any serializable struct (typed input structs or map[string]any).
 func (c *Client) doQuery(
 	ctx context.Context,
 	query string,
-	variables map[string]any,
+	variables any,
 	result any,
 ) error {
-	body, err := json.Marshal(map[string]any{
-		"query":     query,
-		"variables": variables,
+	body, err := json.Marshal(graphqlRequest{
+		Query:     query,
+		Variables: variables,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodPost,
-		apiURL,
-		bytes.NewReader(body),
-	)
+	respBody, err := c.doHTTP(ctx, body)
 	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", c.apiKey)
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("http request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("linear API %d: %s", resp.StatusCode, string(respBody))
+		return err
 	}
 
 	// Check for GraphQL errors.
@@ -516,4 +593,61 @@ func (c *Client) doQuery(
 	}
 
 	return nil
+}
+
+// doHTTP sends a POST to the Linear API and handles 429 retry once.
+func (c *Client) doHTTP(ctx context.Context, body []byte) ([]byte, error) {
+	for attempt := range 2 {
+		req, err := http.NewRequestWithContext(
+			ctx,
+			http.MethodPost,
+			apiURL,
+			bytes.NewReader(body),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("create request: %w", err)
+		}
+
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", c.apiKey)
+
+		resp, err := c.client.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("http request: %w", err)
+		}
+
+		respBody, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+
+		if readErr != nil {
+			return nil, fmt.Errorf("read response: %w", readErr)
+		}
+
+		if resp.StatusCode == http.StatusTooManyRequests && attempt == 0 {
+			wait := defaultRetryAfter
+			if ra := resp.Header.Get("Retry-After"); ra != "" {
+				if secs, parseErr := strconv.Atoi(ra); parseErr == nil {
+					wait = time.Duration(secs) * time.Second
+				}
+			}
+
+			c.logger.Warn("linear rate limited, retrying",
+				"retry_after", wait.String())
+
+			select {
+			case <-time.After(wait):
+				continue
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("linear API %d: %s", resp.StatusCode, string(respBody))
+		}
+
+		return respBody, nil
+	}
+
+	return nil, errors.New("linear API: exhausted retries")
 }

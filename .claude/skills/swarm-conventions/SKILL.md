@@ -108,7 +108,7 @@ All primitives accept `--dry-run`. When active:
 
 ## Rate Limits
 
-Linear API: 1500 req/hr. Batch sequentially. `linear-cli` handles 429 retry.
+Linear API: 1500 req/hr. Batch sequentially. Go client serializes mutations via mutex and retries on 429.
 
 ## Error Handling
 

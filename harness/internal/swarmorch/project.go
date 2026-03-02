@@ -13,6 +13,7 @@ import (
 	temporalClient "go.temporal.io/sdk/client"
 
 	"creative-mode/harness/internal/db/sqlc"
+	"creative-mode/harness/internal/linear"
 	"creative-mode/harness/internal/swarm"
 )
 
@@ -77,7 +78,7 @@ func (m *Manager) SpawnProjectChildren(ctx context.Context, wf sqlc.SwarmWorkflo
 			ID:         childID,
 			Identifier: identifier,
 			Title:      pt.Title,
-			Status:     "Todo",
+			Status:     linear.StatusTodo,
 			ParentID:   sql.NullString{String: wf.TicketID, Valid: true},
 			ProjectID:  sql.NullString{String: projectID, Valid: true},
 			Url:        "", // Will be updated if Linear creates the ticket.
@@ -108,7 +109,7 @@ func (m *Manager) SpawnProjectChildren(ctx context.Context, wf sqlc.SwarmWorkflo
 			ID:         childID,
 			Identifier: linearID,
 			Title:      pt.Title,
-			Status:     "Todo",
+			Status:     linear.StatusTodo,
 			ParentID:   sql.NullString{String: wf.TicketID, Valid: true},
 			ProjectID:  sql.NullString{String: projectID, Valid: true},
 			Url:        "",

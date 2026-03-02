@@ -12,6 +12,19 @@ import (
 	"creative-mode/harness/internal/swarm"
 )
 
+const archiveOldLowRelevanceLearnings = `-- name: ArchiveOldLowRelevanceLearnings :exec
+UPDATE swarm_learnings
+SET archived_at = datetime('now'), updated_at = datetime('now')
+WHERE archived_at IS NULL
+  AND relevance_score < 0.1
+  AND created_at < datetime('now', '-60 days')
+`
+
+func (q *Queries) ArchiveOldLowRelevanceLearnings(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, archiveOldLowRelevanceLearnings)
+	return err
+}
+
 const archiveSwarmLearning = `-- name: ArchiveSwarmLearning :exec
 UPDATE swarm_learnings SET archived_at = datetime('now'), updated_at = datetime('now') WHERE id = ?
 `

@@ -35,18 +35,34 @@ func NewJSONLWriter(logsDir, ticketID, sessionID string) (*JSONLWriter, error) {
 	return &JSONLWriter{file: f}, nil
 }
 
-// Write appends a JSON log entry with a timestamp.
-func (w *JSONLWriter) Write(event map[string]any) error {
+// Write appends a JSON log entry with a timestamp. Accepts any serializable
+// struct (typed event structs from events.go or map[string]any).
+func (w *JSONLWriter) Write(event any) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	if event["ts"] == nil {
-		event["ts"] = time.Now().UTC().Format(time.RFC3339)
-	}
-
+	// Marshal the event, then inject a "ts" field.
 	data, err := json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("marshal log entry: %w", err)
+	}
+
+	// Inject timestamp if not already present.
+	var raw map[string]json.RawMessage
+	if json.Unmarshal(data, &raw) == nil {
+		if _, hasTSField := raw["ts"]; !hasTSField {
+			tsJSON, tsErr := json.Marshal(time.Now().UTC().Format(time.RFC3339))
+			if tsErr != nil {
+				return fmt.Errorf("marshal timestamp: %w", tsErr)
+			}
+
+			raw["ts"] = tsJSON
+
+			data, err = json.Marshal(raw)
+			if err != nil {
+				return fmt.Errorf("marshal with ts: %w", err)
+			}
+		}
 	}
 
 	data = append(data, '\n')

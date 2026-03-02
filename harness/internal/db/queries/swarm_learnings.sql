@@ -39,6 +39,13 @@ WHERE archived_at IS NULL AND relevance_score > 0.1;
 -- name: ArchiveSwarmLearning :exec
 UPDATE swarm_learnings SET archived_at = datetime('now'), updated_at = datetime('now') WHERE id = ?;
 
+-- name: ArchiveOldLowRelevanceLearnings :exec
+UPDATE swarm_learnings
+SET archived_at = datetime('now'), updated_at = datetime('now')
+WHERE archived_at IS NULL
+  AND relevance_score < 0.1
+  AND created_at < datetime('now', '-60 days');
+
 -- name: ListRecentSwarmLearnings :many
 SELECT id, source_workflow_id, source_session_id, ticket_id, category, phase, severity, title, content, doc_path, tags, relevance_score, referenced_count, archived_at, created_at, updated_at
 FROM swarm_learnings

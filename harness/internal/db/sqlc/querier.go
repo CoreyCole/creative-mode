@@ -10,6 +10,7 @@ import (
 )
 
 type Querier interface {
+	ArchiveOldLowRelevanceLearnings(ctx context.Context) error
 	ArchiveSwarmLearning(ctx context.Context, id string) error
 	CompleteSwarmSession(ctx context.Context, arg CompleteSwarmSessionParams) error
 	CountActiveBuilds(ctx context.Context, createdBy sql.NullString) (int64, error)

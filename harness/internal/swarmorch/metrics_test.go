@@ -176,10 +176,10 @@ func TestGetMetricsLearnings(t *testing.T) {
 
 	ctx := t.Context()
 
-	// Seed learnings via the swarm capture functions.
-	_ = swarm.CapturePlanIssue(ctx, database.SQLDB(), "", "", "TKT-L1", "plan issue 1")
-	_ = swarm.CapturePlanIssue(ctx, database.SQLDB(), "", "", "TKT-L2", "plan issue 2")
-	_ = swarm.CaptureCodeBug(ctx, database.SQLDB(), "", "", "TKT-L3", "code bug 1")
+	// Seed learnings via the Manager capture methods.
+	_ = mgr.capturePlanIssue(ctx, "", "", "TKT-L1", "plan issue 1")
+	_ = mgr.capturePlanIssue(ctx, "", "", "TKT-L2", "plan issue 2")
+	_ = mgr.captureCodeBug(ctx, "", "", "TKT-L3", "code bug 1")
 
 	metrics, err := mgr.GetMetrics(ctx, "all")
 	if err != nil {

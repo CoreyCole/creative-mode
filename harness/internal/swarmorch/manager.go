@@ -127,10 +127,7 @@ func (m *Manager) StartWorkflow(
 
 	wfID := uuid.New().String()[:8]
 
-	prevWF := sql.NullString{}
-	if previousWorkflowID != "" {
-		prevWF = sql.NullString{String: previousWorkflowID, Valid: true}
-	}
+	prevWF := toNullString(previousWorkflowID)
 
 	if err := m.db.CreateSwarmWorkflow(ctx, sqlc.CreateSwarmWorkflowParams{
 		ID:                 wfID,
@@ -149,10 +146,10 @@ func (m *Manager) StartWorkflow(
 		ID:         ticketID,
 		Identifier: ticketID,
 		Title:      ticketID,
-		Status:     "In Progress",
+		Status:     linear.StatusInProgress,
 		Url:        ticketURL,
-		CreatedAt:  time.Now().UTC().Format(time.RFC3339),
-		UpdatedAt:  time.Now().UTC().Format(time.RFC3339),
+		CreatedAt:  nowUTC(),
+		UpdatedAt:  nowUTC(),
 	})
 
 	m.emitEvent(
@@ -166,11 +163,11 @@ func (m *Manager) StartWorkflow(
 	)
 
 	if m.eventBus != nil {
-		m.eventBus.PublishGlobal(map[string]any{
-			"event":         events.EventSwarmWorkflowStarted,
-			"workflow_id":   wfID,
-			"ticket_id":     ticketID,
-			"workflow_type": string(workflowType),
+		m.eventBus.PublishGlobal(WorkflowStartedEvent{
+			Event:        events.EventSwarmWorkflowStarted,
+			WorkflowID:   wfID,
+			TicketID:     ticketID,
+			WorkflowType: string(workflowType),
 		})
 	}
 
@@ -341,13 +338,13 @@ func (m *Manager) spawnSession(ctx context.Context, wf sqlc.SwarmWorkflow) error
 		m.jsonlWriters[sessionID] = jw
 		m.jsonlMu.Unlock()
 
-		_ = jw.Write(map[string]any{
-			"event":       "session_spawned",
-			"session_id":  sessionID,
-			"workflow_id": wf.ID,
-			"ticket_id":   wf.TicketID,
-			"phase":       string(wf.Phase),
-			"skill":       skill,
+		_ = jw.Write(SessionJSONLEvent{
+			Event:      string(swarm.EventSessionSpawned),
+			SessionID:  sessionID,
+			WorkflowID: wf.ID,
+			TicketID:   wf.TicketID,
+			Phase:      wf.Phase,
+			Skill:      skill,
 		})
 	}
 
@@ -378,13 +375,13 @@ func (m *Manager) spawnSession(ctx context.Context, wf sqlc.SwarmWorkflow) error
 	)
 
 	if m.eventBus != nil {
-		m.eventBus.PublishGlobal(map[string]any{
-			"event":       events.EventSwarmSessionSpawned,
-			"workflow_id": wf.ID,
-			"session_id":  sessionID,
-			"ticket_id":   wf.TicketID,
-			"phase":       string(wf.Phase),
-			"skill":       skill,
+		m.eventBus.PublishGlobal(SessionSpawnedEvent{
+			Event:      events.EventSwarmSessionSpawned,
+			WorkflowID: wf.ID,
+			SessionID:  sessionID,
+			TicketID:   wf.TicketID,
+			Phase:      string(wf.Phase),
+			Skill:      skill,
 		})
 	}
 
@@ -509,7 +506,7 @@ func (m *Manager) handleSessionComplete(ctx context.Context, sessionID string) {
 
 	if completeErr := m.db.CompleteSwarmSession(ctx, sqlc.CompleteSwarmSessionParams{
 		Result:      result.Result,
-		Detail:      sql.NullString{String: result.Summary, Valid: result.Summary != ""},
+		Detail:      toNullString(result.Summary),
 		DurationSec: sql.NullInt64{Int64: durationSec, Valid: durationSec > 0},
 		ID:          sessionID,
 	}); completeErr != nil {
@@ -533,13 +530,13 @@ func (m *Manager) handleSessionComplete(ctx context.Context, sessionID string) {
 	)
 
 	if m.eventBus != nil {
-		m.eventBus.PublishGlobal(map[string]any{
-			"event":       events.EventSwarmSessionComplete,
-			"workflow_id": session.WorkflowID,
-			"session_id":  sessionID,
-			"phase":       string(session.Phase),
-			"result":      string(result.Result),
-			"summary":     result.Summary,
+		m.eventBus.PublishGlobal(SessionCompleteEvent{
+			Event:      events.EventSwarmSessionComplete,
+			WorkflowID: session.WorkflowID,
+			SessionID:  sessionID,
+			Phase:      string(session.Phase),
+			Result:     string(result.Result),
+			Summary:    result.Summary,
 		})
 	}
 
@@ -633,16 +630,16 @@ func (m *Manager) advanceWorkflow(
 		)
 
 		if m.eventBus != nil {
-			m.eventBus.PublishGlobal(map[string]any{
-				"event":       events.EventSwarmWorkflowComplete,
-				"workflow_id": wf.ID,
-				"ticket_id":   wf.TicketID,
+			m.eventBus.PublishGlobal(WorkflowCompleteEvent{
+				Event:      events.EventSwarmWorkflowComplete,
+				WorkflowID: wf.ID,
+				TicketID:   wf.TicketID,
 			})
 		}
 
 		// Capture success pattern.
 		hadRetries := wf.Attempt > 1
-		_ = swarm.CaptureSuccessPattern(ctx, m.db.SQLDB(), wf.ID, wf.TicketID, hadRetries)
+		_ = m.captureSuccessPattern(ctx, wf.ID, wf.TicketID, hadRetries)
 
 		m.linearComment(
 			wf.TicketID,
@@ -652,7 +649,7 @@ func (m *Manager) advanceWorkflow(
 				result.Summary,
 			),
 		)
-		m.linearUpdateStatus(wf.TicketID, "Done")
+		m.linearUpdateStatus(wf.TicketID, linear.StatusDone)
 
 		return
 	}
@@ -680,19 +677,18 @@ func (m *Manager) advanceWorkflow(
 		)
 
 		if m.eventBus != nil {
-			m.eventBus.PublishGlobal(map[string]any{
-				"event":       events.EventSwarmWorkflowFailed,
-				"workflow_id": wf.ID,
-				"ticket_id":   wf.TicketID,
-				"phase":       string(wf.Phase),
-				"reason":      result.Summary,
+			m.eventBus.PublishGlobal(WorkflowFailedEvent{
+				Event:      events.EventSwarmWorkflowFailed,
+				WorkflowID: wf.ID,
+				TicketID:   wf.TicketID,
+				Phase:      string(wf.Phase),
+				Reason:     result.Summary,
 			})
 		}
 
 		// Capture terminal failure learning.
-		_ = swarm.CaptureTerminalFailure(
+		_ = m.captureTerminalFailure(
 			ctx,
-			m.db.SQLDB(),
 			wf.ID,
 			"",
 			wf.TicketID,
@@ -816,13 +812,10 @@ func (m *Manager) captureLearnings(
 	session sqlc.SwarmSession,
 	result *swarm.SessionResultData,
 ) {
-	rawDB := m.db.SQLDB()
-
 	switch {
 	case result.Result == swarm.ResultLogicFailure && session.Phase == swarm.PhasePlanReview:
-		_ = swarm.CapturePlanIssue(
+		_ = m.capturePlanIssue(
 			ctx,
-			rawDB,
 			wf.ID,
 			session.ID,
 			wf.TicketID,
@@ -830,9 +823,8 @@ func (m *Manager) captureLearnings(
 		)
 
 	case result.Result == swarm.ResultLogicFailure && session.Phase == swarm.PhaseVerify:
-		_ = swarm.CaptureCodeBug(
+		_ = m.captureCodeBug(
 			ctx,
-			rawDB,
 			wf.ID,
 			session.ID,
 			wf.TicketID,
@@ -840,9 +832,8 @@ func (m *Manager) captureLearnings(
 		)
 
 	case result.Result == swarm.ResultInfraFailure || result.Result == swarm.ResultTimeout:
-		_ = swarm.CaptureTerminalFailure(
+		_ = m.captureTerminalFailure(
 			ctx,
-			rawDB,
 			wf.ID,
 			session.ID,
 			wf.TicketID,
@@ -899,7 +890,7 @@ func (m *Manager) buildEnv(
 		se.HookSecret = hookSecret
 	}
 
-	if os.Getenv(swarm.EnvKey("DryRun")) == "true" {
+	if os.Getenv(swarm.EnvKey("DryRun")) == "true" { //nolint:goconst // env var check
 		se.DryRun = "true"
 	}
 
@@ -910,9 +901,8 @@ func (m *Manager) buildEnv(
 	}
 
 	// Build learning context and write to temp file.
-	learningCtx, learningErr := swarm.GetLearningContext(
+	learningCtx, learningErr := m.getLearningContext(
 		ctx,
-		m.db.SQLDB(),
 		wf.TicketID,
 		wf.Phase,
 	)
@@ -1108,12 +1098,12 @@ func (m *Manager) emitEvent(
 
 	if err := m.db.CreateSwarmEvent(ctx, sqlc.CreateSwarmEventParams{
 		ID:         uuid.New().String()[:8],
-		WorkflowID: sql.NullString{String: workflowID, Valid: workflowID != ""},
-		SessionID:  sql.NullString{String: sessionID, Valid: sessionID != ""},
+		WorkflowID: toNullString(workflowID),
+		SessionID:  toNullString(sessionID),
 		TicketID:   ticketID,
 		EventType:  eventType,
-		Phase:      sql.NullString{String: string(phase), Valid: phase != ""},
-		Detail:     sql.NullString{String: detail, Valid: detail != ""},
+		Phase:      toNullString(string(phase)),
+		Detail:     toNullString(detail),
 	}); err != nil {
 		m.logger.Error("emit swarm event", "type", eventType, "error", err)
 	}
@@ -1197,7 +1187,7 @@ func (m *Manager) closeJSONLWriter(sessionID string) {
 }
 
 // WriteJSONLEvent writes an event to the JSONL log for a session.
-func (m *Manager) WriteJSONLEvent(sessionID string, event map[string]any) {
+func (m *Manager) WriteJSONLEvent(sessionID string, event any) {
 	m.jsonlMu.RLock()
 	jw, ok := m.jsonlWriters[sessionID]
 	m.jsonlMu.RUnlock()
@@ -1314,7 +1304,7 @@ func (m *Manager) maintenanceLoop(ctx context.Context) {
 			m.CheckProjectProgress(ctx)
 
 		case <-decayTicker.C:
-			if err := swarm.DecayLearningRelevance(ctx, m.db.SQLDB()); err != nil {
+			if err := m.decayLearningRelevance(ctx); err != nil {
 				m.logger.Error("decay learning relevance", "error", err)
 			}
 

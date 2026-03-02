@@ -146,10 +146,11 @@ func TestGenerateDigestWithLearnings(t *testing.T) {
 
 	ctx := t.Context()
 
-	// Seed learnings via the raw SQL helper (same as existing tests).
-	_ = swarm.CapturePlanIssue(ctx, database.SQLDB(), "", "", "TKT-D1", "plan issue 1")
-	_ = swarm.CapturePlanIssue(ctx, database.SQLDB(), "", "", "TKT-D2", "plan issue 2")
-	_ = swarm.CaptureCodeBug(ctx, database.SQLDB(), "", "", "TKT-D3", "code bug 1")
+	// Seed learnings via the Manager capture methods.
+	mgr := NewManager(database, testLogger(), nil, t.TempDir(), t.TempDir(), "")
+	_ = mgr.capturePlanIssue(ctx, "", "", "TKT-D1", "plan issue 1")
+	_ = mgr.capturePlanIssue(ctx, "", "", "TKT-D2", "plan issue 2")
+	_ = mgr.captureCodeBug(ctx, "", "", "TKT-D3", "code bug 1")
 
 	err := GenerateDigest(ctx, database, baseDir)
 	if err != nil {

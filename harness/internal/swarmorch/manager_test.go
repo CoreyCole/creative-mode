@@ -87,7 +87,8 @@ CREATE TABLE IF NOT EXISTS swarm_tickets (
     url         TEXT NOT NULL DEFAULT '',
     created_at  TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
-    synced_at   TEXT NOT NULL DEFAULT (datetime('now'))
+    synced_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    description TEXT
 );
 CREATE TABLE IF NOT EXISTS swarm_config (
     id     TEXT PRIMARY KEY,
@@ -133,13 +134,14 @@ CREATE TABLE IF NOT EXISTS swarm_ticket_dependencies (
     UNIQUE(ticket_id, depends_on_ticket_id)
 );
 CREATE TABLE IF NOT EXISTS swarm_gate_reviews (
-    id           TEXT PRIMARY KEY,
-    workflow_id  TEXT NOT NULL REFERENCES swarm_workflows(id),
-    gate_phase   TEXT NOT NULL,
-    action       TEXT NOT NULL,
-    feedback     TEXT,
-    reviewer     TEXT,
-    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+    id              TEXT PRIMARY KEY,
+    workflow_id     TEXT NOT NULL REFERENCES swarm_workflows(id),
+    gate_phase      TEXT NOT NULL,
+    action          TEXT NOT NULL,
+    feedback        TEXT,
+    reviewer        TEXT,
+    revision_target TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 `
 

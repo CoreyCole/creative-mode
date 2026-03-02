@@ -41,6 +41,15 @@ func (q *Queries) DeleteSwarmDependenciesByProject(ctx context.Context, projectI
 	return err
 }
 
+const deleteSwarmTicketsByProject = `-- name: DeleteSwarmTicketsByProject :exec
+DELETE FROM swarm_tickets WHERE project_id = ?
+`
+
+func (q *Queries) DeleteSwarmTicketsByProject(ctx context.Context, projectID sql.NullString) error {
+	_, err := q.db.ExecContext(ctx, deleteSwarmTicketsByProject, projectID)
+	return err
+}
+
 const listSwarmDependenciesByProject = `-- name: ListSwarmDependenciesByProject :many
 SELECT id, ticket_id, depends_on_ticket_id, project_id, created_at
 FROM swarm_ticket_dependencies
@@ -114,7 +123,7 @@ func (q *Queries) ListSwarmDependenciesByTicket(ctx context.Context, ticketID st
 }
 
 const listSwarmTicketsByParent = `-- name: ListSwarmTicketsByParent :many
-SELECT id, identifier, title, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at
+SELECT id, identifier, title, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at, description
 FROM swarm_tickets
 WHERE parent_id = ?
 ORDER BY created_at ASC
@@ -143,6 +152,7 @@ func (q *Queries) ListSwarmTicketsByParent(ctx context.Context, parentID sql.Nul
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.SyncedAt,
+			&i.Description,
 		); err != nil {
 			return nil, err
 		}
@@ -158,7 +168,7 @@ func (q *Queries) ListSwarmTicketsByParent(ctx context.Context, parentID sql.Nul
 }
 
 const listSwarmTicketsByProject = `-- name: ListSwarmTicketsByProject :many
-SELECT id, identifier, title, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at
+SELECT id, identifier, title, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at, description
 FROM swarm_tickets
 WHERE project_id = ?
 ORDER BY created_at ASC
@@ -187,6 +197,7 @@ func (q *Queries) ListSwarmTicketsByProject(ctx context.Context, projectID sql.N
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.SyncedAt,
+			&i.Description,
 		); err != nil {
 			return nil, err
 		}

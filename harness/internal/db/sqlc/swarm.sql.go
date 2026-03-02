@@ -279,7 +279,7 @@ func (q *Queries) GetSwarmSession(ctx context.Context, id string) (SwarmSession,
 }
 
 const getSwarmTicket = `-- name: GetSwarmTicket :one
-SELECT id, identifier, title, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at
+SELECT id, identifier, title, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at, description
 FROM swarm_tickets WHERE id = ?
 `
 
@@ -300,12 +300,13 @@ func (q *Queries) GetSwarmTicket(ctx context.Context, id string) (SwarmTicket, e
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.SyncedAt,
+		&i.Description,
 	)
 	return i, err
 }
 
 const getSwarmTicketByIdentifier = `-- name: GetSwarmTicketByIdentifier :one
-SELECT id, identifier, title, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at
+SELECT id, identifier, title, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at, description
 FROM swarm_tickets WHERE identifier = ?
 `
 
@@ -326,6 +327,7 @@ func (q *Queries) GetSwarmTicketByIdentifier(ctx context.Context, identifier str
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.SyncedAt,
+		&i.Description,
 	)
 	return i, err
 }
@@ -838,7 +840,7 @@ func (q *Queries) ListSwarmTicketComments(ctx context.Context, ticketID string) 
 }
 
 const listSwarmTickets = `-- name: ListSwarmTickets :many
-SELECT id, identifier, title, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at
+SELECT id, identifier, title, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at, description
 FROM swarm_tickets ORDER BY updated_at DESC
 `
 
@@ -865,6 +867,7 @@ func (q *Queries) ListSwarmTickets(ctx context.Context) ([]SwarmTicket, error) {
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.SyncedAt,
+			&i.Description,
 		); err != nil {
 			return nil, err
 		}
@@ -969,6 +972,20 @@ func (q *Queries) UpdateSwarmMilestoneStatus(ctx context.Context, arg UpdateSwar
 	return err
 }
 
+const updateSwarmTicketDescription = `-- name: UpdateSwarmTicketDescription :exec
+UPDATE swarm_tickets SET description = ?, updated_at = datetime('now') WHERE id = ?
+`
+
+type UpdateSwarmTicketDescriptionParams struct {
+	Description sql.NullString
+	ID          string
+}
+
+func (q *Queries) UpdateSwarmTicketDescription(ctx context.Context, arg UpdateSwarmTicketDescriptionParams) error {
+	_, err := q.db.ExecContext(ctx, updateSwarmTicketDescription, arg.Description, arg.ID)
+	return err
+}
+
 const updateSwarmWorkflowBranch = `-- name: UpdateSwarmWorkflowBranch :exec
 UPDATE swarm_workflows SET branch_name = ?, updated_at = datetime('now') WHERE id = ?
 `
@@ -1044,10 +1061,11 @@ func (q *Queries) UpdateSwarmWorkflowStatus(ctx context.Context, arg UpdateSwarm
 
 const upsertSwarmTicket = `-- name: UpsertSwarmTicket :exec
 
-INSERT INTO swarm_tickets (id, identifier, title, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+INSERT INTO swarm_tickets (id, identifier, title, description, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 ON CONFLICT(id) DO UPDATE SET
     title = excluded.title,
+    description = excluded.description,
     status = excluded.status,
     priority = excluded.priority,
     assignee = excluded.assignee,
@@ -1060,18 +1078,19 @@ ON CONFLICT(id) DO UPDATE SET
 `
 
 type UpsertSwarmTicketParams struct {
-	ID         string
-	Identifier string
-	Title      string
-	Status     string
-	Priority   sql.NullInt64
-	Assignee   sql.NullString
-	Labels     sql.NullString
-	ParentID   sql.NullString
-	ProjectID  sql.NullString
-	Url        string
-	CreatedAt  string
-	UpdatedAt  string
+	ID          string
+	Identifier  string
+	Title       string
+	Description sql.NullString
+	Status      string
+	Priority    sql.NullInt64
+	Assignee    sql.NullString
+	Labels      sql.NullString
+	ParentID    sql.NullString
+	ProjectID   sql.NullString
+	Url         string
+	CreatedAt   string
+	UpdatedAt   string
 }
 
 // swarm_tickets
@@ -1080,6 +1099,7 @@ func (q *Queries) UpsertSwarmTicket(ctx context.Context, arg UpsertSwarmTicketPa
 		arg.ID,
 		arg.Identifier,
 		arg.Title,
+		arg.Description,
 		arg.Status,
 		arg.Priority,
 		arg.Assignee,

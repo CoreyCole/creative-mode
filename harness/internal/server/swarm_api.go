@@ -442,6 +442,62 @@ func (s *Server) handleSwarmListGated(c echo.Context) error {
 	return c.JSON(http.StatusOK, workflows)
 }
 
+// handleSwarmCreateProject creates a Linear ticket and starts a project workflow.
+func (s *Server) handleSwarmCreateProject(c echo.Context) error {
+	if s.SwarmManager == nil {
+		return echo.NewHTTPError(
+			http.StatusServiceUnavailable,
+			"swarm manager not configured",
+		)
+	}
+
+	var req struct {
+		Title       string `json:"title"`
+		Description string `json:"description"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
+	}
+	if req.Title == "" || req.Description == "" {
+		return echo.NewHTTPError(
+			http.StatusBadRequest,
+			"title and description are required",
+		)
+	}
+
+	ctx := c.Request().Context()
+
+	// Create the project ticket (Linear + DB).
+	ticketID, ticketURL, err := s.SwarmManager.CreateProjectTicket(
+		ctx, req.Title, req.Description,
+	)
+	if err != nil {
+		s.Logger.Error("failed to create project ticket", "error", err)
+
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
+
+	// Start the project workflow.
+	wfID, wfErr := s.SwarmManager.StartWorkflow(
+		ctx,
+		ticketID,
+		swarm.WorkflowTypeProject,
+		ticketURL,
+		"",
+	)
+	if wfErr != nil {
+		s.Logger.Error("failed to start project workflow", "error", wfErr)
+
+		return echo.NewHTTPError(http.StatusInternalServerError, wfErr.Error())
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{
+		"workflow_id": wfID,
+		"ticket_id":   ticketID,
+		"ticket_url":  ticketURL,
+	})
+}
+
 // handleSwarmLatestDigest returns the most recent learning digest.
 func (s *Server) handleSwarmLatestDigest(c echo.Context) error {
 	digest, err := s.DB.GetLatestSwarmLearningDigest(c.Request().Context())

@@ -178,19 +178,20 @@ type SwarmSession struct {
 }
 
 type SwarmTicket struct {
-	ID         string
-	Identifier string
-	Title      string
-	Status     string
-	Priority   sql.NullInt64
-	Assignee   sql.NullString
-	Labels     sql.NullString
-	ParentID   sql.NullString
-	ProjectID  sql.NullString
-	Url        string
-	CreatedAt  string
-	UpdatedAt  string
-	SyncedAt   string
+	ID          string
+	Identifier  string
+	Title       string
+	Status      string
+	Priority    sql.NullInt64
+	Assignee    sql.NullString
+	Labels      sql.NullString
+	ParentID    sql.NullString
+	ProjectID   sql.NullString
+	Url         string
+	CreatedAt   string
+	UpdatedAt   string
+	SyncedAt    string
+	Description sql.NullString
 }
 
 type SwarmTicketComment struct {

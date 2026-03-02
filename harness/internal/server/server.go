@@ -165,6 +165,7 @@ func (s *Server) RegisterRoutes(e *echo.Echo) {
 	// Swarm API (protected by CM_HOOK_SECRET).
 	swarmGroup := e.Group("/api/swarm", hookSecretMiddleware())
 	swarmGroup.POST("/start", s.handleSwarmStart)
+	swarmGroup.POST("/create-project", s.handleSwarmCreateProject)
 	swarmGroup.GET("/status/:id", s.handleSwarmStatus)
 	swarmGroup.POST("/cancel", s.handleSwarmCancel)
 	swarmGroup.GET("/session/:id/log", s.handleSwarmSessionLog)

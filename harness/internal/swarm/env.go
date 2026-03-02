@@ -41,6 +41,9 @@ type SwarmEnv struct {
 	// Review feedback from human gate rejection.
 	ReviewFeedback string `envconfig:"CM_SWARM_REVIEW_FEEDBACK"`
 
+	// Ticket description file path (project instructions from parent Linear ticket).
+	TicketDescriptionPath string `envconfig:"CM_SWARM_TICKET_DESCRIPTION_PATH"`
+
 	// Project context (set by project orchestrator for child workflows).
 	StackParent string `envconfig:"CM_SWARM_STACK_PARENT"`
 	StackOrder  string `envconfig:"CM_SWARM_STACK_ORDER"`

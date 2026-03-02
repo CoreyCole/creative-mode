@@ -112,6 +112,48 @@ func NewManager(
 	}
 }
 
+// CreateProjectTicket creates a Linear ticket for a self-directed project and stores
+// the description in the local DB. Returns (ticketID, ticketURL, error).
+func (m *Manager) CreateProjectTicket(
+	ctx context.Context,
+	title, description string,
+) (string, string, error) {
+	var ticketID, ticketURL string
+
+	if m.linearClient != nil {
+		result, err := m.linearClient.CreateTicketWithURL(
+			ctx,
+			title,
+			description,
+			nil,
+			"",
+		)
+		if err != nil {
+			return "", "", fmt.Errorf("create linear ticket: %w", err)
+		}
+
+		ticketID = result.Identifier
+		ticketURL = result.URL
+	} else {
+		// No Linear client — generate a local identifier.
+		ticketID = "LOCAL-" + uuid.New().String()[:6]
+	}
+
+	// Store in DB with description.
+	_ = m.db.UpsertSwarmTicket(ctx, sqlc.UpsertSwarmTicketParams{
+		ID:          ticketID,
+		Identifier:  ticketID,
+		Title:       title,
+		Description: sql.NullString{String: description, Valid: true},
+		Status:      linear.StatusTodo,
+		Url:         ticketURL,
+		CreatedAt:   nowUTC(),
+		UpdatedAt:   nowUTC(),
+	})
+
+	return ticketID, ticketURL, nil
+}
+
 // StartWorkflow creates a new workflow record, emits events, and spawns
 // the first session. Returns the workflow ID.
 func (m *Manager) StartWorkflow(
@@ -862,13 +904,37 @@ func (m *Manager) advanceWorkflow(
 		}
 	}
 
-	// Project review → project_verify: spawn child tickets, don't spawn a
-	// verify session yet. The heartbeat will check child progress and spawn
-	// the verify session when all children complete.
+	// Project plan → project_review: create child tickets from the plan
+	// before the review session starts. Tickets are reviewed during
+	// project_review; workflows are spawned only after approval.
+	if wf.Phase == swarm.PhaseProjectPlan &&
+		transition.NextPhase == swarm.PhaseProjectReview {
+		if ticketErr := m.CreateProjectTicketsFromPlan(ctx, wf); ticketErr != nil {
+			m.logger.Error("create project tickets from plan",
+				"workflow_id", wf.ID, "error", ticketErr)
+		}
+		// Fall through to normal advance (spawn project_review session).
+	}
+
+	// Project review → project_plan (rejection retry): reconcile old tickets
+	// before re-planning.
+	if wf.Phase == swarm.PhaseProjectReview &&
+		transition.NextPhase == swarm.PhaseProjectPlan &&
+		transition.Retry {
+		if reconcileErr := m.ReconcileProjectTickets(ctx, wf); reconcileErr != nil {
+			m.logger.Error("reconcile project tickets",
+				"workflow_id", wf.ID, "error", reconcileErr)
+		}
+		// Fall through to normal advance (spawn project_plan session).
+	}
+
+	// Project review → project_verify: spawn workflows for existing child
+	// tickets (created during project_plan → project_review transition).
+	// Don't spawn a verify session yet — the heartbeat monitors child progress.
 	if wf.Phase == swarm.PhaseProjectReview &&
 		transition.NextPhase == swarm.PhaseProjectVerify {
-		if spawnErr := m.SpawnProjectChildren(ctx, wf); spawnErr != nil {
-			m.logger.Error("spawn project children",
+		if spawnErr := m.SpawnProjectWorkflows(ctx, wf); spawnErr != nil {
+			m.logger.Error("spawn project workflows",
 				"workflow_id", wf.ID, "error", spawnErr)
 		}
 
@@ -1024,6 +1090,22 @@ func (m *Manager) buildEnv(
 		}
 	}
 
+	// Fetch ticket description for project workflows and write to temp file.
+	if wf.WorkflowType == swarm.WorkflowTypeProject {
+		descContent := m.resolveTicketDescription(ctx, wf.TicketID)
+		if descContent != "" {
+			descPath := fmt.Sprintf("/tmp/swarm-desc-%s.md", sessionID)
+			if writeErr := os.WriteFile(
+				descPath,
+				[]byte(descContent),
+				0o600,
+			); writeErr == nil {
+				se.TicketDescriptionPath = descPath
+				cleanups = append(cleanups, descPath)
+			}
+		}
+	}
+
 	// Build learning context and write to temp file.
 	learningCtx, learningErr := m.getLearningContext(
 		ctx,
@@ -1123,6 +1205,29 @@ func (m *Manager) populateStackContext(
 	}
 
 	se.StackOrder = strconv.Itoa(order)
+}
+
+// resolveTicketDescription fetches the ticket description from Linear (with DB
+// fallback) for project workflows. Returns empty string if unavailable.
+func (m *Manager) resolveTicketDescription(ctx context.Context, ticketID string) string {
+	// Try Linear first for the latest description.
+	if m.linearClient != nil {
+		linearCtx, cancel := context.WithTimeout(ctx, linearTimeout)
+		defer cancel()
+
+		ticket, err := m.linearClient.GetTicket(linearCtx, ticketID)
+		if err == nil && ticket.Description != "" {
+			return ticket.Description
+		}
+	}
+
+	// Fallback to DB.
+	dbTicket, err := m.db.GetSwarmTicket(ctx, ticketID)
+	if err == nil && dbTicket.Description.Valid {
+		return dbTicket.Description.String
+	}
+
+	return ""
 }
 
 // createTmuxSession creates a new tmux session with the given name, working
@@ -1475,8 +1580,8 @@ func (m *Manager) ApproveGate(ctx context.Context, workflowID, reviewer string) 
 			return fmt.Errorf("update phase: %w", phaseErr)
 		}
 
-		if spawnErr := m.SpawnProjectChildren(ctx, wf); spawnErr != nil {
-			m.logger.Error("spawn project children after gate approve",
+		if spawnErr := m.SpawnProjectWorkflows(ctx, wf); spawnErr != nil {
+			m.logger.Error("spawn project workflows after gate approve",
 				"workflow_id", wf.ID, "error", spawnErr)
 		}
 
@@ -1542,6 +1647,15 @@ func (m *Manager) RejectGate(
 		},
 	); err != nil {
 		return fmt.Errorf("store feedback: %w", err)
+	}
+
+	// Reconcile child tickets when project_review gate is rejected (looping
+	// back to project_plan). Old tickets will be re-created from the revised plan.
+	if gatePhase == swarm.PhaseProjectReview {
+		if reconcileErr := m.ReconcileProjectTickets(ctx, wf); reconcileErr != nil {
+			m.logger.Error("reconcile project tickets on gate rejection",
+				"workflow_id", wf.ID, "error", reconcileErr)
+		}
 	}
 
 	newAttempt := wf.Attempt + 1

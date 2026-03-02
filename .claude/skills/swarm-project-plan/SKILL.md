@@ -10,9 +10,10 @@ Creates or revises a project plan that decomposes a project ticket into child ti
 
 ## Preamble
 
-1. If `$CM_SWARM_HANDOFF_PATH` is set, read the handoff document. If this is a revision (attempt > 1), the handoff contains project-review feedback that MUST be addressed.
-2. If `$CM_SWARM_LEARNING_CONTEXT_PATH` is set, read it for relevant learnings.
-3. Load `swarm-conventions` for comment format and document path conventions.
+1. If `$CM_SWARM_TICKET_DESCRIPTION_PATH` is set, read it for the project's instructions and context (the project charter/description from the parent Linear ticket).
+2. If `$CM_SWARM_HANDOFF_PATH` is set, read the handoff document. If this is a revision (attempt > 1), the handoff contains project-review feedback that MUST be addressed.
+3. If `$CM_SWARM_LEARNING_CONTEXT_PATH` is set, read it for relevant learnings.
+4. Load `swarm-conventions` for comment format and document path conventions.
 
 ## Environment
 
@@ -27,6 +28,7 @@ Creates or revises a project plan that decomposes a project ticket into child ti
 | `CM_SWARM_AGGREGATED_RESEARCH_PATH` | Aggregated research from decompose children (if available) |
 | `CM_SWARM_LEARNING_CONTEXT_PATH` | Learning context file |
 | `CM_SWARM_RESULT_PATH` | Path to write RESULT output as final action |
+| `CM_SWARM_TICKET_DESCRIPTION_PATH` | Project instructions/charter file (if project workflow) |
 | `CM_SWARM_DRY_RUN` | If `true`, no writes |
 
 ## Process

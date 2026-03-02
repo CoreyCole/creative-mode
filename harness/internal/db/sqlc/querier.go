@@ -47,6 +47,7 @@ type Querier interface {
 	DeleteSession(ctx context.Context, id string) error
 	DeleteSessionsByUserID(ctx context.Context, userID string) error
 	DeleteSwarmDependenciesByProject(ctx context.Context, projectID string) error
+	DeleteSwarmTicketsByProject(ctx context.Context, projectID sql.NullString) error
 	DeleteUser(ctx context.Context, id string) error
 	DeleteUserPositionsByUserID(ctx context.Context, userID string) error
 	DeleteWorldInvite(ctx context.Context, arg DeleteWorldInviteParams) error
@@ -122,6 +123,7 @@ type Querier interface {
 	UpdateMayorBuildStatus(ctx context.Context, arg UpdateMayorBuildStatusParams) error
 	UpdateSwarmConfig(ctx context.Context, config string) error
 	UpdateSwarmMilestoneStatus(ctx context.Context, arg UpdateSwarmMilestoneStatusParams) error
+	UpdateSwarmTicketDescription(ctx context.Context, arg UpdateSwarmTicketDescriptionParams) error
 	UpdateSwarmWorkflowBranch(ctx context.Context, arg UpdateSwarmWorkflowBranchParams) error
 	// Human gate queries
 	UpdateSwarmWorkflowGate(ctx context.Context, arg UpdateSwarmWorkflowGateParams) error

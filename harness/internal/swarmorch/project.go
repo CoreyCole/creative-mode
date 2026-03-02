@@ -32,49 +32,35 @@ type ProjectPlanMilestone struct {
 	Criteria string
 }
 
-// SpawnProjectChildren is called when a project workflow transitions from
-// project_review to project_verify. It:
-// 1. Parses the approved project plan
-// 2. Creates child tickets (in DB and optionally in Linear)
-// 3. Stores dependency edges
-// 4. Creates milestones
-// 5. Starts Wave 1 child workflows
-func (m *Manager) SpawnProjectChildren(ctx context.Context, wf sqlc.SwarmWorkflow) error {
-	// Find the project plan document.
-	planPath, err := swarm.ResolvePlanPath(m.baseDir, wf.TicketID)
+// CreateProjectTicketsFromPlan is called when a project workflow transitions from
+// project_plan to project_review. It creates child tickets and milestones from the
+// plan but does NOT spawn any workflows — that happens after human approval via
+// SpawnProjectWorkflows.
+func (m *Manager) CreateProjectTicketsFromPlan(
+	ctx context.Context,
+	wf sqlc.SwarmWorkflow,
+) error {
+	planPath, tickets, milestones, err := m.readProjectPlan(wf)
 	if err != nil {
-		return fmt.Errorf("resolve plan path: %w", err)
+		return err
 	}
 
-	if planPath == "" {
-		return fmt.Errorf("no project plan found for ticket %s", wf.TicketID)
-	}
+	_ = planPath
 
-	//nolint:gosec // path from trusted resolver
-	planBytes, readErr := os.ReadFile(planPath)
-	if readErr != nil {
-		return fmt.Errorf("read plan: %w", readErr)
-	}
-
-	planContent := string(planBytes)
-
-	tickets, milestones := ParseProjectPlan(planContent)
 	if len(tickets) == 0 {
 		m.logger.Warn("project plan has no tickets", "workflow_id", wf.ID)
 
 		return nil
 	}
 
-	projectID := wf.ID // Use the project workflow ID as the project grouping key.
+	projectID := wf.ID
 
-	// Create child tickets and build num → identifier mapping.
 	numToID := make(map[int]string, len(tickets))
 
 	for _, pt := range tickets {
 		childID := uuid.New().String()
 		identifier := fmt.Sprintf("%s-%d", wf.TicketID, pt.Num)
 
-		// Create in DB.
 		if upsertErr := m.db.UpsertSwarmTicket(ctx, sqlc.UpsertSwarmTicketParams{
 			ID:         childID,
 			Identifier: identifier,
@@ -82,7 +68,7 @@ func (m *Manager) SpawnProjectChildren(ctx context.Context, wf sqlc.SwarmWorkflo
 			Status:     linear.StatusTodo,
 			ParentID:   sql.NullString{String: wf.TicketID, Valid: true},
 			ProjectID:  sql.NullString{String: projectID, Valid: true},
-			Url:        "", // Will be updated if Linear creates the ticket.
+			Url:        "",
 			CreatedAt:  nowUTC(),
 			UpdatedAt:  nowUTC(),
 		}); upsertErr != nil {
@@ -91,7 +77,6 @@ func (m *Manager) SpawnProjectChildren(ctx context.Context, wf sqlc.SwarmWorkflo
 
 		numToID[pt.Num] = identifier
 
-		// Create in Linear if available.
 		if m.linearClient == nil {
 			continue
 		}
@@ -105,7 +90,7 @@ func (m *Manager) SpawnProjectChildren(ctx context.Context, wf sqlc.SwarmWorkflo
 		}
 
 		numToID[pt.Num] = linearID
-		// Update DB identifier to match Linear.
+
 		_ = m.db.UpsertSwarmTicket(ctx, sqlc.UpsertSwarmTicketParams{
 			ID:         childID,
 			Identifier: linearID,
@@ -119,7 +104,142 @@ func (m *Manager) SpawnProjectChildren(ctx context.Context, wf sqlc.SwarmWorkflo
 		})
 	}
 
-	// Store dependency edges.
+	m.createDependencyEdges(ctx, tickets, numToID, projectID)
+	m.createMilestones(ctx, wf.ID, projectID, milestones)
+
+	m.logger.Info("project tickets created from plan",
+		"workflow_id", wf.ID,
+		"tickets", len(tickets),
+		"milestones", len(milestones),
+	)
+
+	m.linearComment(
+		wf.TicketID,
+		fmt.Sprintf(
+			"📋 Project planned: %d child tickets created, awaiting review",
+			len(tickets),
+		),
+	)
+
+	return nil
+}
+
+// ReconcileProjectTickets cleans up child tickets and dependencies when a project
+// plan is rejected and loops back to project_plan. Linear tickets are left as-is
+// (they can be updated or canceled separately).
+func (m *Manager) ReconcileProjectTickets(
+	ctx context.Context,
+	wf sqlc.SwarmWorkflow,
+) error {
+	projectID := wf.ID
+
+	if err := m.db.DeleteSwarmDependenciesByProject(ctx, projectID); err != nil {
+		m.logger.Warn("reconcile: delete dependencies", "error", err)
+	}
+
+	if err := m.db.DeleteSwarmTicketsByProject(
+		ctx,
+		sql.NullString{String: projectID, Valid: true},
+	); err != nil {
+		m.logger.Warn("reconcile: delete tickets", "error", err)
+	}
+
+	m.logger.Info("project tickets reconciled",
+		"workflow_id", wf.ID,
+		"project_id", projectID,
+	)
+
+	return nil
+}
+
+// SpawnProjectWorkflows is called when a project workflow transitions from
+// project_review to project_verify (after human approval). It uses the existing
+// child tickets (created during CreateProjectTicketsFromPlan) and spawns Wave 1
+// child workflows.
+func (m *Manager) SpawnProjectWorkflows(
+	ctx context.Context,
+	wf sqlc.SwarmWorkflow,
+) error {
+	projectID := wf.ID
+
+	graph := m.buildProjectGraph(ctx, projectID)
+	if len(graph.Tickets) == 0 {
+		m.logger.Warn("no child tickets found for project", "workflow_id", wf.ID)
+
+		return nil
+	}
+
+	readyTickets := graph.ReadyTickets(map[string]bool{})
+
+	for _, rt := range readyTickets {
+		if _, startErr := m.StartWorkflow(
+			ctx,
+			rt.TicketID,
+			rt.WorkflowType,
+			"",
+			"",
+		); startErr != nil {
+			m.logger.Warn("start child workflow",
+				"ticket", rt.TicketID, "error", startErr)
+		}
+	}
+
+	m.logger.Info("project workflows spawned",
+		"workflow_id", wf.ID,
+		"total_tickets", len(graph.Tickets),
+		"wave1", len(readyTickets),
+	)
+
+	m.linearComment(
+		wf.TicketID,
+		fmt.Sprintf(
+			"🚀 Project approved: %d child tickets, %d in Wave 1",
+			len(graph.Tickets),
+			len(readyTickets),
+		),
+	)
+
+	if m.temporalRuntime != nil {
+		m.startProjectOrchestrator(ctx, wf)
+	}
+
+	return nil
+}
+
+// readProjectPlan reads and parses the project plan document.
+func (m *Manager) readProjectPlan(
+	wf sqlc.SwarmWorkflow,
+) (string, []ProjectPlanTicket, []ProjectPlanMilestone, error) {
+	planPath, err := swarm.ResolvePlanPath(m.baseDir, wf.TicketID)
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("resolve plan path: %w", err)
+	}
+
+	if planPath == "" {
+		return "", nil, nil, fmt.Errorf(
+			"no project plan found for ticket %s",
+			wf.TicketID,
+		)
+	}
+
+	//nolint:gosec // path from trusted resolver
+	planBytes, readErr := os.ReadFile(planPath)
+	if readErr != nil {
+		return "", nil, nil, fmt.Errorf("read plan: %w", readErr)
+	}
+
+	tickets, milestones := ParseProjectPlan(string(planBytes))
+
+	return planPath, tickets, milestones, nil
+}
+
+// createDependencyEdges stores dependency edges in DB and optionally in Linear.
+func (m *Manager) createDependencyEdges(
+	ctx context.Context,
+	tickets []ProjectPlanTicket,
+	numToID map[int]string,
+	projectID string,
+) {
 	for _, pt := range tickets {
 		for _, depNum := range pt.Dependencies {
 			depID, ok := numToID[depNum]
@@ -142,18 +262,23 @@ func (m *Manager) SpawnProjectChildren(ctx context.Context, wf sqlc.SwarmWorkflo
 					"ticket", ticketID, "depends_on", depID, "error", createErr)
 			}
 
-			// Also create in Linear.
 			if m.linearClient != nil {
 				_ = m.linearClient.AddDependency(ctx, ticketID, depID)
 			}
 		}
 	}
+}
 
-	// Create milestones.
+// createMilestones stores project milestones in DB.
+func (m *Manager) createMilestones(
+	ctx context.Context,
+	workflowID, projectID string,
+	milestones []ProjectPlanMilestone,
+) {
 	for _, ms := range milestones {
 		if msErr := m.db.CreateSwarmMilestone(ctx, sqlc.CreateSwarmMilestoneParams{
 			ID:         uuid.New().String(),
-			WorkflowID: wf.ID,
+			WorkflowID: workflowID,
 			ProjectID:  sql.NullString{String: projectID, Valid: true},
 			Name:       ms.Name,
 			Criteria:   ms.Criteria,
@@ -162,47 +287,6 @@ func (m *Manager) SpawnProjectChildren(ctx context.Context, wf sqlc.SwarmWorkflo
 			m.logger.Warn("create milestone", "name", ms.Name, "error", msErr)
 		}
 	}
-
-	// Build dependency graph and start Wave 1.
-	graph := m.buildProjectGraph(ctx, projectID)
-	readyTickets := graph.ReadyTickets(map[string]bool{})
-
-	for _, rt := range readyTickets {
-		if _, startErr := m.StartWorkflow(
-			ctx,
-			rt.TicketID,
-			rt.WorkflowType,
-			"",
-			"",
-		); startErr != nil {
-			m.logger.Warn("start child workflow",
-				"ticket", rt.TicketID, "error", startErr)
-		}
-	}
-
-	m.logger.Info("project children spawned",
-		"workflow_id", wf.ID,
-		"tickets", len(tickets),
-		"milestones", len(milestones),
-		"wave1", len(readyTickets),
-	)
-
-	m.linearComment(
-		wf.TicketID,
-		fmt.Sprintf(
-			"📋 Project decomposed: %d child tickets, %d milestones, %d in Wave 1",
-			len(tickets),
-			len(milestones),
-			len(readyTickets),
-		),
-	)
-
-	// Start a ProjectOrchestratorWorkflow if Temporal is enabled.
-	if m.temporalRuntime != nil {
-		m.startProjectOrchestrator(ctx, wf)
-	}
-
-	return nil
 }
 
 // startProjectOrchestrator starts a long-lived Temporal workflow that

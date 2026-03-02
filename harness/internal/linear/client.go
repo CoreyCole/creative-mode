@@ -278,6 +278,74 @@ func (c *Client) CreateTicket(
 	return resp.Data.IssueCreate.Issue.Identifier, nil
 }
 
+// CreateTicketResult holds the identifier and URL from ticket creation.
+type CreateTicketResult struct {
+	Identifier string
+	URL        string
+}
+
+// CreateTicketWithURL creates a ticket and returns both its identifier and URL.
+func (c *Client) CreateTicketWithURL(
+	ctx context.Context,
+	title, description string,
+	labelIDs []string,
+	parentID string,
+) (CreateTicketResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	teamID, err := c.resolveTeamID(ctx)
+	if err != nil {
+		return CreateTicketResult{}, err
+	}
+
+	input := issueCreateInput{
+		Title:       title,
+		Description: description,
+		TeamID:      teamID,
+		LabelIDs:    labelIDs,
+		ParentID:    parentID,
+	}
+
+	query := `mutation($input: IssueCreateInput!) {
+		issueCreate(input: $input) {
+			success
+			issue { id identifier title url }
+		}
+	}`
+
+	var resp struct {
+		Data struct {
+			IssueCreate struct {
+				Success bool `json:"success"`
+				Issue   struct {
+					ID         string `json:"id"`
+					Identifier string `json:"identifier"`
+					Title      string `json:"title"`
+					URL        string `json:"url"`
+				} `json:"issueCreate"`
+			} `json:"issueCreate"`
+		} `json:"data"`
+	}
+
+	if err := c.doQuery(ctx, query, issueCreateVars{Input: input}, &resp); err != nil {
+		return CreateTicketResult{}, fmt.Errorf("create ticket: %w", err)
+	}
+
+	if !resp.Data.IssueCreate.Success {
+		return CreateTicketResult{}, errCreateFailed
+	}
+
+	c.logger.Info("linear ticket created",
+		"identifier", resp.Data.IssueCreate.Issue.Identifier,
+		"title", title)
+
+	return CreateTicketResult{
+		Identifier: resp.Data.IssueCreate.Issue.Identifier,
+		URL:        resp.Data.IssueCreate.Issue.URL,
+	}, nil
+}
+
 // UpdateStatus moves a ticket to a workflow state by name (e.g. "In Progress", "Done").
 func (c *Client) UpdateStatus(ctx context.Context, issueID, stateName string) error {
 	c.mu.Lock()

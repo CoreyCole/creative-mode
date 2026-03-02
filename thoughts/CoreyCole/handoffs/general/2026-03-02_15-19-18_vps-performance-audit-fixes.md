@@ -4,43 +4,59 @@ researcher: CoreyCole
 git_commit: b8e3b99e88a95431a4fed4a6ab628141de3cb202
 branch: feature/agent-swarm
 repository: creative-mode
-topic: "VPS Performance Audit & Fixes"
-tags: [infrastructure, performance, tailscale, systemd, ufw, vps]
+topic: "VM Performance Audit & Fixes"
+tags: [infrastructure, performance, tailscale, systemd, ufw, utm, ssh]
 status: complete
 last_updated: 2026-03-02
 last_updated_by: CoreyCole
 type: implementation_strategy
 ---
 
-# Handoff: VPS Performance Audit & Fixes
+# Handoff: VM Performance Audit & Fixes
+
+## Important Context: This is a LOCAL UTM VM, not a remote VPS
+The "VPS" is actually a local Ubuntu 24.04 VM running in UTM on the same Mac. It uses UTM Shared Network (NAT) mode, giving it IP `192.168.66.2` on the `enp0s1` interface. Tailscale is also installed for remote access but should NOT be used for local SSH due to DERP relay latency.
 
 ## Task(s)
 
-### Completed: Full performance audit of VPS harness server
+### Completed: Full performance audit of harness server
 Deep research across 5 parallel agents covering: goroutine lifecycle, Temporal setup, systemd services, main.go initialization, EventBus/SSE patterns. All findings documented below.
 
-### Completed: Live VPS diagnostics
-SSHed into `deploy@claude-2.tailcdc985.ts.net` and confirmed current state. System is idle (0% CPU, 28 GB of 32 GB free). The "lag" is network, not server load.
+### Completed: Live VM diagnostics
+SSHed in and confirmed system is idle (0% CPU, 28 GB of 32 GB free). The "lag" was network (Tailscale DERP relay), not server load.
 
-### Work In Progress: Fix issues identified
-The following issues need to be fixed on the VPS directly.
+### Completed: Fix SSH typing lag — direct local SSH
+Configured direct SSH bypassing Tailscale. `ssh cm` now works via `192.168.66.2:2222` with sub-millisecond latency.
+
+### Work In Progress: Remaining fixes
+Code changes and systemd fixes still needed (see Action Items).
 
 ## Critical References
 - `harness/main.go` — server initialization, all background goroutines, shutdown sequence
 - `harness/internal/world/game_server.go` — game server dev vs prod mode logic
 - `scripts/vps-bootstrap.sh` — systemd service definitions, UFW rules, SSH lockdown
 
-## Recent changes
-No code changes were made — this was a diagnostic/research session.
+## Recent changes (on the VM, not in the repo)
+- `~/.ssh/authorized_keys` — added Mac's ed25519 public key for direct SSH auth
+- `/etc/ssh/sshd_config.d/*.conf` — added `ListenAddress 192.168.66.2` alongside Tailscale IP
+- `/etc/netplan/99-static.yaml` — static IP `192.168.66.2/24` for UTM shared network
+- UFW rule added: `allow from 192.168.66.0/24 to any port 2222 proto tcp` (Local VM SSH)
+- UFW rule added: `allow 41641/udp` (Tailscale direct connections — didn't fix DERP for local VM due to NAT, but useful for remote)
+- `~/.ssh/config` on Mac — added `Host cm` pointing to `192.168.66.2:2222`
 
 ## Learnings
 
-### Root Cause of SSH Typing Lag: Tailscale DERP Relay
-The SSH typing lag is caused by Tailscale routing traffic through the Seattle DERP relay instead of a direct WireGuard tunnel:
-```
-pong from claude-2 (100.89.95.41) via DERP(sea) in 250ms
-```
-**250ms round-trip per keystroke.** The VPS itself is completely idle. The fix is to open UDP port 41641 for Tailscale direct connections. The VPS bootstrap script (`scripts/vps-bootstrap.sh:255-269`) configures UFW to deny all incoming except on the `tailscale0` interface, but Tailscale needs UDP 41641 open on the **physical interface** to establish direct WireGuard tunnels. Without it, all traffic bounces through the DERP relay.
+### Root Cause of SSH Typing Lag: Tailscale DERP Relay + Local UTM NAT
+The VM runs locally in UTM with Shared Network (NAT) mode. Tailscale cannot establish a direct WireGuard tunnel because the VM is behind UTM's NAT — both the Mac and VM Tailscale nodes are on the same physical machine but Tailscale sees them as behind different NATs, forcing traffic through the Seattle DERP relay at 40-250ms per round trip.
+
+**Fix applied**: Bypass Tailscale entirely for local access. Configured sshd to also listen on the local NAT IP (`192.168.66.2:2222`), added the Mac's SSH key to `authorized_keys`, opened UFW for the local subnet, and added `Host cm` to `~/.ssh/config`. Result: `ssh cm` connects in <1ms.
+
+**Tailscale SSH remains available** via `ssh deploy@claude-2.tailcdc985.ts.net` for remote access when away from the Mac (with DERP relay latency as a tradeoff).
+
+### UTM Networking Modes
+- **Shared (NAT)**: Current mode. Works everywhere (home, office). VM gets `192.168.66.x`. Tailscale can't do direct connections due to double NAT.
+- **Bridged**: Would fix Tailscale direct connections but breaks on office networks with MAC filtering/802.1X.
+- Recommendation: Keep Shared mode, use direct SSH locally.
 
 ### Template Worlds Hardcoded to Dev Mode
 `harness/internal/world/manager.go:581` always calls `ConnectDev` → `game_server.go:106` hardcodes `GameServerModeDev`. On VPS, this means `cargo watch -w shared -w server -x 'run -p server'` runs in a tmux session. It fails silently (cargo watch exits, leaving a dead zsh prompt). No release binary exists at `templates/3d/target/release/server`. The `DEV_MODE` env var only controls auth, not game server mode.
@@ -73,29 +89,10 @@ Every Claude Code tool call publishes a global SSE event (`harness/internal/serv
 
 ## Action Items & Next Steps
 
-### 1. Fix Tailscale Direct Connection (UFW port)
-**This is the #1 priority — fixes the SSH typing lag.**
+### 1. ~~Fix SSH typing lag~~ — DONE
+Direct SSH configured: `ssh cm` → `192.168.66.2:2222` with <1ms latency.
 
-On the VPS, open UDP port 41641 for Tailscale WireGuard direct connections:
-```bash
-sudo ufw allow 41641/udp comment "Tailscale direct connections"
-sudo ufw reload
-```
-
-Then verify from the Mac:
-```bash
-tailscale ping claude-2.tailcdc985.ts.net
-# Should show "via [direct IP]" instead of "via DERP(sea)"
-# Latency should drop from ~250ms to ~10-30ms
-```
-
-The bootstrap script at `scripts/vps-bootstrap.sh:255-269` should also be updated to include this rule so future bootstraps don't regress:
-```bash
-# After line 267 (ufw allow in on tailscale0)
-ufw allow 41641/udp comment "Tailscale direct connections"
-```
-
-### 2. Disable Docker on VPS
+### 2. Disable Docker on VM
 ```bash
 sudo systemctl disable --now docker docker.socket containerd
 ```
@@ -115,8 +112,8 @@ Requires=temporal-dev.service
 ```
 Then: `sudo systemctl daemon-reload`
 
-### 5. (Code change, not VPS fix) Template worlds should detect VPS and use prod mode
-The fix belongs in `harness/internal/world/manager.go` — `startTemplateDevServers` (line 576) should check an env var (e.g., `VPS_MODE=true` or absence of `DEV_MODE`) and call `Connect` (prod) instead of `ConnectDev`. This requires building the release binary first: `cd templates/3d && cargo build --release -p server`.
+### 5. (Code change) Template worlds should detect prod and use prod mode
+The fix belongs in `harness/internal/world/manager.go` — `startTemplateDevServers` (line 576) should check an env var (e.g., absence of `DEV_MODE`) and call `Connect` (prod) instead of `ConnectDev`. This requires building the release binary first: `cd templates/3d && cargo build --release -p server`.
 
 ### 6. (Code change) Add heartbeat to mayor dashboard SSE
 Add a `time.Ticker` heartbeat to `harness/internal/server/mayor_dashboard.go:83-116`, matching the pattern in `events.go:69-70`.
@@ -124,13 +121,21 @@ Add a `time.Ticker` heartbeat to `harness/internal/server/mayor_dashboard.go:83-
 ### 7. (Code change) Add `ctx.Done()` to watchSession
 Add shutdown context to `harness/internal/swarmorch/manager.go:523-562` main loop so swarm watcher goroutines exit on graceful shutdown.
 
+### 8. Update `scripts/vps-bootstrap.sh` to include local SSH setup
+The bootstrap script should be updated to:
+- Add UFW rule for local subnet SSH: `ufw allow from 192.168.66.0/24 to any port 2222 proto tcp`
+- Add `ListenAddress 192.168.66.2` to sshd config
+- Set static IP via netplan
+So future re-provisions don't lose local SSH access.
+
 ## Other Notes
 
-### VPS Access
-- SSH: `ssh deploy@claude-2.tailcdc985.ts.net`
+### VM Access
+- **Local (fast)**: `ssh cm` → `192.168.66.2:2222` via direct connection (<1ms)
+- **Remote (fallback)**: `ssh deploy@claude-2.tailcdc985.ts.net` via Tailscale DERP (40-250ms)
 - Tailscale IP: `100.89.95.41`
-- Harness: `http://localhost:8080` (or via Tailscale Serve HTTPS)
-- Temporal UI: `http://localhost:8233`
+- Harness: `http://192.168.66.2:8080` (direct) or via Tailscale Serve HTTPS
+- Temporal UI: `http://192.168.66.2:8233`
 
 ### Key Service Commands
 ```bash
@@ -140,8 +145,11 @@ tmux list-sessions                            # see all tmux sessions
 tmux attach -t cm-server-5d189ed4-e9d848f0    # attach to game server session
 ```
 
-### VPS Specs
-- 32 GB RAM, 8 vCPUs (from `top` output)
+### VM Specs (UTM on macOS)
+- 32 GB RAM, 8 vCPUs
 - Ubuntu 24.04
+- UTM Shared Network (NAT) — `192.168.66.2` on `enp0s1`
 - Nix for toolchain (Go, Rust, tmux, temporal-cli, etc.)
 - 4 GB swap (unused)
+- Systemd services: `creative-mode`, `temporal-dev`, `openclaw-gateway`
+- Docker installed but NOT NEEDED — should be disabled

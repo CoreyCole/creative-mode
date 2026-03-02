@@ -190,16 +190,19 @@ func (m *Manager) StartWorkflow(
 		return "", fmt.Errorf("create workflow: %w", err)
 	}
 
-	// Upsert ticket record with URL.
-	_ = m.db.UpsertSwarmTicket(ctx, sqlc.UpsertSwarmTicketParams{
-		ID:         ticketID,
-		Identifier: ticketID,
-		Title:      ticketID,
-		Status:     linear.StatusInProgress,
-		Url:        ticketURL,
-		CreatedAt:  nowUTC(),
-		UpdatedAt:  nowUTC(),
-	})
+	// Ensure ticket record exists — only upsert if not already present
+	// (avoids overwriting title/description from CreateProjectTicket).
+	if _, ticketErr := m.db.GetSwarmTicket(ctx, ticketID); ticketErr != nil {
+		_ = m.db.UpsertSwarmTicket(ctx, sqlc.UpsertSwarmTicketParams{
+			ID:         ticketID,
+			Identifier: ticketID,
+			Title:      ticketID,
+			Status:     linear.StatusInProgress,
+			Url:        ticketURL,
+			CreatedAt:  nowUTC(),
+			UpdatedAt:  nowUTC(),
+		})
+	}
 
 	m.emitEvent(
 		ctx,

@@ -40,7 +40,8 @@ func MatchesDenyPattern(command string) bool {
 
 // hooksSettings is the settings.json structure with hooks configuration.
 type hooksSettings struct {
-	Hooks map[string][]matcherGroup `json:"hooks"`
+	Hooks              map[string][]matcherGroup `json:"hooks"`
+	AutoCompactEnabled *bool                     `json:"autoCompactEnabled,omitempty"`
 }
 
 type matcherGroup struct {
@@ -79,7 +80,9 @@ func WriteHooksConfig(
 	}
 	allowedVars := []string{swarm.EnvKey("HookSecret")}
 
+	autoCompact := false
 	settings := hooksSettings{
+		AutoCompactEnabled: &autoCompact,
 		Hooks: map[string][]matcherGroup{
 			"SessionStart": {
 				{

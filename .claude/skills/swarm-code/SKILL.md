@@ -44,6 +44,13 @@ Implements the changes described in an approved plan, step by step.
      - **Existing files**: Read first, then use Edit tool
    - Follow existing code patterns (imports, naming, error handling)
    - Match the surrounding code style exactly
+   - **After each plan step**: Check for context pressure:
+     ```bash
+     test -f "/tmp/swarm-context-pressure-$CM_SWARM_SESSION_ID" && echo "CONTEXT_PRESSURE"
+     ```
+     If the sentinel exists, stop implementing. Write a handoff listing completed
+     and remaining steps, then write `RESULT: context_limit`. See `swarm-conventions`
+     for the full protocol.
 
 4. **Post Linear comment** — `IMPL:` prefix:
    ```
@@ -86,6 +93,7 @@ If `$CM_SWARM_DRY_RUN` is `true`:
 - If a file referenced in plan doesn't exist (for Edit) → note in handoff, skip that file
 - If implementation diverges from plan → document the divergence in handoff
 - If interrupted → write partial handoff listing what was and wasn't completed
+- If context pressure detected → stop, write partial handoff with completed/remaining steps, `RESULT: context_limit`
 
 ## Result File Output
 

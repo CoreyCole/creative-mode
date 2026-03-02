@@ -78,6 +78,9 @@ Handoff: thoughts/swarm/handoffs-{type}/{timestamp}_{ticketID}_{detail}.md
 Summary: {one-line summary of what happened}
 ```
 
+- `context_limit` — session approaching context limit. Write handoff with progress, then exit.
+  The orchestrator will resume this exact phase in a fresh session using the handoff.
+
 ## Document Paths
 
 - Research: `thoughts/swarm/research/{timestamp}_{ticketID}_{slug}.md`
@@ -169,6 +172,38 @@ timestamp: {ISO 8601}
 ## Next Steps
 - {Concrete next actions for the following phase/session}
 ```
+
+## Context Pressure Protocol
+
+The orchestrator tracks compaction events per session. After the 2nd compaction, it writes
+a sentinel file that signals you are running low on context:
+
+```
+/tmp/swarm-context-pressure-$CM_SWARM_SESSION_ID
+```
+
+**When to check**: After completing each major unit of work (e.g., after implementing a plan
+step, after each verification check, after writing a research section).
+
+**How to check** (Bash tool):
+```bash
+test -f "/tmp/swarm-context-pressure-$CM_SWARM_SESSION_ID" && echo "CONTEXT_PRESSURE"
+```
+
+**When the sentinel exists**:
+1. Stop starting new work immediately
+2. Write a handoff document with everything completed so far and what remains
+3. Write the RESULT file:
+   ```
+   RESULT: context_limit
+   Phase: {current_phase}
+   Handoff: {handoff_path}
+   Summary: Context pressure — completed {what was done}, {what remains}
+   ```
+4. The orchestrator will spawn a fresh session that reads your handoff and continues
+
+The `context_limit` result does NOT count as a failure or retry. The next session starts at
+the same attempt number with the handoff as context.
 
 ## Swarm Environment Variables
 

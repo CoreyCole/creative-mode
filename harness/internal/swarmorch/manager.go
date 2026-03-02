@@ -586,6 +586,35 @@ func (m *Manager) handleSessionComplete(ctx context.Context, sessionID string) {
 	resultPath := ResultFilePath(sessionID)
 	result, _ := swarm.ParseResultFile(resultPath)
 
+	// Smart crash classification: if the session crashed (no result file)
+	// but context pressure was high, reclassify as context_limit instead
+	// of infra_failure. This enables seamless resumption via handoff.
+	if result.Result == swarm.ResultInfraFailure {
+		pressure := m.ctxPressure.Get(sessionID)
+		// Also check sentinel file directly (survives harness restart).
+		if pressure < pressureThreshold {
+			sentinelPath := filepath.Join(
+				os.TempDir(),
+				"swarm-context-pressure-"+sessionID,
+			)
+			if _, err := os.Stat(sentinelPath); err == nil {
+				pressure = pressureThreshold
+			}
+		}
+		if pressure >= pressureThreshold {
+			originalSummary := result.Summary
+			result.Result = swarm.ResultContextLimit
+			result.Summary = fmt.Sprintf(
+				"context exhaustion (pressure=%d, original: %s)",
+				pressure, originalSummary,
+			)
+			m.logger.Info("reclassified crash as context_limit",
+				"session_id", sessionID,
+				"pressure", pressure,
+			)
+		}
+	}
+
 	// Compute duration from started_at.
 	var durationSec int64
 	var startedAt time.Time

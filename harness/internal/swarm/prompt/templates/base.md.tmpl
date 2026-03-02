@@ -1,0 +1,118 @@
+{{- /* base.md.tmpl — shared prompt skeleton for all swarm phases */ -}}
+# Swarm Agent — {{ .Phase }}
+
+**Ticket**: {{ .TicketID }}
+**Workflow**: {{ .WorkflowID }}
+**Session**: {{ .SessionID }}
+**Attempt**: {{ .Attempt }}
+{{- if .TicketURL }}
+**Ticket URL**: {{ .TicketURL }}
+{{- end }}
+{{- if .BranchName }}
+**Branch**: {{ .BranchName }}
+{{- end }}
+{{ if .HandoffContent }}
+## Handoff Context
+
+The previous session left this handoff document. Read it carefully for prior decisions, gotchas, and next steps.
+
+{{ .HandoffContent }}
+{{ end }}
+{{- if .LearningContent }}
+## Learning Context
+
+Relevant learnings from past workflows. Apply these to avoid repeating mistakes.
+
+{{ .LearningContent }}
+{{ end }}
+## Conventions
+
+### Linear Team
+Team: `CM`
+
+### Comment Prefixes
+| Prefix | Phase | Content |
+|--------|-------|---------|
+| `RESEARCH:` | research | Research summary + doc path |
+| `PLAN:` | code_plan | Plan summary + doc path |
+| `PLAN-REVIEW:` | plan_review | Verdict (approve/revise) + feedback |
+| `IMPL:` | implement | Implementation summary + files changed |
+| `VERIFY:` | verify | Verification result + errors |
+| `PR:` | pr | PR URL + summary |
+
+### RESULT Format
+```
+RESULT: success|logic_failure|infra_failure|timeout|context_limit
+Phase: {current_phase}
+Handoff: thoughts/swarm/handoffs-{type}/{timestamp}_{ticketID}_{detail}.md
+
+Summary: {one-line summary}
+```
+
+### Document Paths
+- Research: `thoughts/swarm/research/{timestamp}_{ticketID}_{slug}.md`
+- Plans: `thoughts/swarm/plans/{timestamp}_{ticketID}_{slug}_v{N}.md`
+- Handoffs: `thoughts/swarm/handoffs-{phase}/{timestamp}_{ticketID}_{detail}.md`
+
+Timestamp format: `YYYY-MM-DD_HH-MM-SS`
+
+### Handoff Directory Mapping
+- `research` → `handoffs-research`
+- `code_plan`, `implement`, `pr` → `handoffs-code`
+- `plan_review` → `handoffs-plan-reviews`
+- `verify` → `handoffs-code-reviews`
+
+### Handoff Template
+```markdown
+---
+ticket: {ticketID}
+phase: {phase}
+result: {success|logic_failure|...}
+session: {sessionID}
+workflow: {workflowID}
+timestamp: {ISO 8601}
+---
+
+## BLUF
+{One sentence summary}
+
+## What Was Done
+- {Completed actions}
+
+## What Was NOT Done
+- {Remaining work}
+
+## Key Files
+- `path/to/file` — {why it matters}
+
+## Gotchas
+- {Non-obvious issues}
+
+## Next Steps
+- {Concrete next actions}
+```
+
+## Process
+
+{{- block "process" . }}
+<!-- Phase-specific process section not defined -->
+{{- end }}
+{{ if .DryRun }}
+## Dry-Run Mode
+
+`DRY-RUN` mode is **active**. For every action:
+- Print `[DRY-RUN]` before each action description
+- Do NOT write files, post comments, create branches, or make any mutations
+- Still perform all reads and analysis — output what would be written
+{{ end }}
+## Error Handling
+
+- If critical files or prerequisites are missing → `RESULT: logic_failure` with details
+- If infrastructure fails (network, auth, tooling) → `RESULT: infra_failure`
+- If interrupted → write partial handoff before exiting
+- Always write a RESULT — never exit without one
+
+## Result File Output
+
+As the **very last step**, write the RESULT block to `{{ .ResultPath }}`.
+This is how the orchestrator detects completion and advances the workflow.

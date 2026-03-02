@@ -14,6 +14,7 @@ type Querier interface {
 	ArchiveSwarmLearning(ctx context.Context, id string) error
 	ClearSwarmWorkflowGate(ctx context.Context, id string) error
 	CompleteSwarmSession(ctx context.Context, arg CompleteSwarmSessionParams) error
+	CompleteSwarmSessionWithTokens(ctx context.Context, arg CompleteSwarmSessionWithTokensParams) error
 	CountActiveBuilds(ctx context.Context, createdBy sql.NullString) (int64, error)
 	CountActiveSwarmSessions(ctx context.Context) (int64, error)
 	CountUsers(ctx context.Context) (int64, error)
@@ -55,7 +56,7 @@ type Querier interface {
 	GetCheckpointTree(ctx context.Context, worldID string) ([]Checkpoint, error)
 	GetLatestSwarmLearningDigest(ctx context.Context) (SwarmLearningDigest, error)
 	GetLatestSwarmResultComment(ctx context.Context, ticketID string) (SwarmTicketComment, error)
-	GetLatestSwarmSession(ctx context.Context, workflowID string) (SwarmSession, error)
+	GetLatestSwarmSession(ctx context.Context, workflowID string) (GetLatestSwarmSessionRow, error)
 	GetMayorActivity(ctx context.Context, arg GetMayorActivityParams) ([]MayorActivity, error)
 	GetMayorBuilds(ctx context.Context, arg GetMayorBuildsParams) ([]MayorBuild, error)
 	GetMayorMessageByDiscordID(ctx context.Context, discordMessageID sql.NullString) (MayorMessage, error)
@@ -71,7 +72,8 @@ type Querier interface {
 	GetSwarmConfig(ctx context.Context) (SwarmConfig, error)
 	GetSwarmLearning(ctx context.Context, id string) (SwarmLearning, error)
 	GetSwarmMilestone(ctx context.Context, id string) (SwarmProjectMilestone, error)
-	GetSwarmSession(ctx context.Context, id string) (SwarmSession, error)
+	GetSwarmPromptVersion(ctx context.Context, id string) (SwarmPromptVersion, error)
+	GetSwarmSession(ctx context.Context, id string) (GetSwarmSessionRow, error)
 	GetSwarmTicket(ctx context.Context, id string) (SwarmTicket, error)
 	GetSwarmTicketByIdentifier(ctx context.Context, identifier string) (SwarmTicket, error)
 	GetSwarmWorkflow(ctx context.Context, id string) (SwarmWorkflow, error)
@@ -101,7 +103,7 @@ type Querier interface {
 	ListSwarmLearningDigests(ctx context.Context, limit int64) ([]SwarmLearningDigest, error)
 	ListSwarmLearningsByTicket(ctx context.Context, ticketID string) ([]SwarmLearning, error)
 	ListSwarmMilestonesByWorkflow(ctx context.Context, workflowID string) ([]SwarmProjectMilestone, error)
-	ListSwarmSessionsByWorkflow(ctx context.Context, workflowID string) ([]SwarmSession, error)
+	ListSwarmSessionsByWorkflow(ctx context.Context, workflowID string) ([]ListSwarmSessionsByWorkflowRow, error)
 	ListSwarmTicketComments(ctx context.Context, ticketID string) ([]SwarmTicketComment, error)
 	ListSwarmTickets(ctx context.Context) ([]SwarmTicket, error)
 	ListSwarmTicketsByParent(ctx context.Context, parentID sql.NullString) ([]SwarmTicket, error)
@@ -134,6 +136,7 @@ type Querier interface {
 	UpdateWorldCoverImage(ctx context.Context, arg UpdateWorldCoverImageParams) error
 	UpdateWorldMayor(ctx context.Context, arg UpdateWorldMayorParams) error
 	UpsertMayorSession(ctx context.Context, arg UpsertMayorSessionParams) error
+	UpsertSwarmPromptVersion(ctx context.Context, arg UpsertSwarmPromptVersionParams) (string, error)
 	// swarm_tickets
 	UpsertSwarmTicket(ctx context.Context, arg UpsertSwarmTicketParams) error
 	// swarm_ticket_comments

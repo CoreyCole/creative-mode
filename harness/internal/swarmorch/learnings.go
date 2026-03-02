@@ -40,6 +40,7 @@ func (m *Manager) createLearning(
 		Severity:         severity,
 		Title:            title,
 		Content:          content,
+		Tags:             deriveLearningTags(phase, category),
 	})
 }
 
@@ -261,6 +262,19 @@ func extractTitle(s string) string {
 	}
 
 	return line
+}
+
+// deriveLearningTags builds a comma-separated tag string from phase and category.
+func deriveLearningTags(
+	phase swarm.Phase,
+	category swarm.LearningCategory,
+) sql.NullString {
+	var tags []string
+	if phase != "" {
+		tags = append(tags, string(phase))
+	}
+	tags = append(tags, string(category))
+	return toNullString(strings.Join(tags, ","))
 }
 
 func toNullString(s string) sql.NullString {

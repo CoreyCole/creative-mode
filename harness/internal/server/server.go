@@ -178,6 +178,7 @@ func (s *Server) RegisterRoutes(e *echo.Echo) {
 	swarmGroup.POST("/gate/:id/approve", s.handleSwarmApproveGate)
 	swarmGroup.POST("/gate/:id/reject", s.handleSwarmRejectGate)
 	swarmGroup.GET("/gate/pending", s.handleSwarmListGated)
+	swarmGroup.GET("/doctor", s.handleSwarmDoctor)
 	swarmGroup.POST("/hook/session-started", s.handleSwarmHookSessionStarted)
 	swarmGroup.POST("/hook/pre-tool-use", s.handleSwarmHookPreToolUse)
 	swarmGroup.POST("/hook/post-tool-use", s.handleSwarmHookPostToolUse)
@@ -222,6 +223,7 @@ func (s *Server) RegisterRoutes(e *echo.Echo) {
 	approved.GET("/swarm/api/health", s.handleSwarmHealth)
 	approved.GET("/swarm/api/learnings", s.handleSwarmLearnings)
 	approved.GET("/swarm/api/learnings/digest/latest", s.handleSwarmLatestDigest)
+	approved.GET("/swarm/api/doctor", s.handleSwarmDoctor)
 
 	// WASM artifact serving (approved users).
 	approved.GET("/wasm/:worldID/:cpID/*", s.handleWASMArtifacts)

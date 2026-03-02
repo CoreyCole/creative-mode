@@ -183,6 +183,29 @@ func NewClient(apiKey, teamKey string, logger *slog.Logger) *Client {
 	}
 }
 
+// Ping verifies the Linear API is reachable and the API key is valid.
+func (c *Client) Ping(ctx context.Context) error {
+	query := `query { viewer { id } }`
+
+	var resp struct {
+		Data struct {
+			Viewer struct {
+				ID string `json:"id"`
+			} `json:"viewer"`
+		} `json:"data"`
+	}
+
+	if err := c.doQuery(ctx, query, nil, &resp); err != nil {
+		return fmt.Errorf("ping: %w", err)
+	}
+
+	if resp.Data.Viewer.ID == "" {
+		return errors.New("ping: empty viewer ID")
+	}
+
+	return nil
+}
+
 // resolveTeamID looks up the team UUID from the team key on first use.
 func (c *Client) resolveTeamID(ctx context.Context) (string, error) {
 	if c.teamID != "" {

@@ -56,6 +56,14 @@ UPDATE swarm_sessions
 SET result = ?, detail = ?, duration_sec = ?, total_tokens = ?, completed_at = datetime('now')
 WHERE id = ?;
 
+-- name: CompleteSwarmSessionWithTokens :exec
+UPDATE swarm_sessions
+SET result = ?, detail = ?, duration_sec = ?, total_tokens = ?,
+    input_tokens = ?, output_tokens = ?, cache_read_tokens = ?,
+    cache_creation_tokens = ?, model_used = ?, estimated_cost_usd = ?,
+    prompt_version_id = ?, completed_at = datetime('now')
+WHERE id = ?;
+
 -- name: GetSwarmSession :one
 SELECT id, workflow_id, session_name, skill, phase, COALESCE(result, '') AS result, detail, duration_sec, total_tokens, started_at, completed_at
 FROM swarm_sessions WHERE id = ?;

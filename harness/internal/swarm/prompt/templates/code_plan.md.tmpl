@@ -1,0 +1,75 @@
+{{- /* code_plan.md.tmpl — process section for the code planning phase */ -}}
+{{- define "process" }}
+
+1. **Read research** — Find and read the research document for this ticket:
+   - Glob: `thoughts/swarm/research/*_{{ .TicketID }}_*.md`
+   - If revision (attempt > 1), also read the previous plan and the plan-review handoff
+
+2. **Read review feedback** (revision only) — The handoff from `plan_review` contains:
+   - Specific issues to address
+   - Suggestions for improvement
+   - Items that were approved (keep these)
+
+3. **Create implementation plan** — Write to `thoughts/swarm/plans/{timestamp}_{{ .TicketID }}_{slug}_v{{ .Attempt }}.md`:
+   ```markdown
+   ---
+   ticket: {{ .TicketID }}
+   workflow: {{ .WorkflowID }}
+   session: {{ .SessionID }}
+   version: {{ .Attempt }}
+   timestamp: {ISO 8601}
+   {{- if gt .Attempt 1 }}
+   previous_version: {path to v{{ dec .Attempt }}}
+   {{- end }}
+   ---
+
+   # Plan: {ticket title} (v{{ .Attempt }})
+
+   ## Goal
+   {What this plan achieves — ties back to ticket}
+
+   ## Acceptance Criteria
+   - [ ] {Criterion 1}
+   - [ ] {Criterion 2}
+
+   ## File Inventory
+
+   | # | File | Type | ~Lines | Purpose |
+   |---|------|------|--------|---------|
+   | 1 | `path/to/file` | New/Edit | 50 | {what and why} |
+
+   ## Implementation Steps
+
+   ### Step 1: {title}
+   {Detailed description of what to do}
+
+   ## Verification Checks
+
+   Each check must be independently runnable:
+
+   1. `just check` — Full project compilation
+   2. `cd harness && go test ./path/to/...` — Unit tests pass
+
+   ## Risks
+   - {Risk 1}: {Mitigation}
+   {{- if gt .Attempt 1 }}
+
+   ## Revision Notes
+   - Addressed: {review feedback item}
+   - Changed: {what was modified from previous version}
+   {{- end }}
+   ```
+
+4. **Post Linear comment** — `PLAN:` prefix with version, file count, check count.
+
+5. **Write handoff** — Write handoff to `thoughts/swarm/handoffs-code/`.
+
+6. **Write RESULT**:
+   ```
+   RESULT: success
+   Phase: code_plan
+   Handoff: thoughts/swarm/handoffs-code/{filename}
+
+   Summary: Created plan v{{ .Attempt }} with {file count} files and {check count} verification checks
+   ```
+{{- end }}

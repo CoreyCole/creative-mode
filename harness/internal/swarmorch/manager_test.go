@@ -34,17 +34,31 @@ CREATE TABLE IF NOT EXISTS swarm_workflows (
     updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS swarm_sessions (
-    id            TEXT PRIMARY KEY,
-    workflow_id   TEXT NOT NULL REFERENCES swarm_workflows(id),
-    session_name  TEXT NOT NULL,
-    skill         TEXT NOT NULL,
-    phase         TEXT NOT NULL,
-    result        TEXT,
-    detail        TEXT,
-    duration_sec  INTEGER,
-    total_tokens  INTEGER,
-    started_at    TEXT NOT NULL DEFAULT (datetime('now')),
-    completed_at  TEXT
+    id                    TEXT PRIMARY KEY,
+    workflow_id           TEXT NOT NULL REFERENCES swarm_workflows(id),
+    session_name          TEXT NOT NULL,
+    skill                 TEXT NOT NULL,
+    phase                 TEXT NOT NULL,
+    result                TEXT,
+    detail                TEXT,
+    duration_sec          INTEGER,
+    total_tokens          INTEGER,
+    started_at            TEXT NOT NULL DEFAULT (datetime('now')),
+    completed_at          TEXT,
+    input_tokens          INTEGER DEFAULT 0,
+    output_tokens         INTEGER DEFAULT 0,
+    cache_read_tokens     INTEGER DEFAULT 0,
+    cache_creation_tokens INTEGER DEFAULT 0,
+    model_used            TEXT,
+    estimated_cost_usd    REAL,
+    prompt_version_id     TEXT
+);
+CREATE TABLE IF NOT EXISTS swarm_prompt_versions (
+    id TEXT PRIMARY KEY,
+    phase TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(phase, content_hash)
 );
 CREATE TABLE IF NOT EXISTS swarm_learnings (
     id                 TEXT PRIMARY KEY,
@@ -536,7 +550,7 @@ func TestCaptureLearningsRouting(t *testing.T) {
 			})
 
 			wf := sqlc.SwarmWorkflow{ID: wfID, TicketID: ticketID}
-			session := sqlc.SwarmSession{ID: sessID, Phase: tt.phase}
+			session := sqlc.GetSwarmSessionRow{ID: sessID, Phase: tt.phase}
 			result := &swarm.SessionResultData{Result: tt.result, Summary: "test detail"}
 
 			mgr.captureLearnings(t.Context(), wf, session, result)

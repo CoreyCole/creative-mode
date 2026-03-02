@@ -498,6 +498,18 @@ func (s *Server) handleSwarmCreateProject(c echo.Context) error {
 	})
 }
 
+// handleSwarmDoctor runs diagnostic checks and returns a health report.
+func (s *Server) handleSwarmDoctor(c echo.Context) error {
+	if s.SwarmManager == nil {
+		return echo.NewHTTPError(
+			http.StatusServiceUnavailable,
+			"swarm manager not configured",
+		)
+	}
+
+	return c.JSON(http.StatusOK, s.SwarmManager.RunDoctor(c.Request().Context()))
+}
+
 // handleSwarmLatestDigest returns the most recent learning digest.
 func (s *Server) handleSwarmLatestDigest(c echo.Context) error {
 	digest, err := s.DB.GetLatestSwarmLearningDigest(c.Request().Context())

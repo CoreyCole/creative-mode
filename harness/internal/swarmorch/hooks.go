@@ -12,9 +12,10 @@ import (
 )
 
 const (
-	hookTimeoutDefault = 10 // seconds for most hooks
-	hookTimeoutStop    = 30 // seconds for Stop hook (needs to read result file)
-	pressureThreshold  = 2  // compact events before writing sentinel
+	hookTimeoutDefault   = 10  // seconds for most hooks
+	hookTimeoutStop      = 30  // seconds for Stop hook (needs to read result file)
+	pressureThreshold    = 2   // compact events before writing sentinel
+	bashCmdTruncateLimit = 120 // max chars for Bash command in filtered tool args
 )
 
 // swarmDenyPatterns are commands that swarm sessions should never run.
@@ -60,7 +61,7 @@ type hookHandler struct {
 // pointing back to the harness, and returns the config directory path to use
 // as CLAUDE_CONFIG_DIR.
 func WriteHooksConfig(
-	sessionID, ticketID, harnessURL, hookSecret string,
+	sessionID, ticketID, phase, harnessURL, hookSecret string,
 ) (string, error) {
 	configDir := filepath.Join(os.TempDir(), "swarm-hooks-"+sessionID)
 	if err := os.MkdirAll(configDir, 0o750); err != nil {
@@ -73,6 +74,7 @@ func WriteHooksConfig(
 		"X-Hook-Secret":   "$" + swarm.EnvKey("HookSecret"),
 		"X-Swarm-Session": sessionID,
 		"X-Swarm-Ticket":  ticketID,
+		"X-Swarm-Phase":   phase,
 		"Content-Type":    "application/json",
 	}
 	allowedVars := []string{swarm.EnvKey("HookSecret")}
@@ -172,6 +174,48 @@ func WriteHooksConfig(
 	}
 
 	return configDir, nil
+}
+
+// FilterToolArgs returns a filtered copy of tool input, keeping only relevant
+// keys per tool type. Large payloads (content, old_string, new_string) are dropped.
+func FilterToolArgs(toolName string, input map[string]any) map[string]any {
+	if input == nil {
+		return nil
+	}
+
+	filtered := make(map[string]any)
+
+	switch toolName {
+	case "Bash":
+		copyIfPresent(filtered, input, "description")
+		if cmd, ok := input["command"].(string); ok {
+			if len(cmd) > bashCmdTruncateLimit {
+				cmd = cmd[:bashCmdTruncateLimit] + "..."
+			}
+			filtered["command"] = cmd
+		}
+	case "Read":
+		copyIfPresent(filtered, input, "file_path", "offset", "limit")
+	case "Write", "Edit":
+		copyIfPresent(filtered, input, "file_path")
+	case "Grep", "Glob":
+		copyIfPresent(filtered, input, "pattern", "path", "glob", "type")
+	case "Agent":
+		copyIfPresent(filtered, input, "description", "subagent_type")
+	default:
+		copyIfPresent(filtered, input, "file_path", "pattern", "path")
+	}
+
+	return filtered
+}
+
+// copyIfPresent copies keys from src to dst if they exist.
+func copyIfPresent(dst, src map[string]any, keys ...string) {
+	for _, k := range keys {
+		if v, ok := src[k]; ok {
+			dst[k] = v
+		}
+	}
 }
 
 // CleanupHooksConfig removes the temporary hooks config directory for a session.

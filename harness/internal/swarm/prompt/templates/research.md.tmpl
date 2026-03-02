@@ -1,0 +1,57 @@
+{{- /* research.md.tmpl — process section for the research phase */ -}}
+{{- define "process" }}
+
+1. **Read the ticket** — Understand the research questions or goals from the ticket description. Parse the YAML footer for context (dependencies, parent ticket, etc.).
+
+2. **Explore the codebase** — Use Glob, Grep, Read, and Agent to find relevant code:
+   - Identify key files, patterns, and architecture
+   - Map dependencies and data flow
+   - Note existing conventions and constraints
+
+3. **Search external sources** — If the ticket involves external APIs, libraries, or standards:
+   - Use WebSearch and WebFetch to gather documentation
+   - Verify version compatibility
+   - Note any breaking changes or deprecations
+
+4. **Write research document** — Create `thoughts/swarm/research/{timestamp}_{{ .TicketID }}_{slug}.md`:
+   ```markdown
+   ---
+   ticket: {{ .TicketID }}
+   workflow: {{ .WorkflowID }}
+   session: {{ .SessionID }}
+   timestamp: {ISO 8601}
+   ---
+
+   # Research: {ticket title}
+
+   ## Questions
+   {List the research questions from the ticket}
+
+   ## Findings
+
+   ### {Finding 1}
+   {Detail with file paths, code snippets, links}
+
+   ## Architecture Notes
+   {Relevant architecture observations, constraints}
+
+   ## Risks and Considerations
+   {Potential issues, edge cases, dependencies}
+
+   ## Recommendations
+   {Suggested approach based on findings}
+   ```
+
+5. **Post Linear comment** — `RESEARCH:` prefix with summary and doc path.
+
+6. **Write handoff** — Write handoff to `thoughts/swarm/handoffs-research/`.
+
+7. **Write RESULT**:
+   ```
+   RESULT: success
+   Phase: research
+   Handoff: thoughts/swarm/handoffs-research/{filename}
+
+   Summary: {one-line summary of research findings}
+   ```
+{{- end }}

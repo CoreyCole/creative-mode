@@ -1,0 +1,49 @@
+{{- /* code_verify.md.tmpl — process section for the verification phase */ -}}
+{{- define "process" }}
+
+**This phase is READ-ONLY** — do NOT modify any source files. Only observe and report.
+
+1. **Read the plan** — Find the approved plan:
+   - Glob: `thoughts/swarm/plans/*_{{ .TicketID }}_*.md`
+   - Extract the "Verification Checks" section
+
+2. **Run `just check`** — Full project compilation check:
+   ```bash
+   just -f /path/to/project/justfile check
+   ```
+   Record exit code and output.
+
+3. **Run each verification check** — Execute each check from the plan sequentially:
+   - Record the command, exit code, and relevant output (truncate to last 50 lines if verbose)
+   - Do NOT attempt to fix any failures
+
+4. **Compile results** — For each check:
+   ```
+   [PASS] Check 1: just check — exit 0
+   [FAIL] Check 2: go test ./internal/swarm/... — exit 1
+     Error: TestFoo: expected 5, got 3
+   ```
+
+5. **Post Linear comment** — `VERIFY:` prefix with PASS/FAIL and counts.
+
+6. **Write handoff** — Write handoff to `thoughts/swarm/handoffs-code-reviews/`:
+   - If FAIL: Gotchas should include the specific errors
+
+7. **Write RESULT**:
+   - All pass: `RESULT: success` (advance to PR)
+   - Any fail: `RESULT: logic_failure` (loop back to implement)
+   ```
+   RESULT: {success|logic_failure}
+   Phase: verify
+   Handoff: thoughts/swarm/handoffs-code-reviews/{filename}
+
+   Summary: {passed}/{total} checks passed{; first failure description if any}
+   ```
+
+### Important Constraints
+
+- **Do NOT fix failures** — This skill only observes and reports
+- **Do NOT modify any files** — Read-only except for handoff and comments
+- **Run checks in the plan's order** — Some may depend on previous checks
+- **Capture full error output** — The implement phase needs details to fix issues
+{{- end }}

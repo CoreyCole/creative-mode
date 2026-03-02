@@ -31,7 +31,7 @@ type DashboardData struct {
 
 type WorkflowDetailData struct {
 	Workflow    sqlc.SwarmWorkflow
-	Sessions    []sqlc.SwarmSession
+	Sessions    []sqlc.ListSwarmSessionsByWorkflowRow
 	Events      []sqlc.SwarmEvent
 	Milestones  []sqlc.SwarmProjectMilestone
 	GateReviews []sqlc.ListSwarmGateReviewsByWorkflowRow
@@ -1743,7 +1743,7 @@ func ToolActivityItem(ticketID, phase, tool, file string) templ.Component {
 	})
 }
 
-func sessionItem(s sqlc.SwarmSession) templ.Component {
+func sessionItem(s sqlc.ListSwarmSessionsByWorkflowRow) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
 		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {

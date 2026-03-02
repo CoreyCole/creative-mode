@@ -46,6 +46,48 @@ func (q *Queries) CompleteSwarmSession(ctx context.Context, arg CompleteSwarmSes
 	return err
 }
 
+const completeSwarmSessionWithTokens = `-- name: CompleteSwarmSessionWithTokens :exec
+UPDATE swarm_sessions
+SET result = ?, detail = ?, duration_sec = ?, total_tokens = ?,
+    input_tokens = ?, output_tokens = ?, cache_read_tokens = ?,
+    cache_creation_tokens = ?, model_used = ?, estimated_cost_usd = ?,
+    prompt_version_id = ?, completed_at = datetime('now')
+WHERE id = ?
+`
+
+type CompleteSwarmSessionWithTokensParams struct {
+	Result              swarm.SessionResult
+	Detail              sql.NullString
+	DurationSec         sql.NullInt64
+	TotalTokens         sql.NullInt64
+	InputTokens         sql.NullInt64
+	OutputTokens        sql.NullInt64
+	CacheReadTokens     sql.NullInt64
+	CacheCreationTokens sql.NullInt64
+	ModelUsed           sql.NullString
+	EstimatedCostUsd    sql.NullFloat64
+	PromptVersionID     sql.NullString
+	ID                  string
+}
+
+func (q *Queries) CompleteSwarmSessionWithTokens(ctx context.Context, arg CompleteSwarmSessionWithTokensParams) error {
+	_, err := q.db.ExecContext(ctx, completeSwarmSessionWithTokens,
+		arg.Result,
+		arg.Detail,
+		arg.DurationSec,
+		arg.TotalTokens,
+		arg.InputTokens,
+		arg.OutputTokens,
+		arg.CacheReadTokens,
+		arg.CacheCreationTokens,
+		arg.ModelUsed,
+		arg.EstimatedCostUsd,
+		arg.PromptVersionID,
+		arg.ID,
+	)
+	return err
+}
+
 const countActiveSwarmSessions = `-- name: CountActiveSwarmSessions :one
 SELECT COUNT(*) FROM swarm_sessions
 WHERE completed_at IS NULL
@@ -201,9 +243,23 @@ SELECT id, workflow_id, session_name, skill, phase, COALESCE(result, '') AS resu
 FROM swarm_sessions WHERE workflow_id = ? ORDER BY started_at DESC LIMIT 1
 `
 
-func (q *Queries) GetLatestSwarmSession(ctx context.Context, workflowID string) (SwarmSession, error) {
+type GetLatestSwarmSessionRow struct {
+	ID          string
+	WorkflowID  string
+	SessionName string
+	Skill       string
+	Phase       swarm.Phase
+	Result      swarm.SessionResult
+	Detail      sql.NullString
+	DurationSec sql.NullInt64
+	TotalTokens sql.NullInt64
+	StartedAt   string
+	CompletedAt sql.NullString
+}
+
+func (q *Queries) GetLatestSwarmSession(ctx context.Context, workflowID string) (GetLatestSwarmSessionRow, error) {
 	row := q.db.QueryRowContext(ctx, getLatestSwarmSession, workflowID)
-	var i SwarmSession
+	var i GetLatestSwarmSessionRow
 	err := row.Scan(
 		&i.ID,
 		&i.WorkflowID,
@@ -259,9 +315,23 @@ SELECT id, workflow_id, session_name, skill, phase, COALESCE(result, '') AS resu
 FROM swarm_sessions WHERE id = ?
 `
 
-func (q *Queries) GetSwarmSession(ctx context.Context, id string) (SwarmSession, error) {
+type GetSwarmSessionRow struct {
+	ID          string
+	WorkflowID  string
+	SessionName string
+	Skill       string
+	Phase       swarm.Phase
+	Result      swarm.SessionResult
+	Detail      sql.NullString
+	DurationSec sql.NullInt64
+	TotalTokens sql.NullInt64
+	StartedAt   string
+	CompletedAt sql.NullString
+}
+
+func (q *Queries) GetSwarmSession(ctx context.Context, id string) (GetSwarmSessionRow, error) {
 	row := q.db.QueryRowContext(ctx, getSwarmSession, id)
-	var i SwarmSession
+	var i GetSwarmSessionRow
 	err := row.Scan(
 		&i.ID,
 		&i.WorkflowID,
@@ -768,15 +838,29 @@ SELECT id, workflow_id, session_name, skill, phase, COALESCE(result, '') AS resu
 FROM swarm_sessions WHERE workflow_id = ? ORDER BY started_at DESC
 `
 
-func (q *Queries) ListSwarmSessionsByWorkflow(ctx context.Context, workflowID string) ([]SwarmSession, error) {
+type ListSwarmSessionsByWorkflowRow struct {
+	ID          string
+	WorkflowID  string
+	SessionName string
+	Skill       string
+	Phase       swarm.Phase
+	Result      swarm.SessionResult
+	Detail      sql.NullString
+	DurationSec sql.NullInt64
+	TotalTokens sql.NullInt64
+	StartedAt   string
+	CompletedAt sql.NullString
+}
+
+func (q *Queries) ListSwarmSessionsByWorkflow(ctx context.Context, workflowID string) ([]ListSwarmSessionsByWorkflowRow, error) {
 	rows, err := q.db.QueryContext(ctx, listSwarmSessionsByWorkflow, workflowID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []SwarmSession{}
+	items := []ListSwarmSessionsByWorkflowRow{}
 	for rows.Next() {
-		var i SwarmSession
+		var i ListSwarmSessionsByWorkflowRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.WorkflowID,

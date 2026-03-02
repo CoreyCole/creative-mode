@@ -129,12 +129,18 @@ func (s *Server) handleSwarmHookPostToolUse(c echo.Context) error {
 
 	sessionID := swarmSessionID(c, &payload.hookPayload)
 	ticketID := c.Request().Header.Get("X-Swarm-Ticket")
+	phase := c.Request().Header.Get("X-Swarm-Phase")
+
+	filtered := swarmorch.FilterToolArgs(payload.ToolName, payload.ToolInput)
+	file, _ := filtered["file_path"].(string)
 
 	s.SwarmManager.WriteJSONLEvent(sessionID, map[string]any{
 		"event":      "tool_use",
 		"session_id": sessionID,
 		"tool":       payload.ToolName,
-		"input":      payload.ToolInput,
+		"phase":      phase,
+		"file":       file,
+		"input":      filtered,
 	})
 
 	if s.EventBus != nil {
@@ -143,7 +149,9 @@ func (s *Server) handleSwarmHookPostToolUse(c echo.Context) error {
 			"session_id": sessionID,
 			"ticket_id":  ticketID,
 			"tool":       payload.ToolName,
-			"input":      payload.ToolInput,
+			"phase":      phase,
+			"file":       file,
+			"input":      filtered,
 		})
 	}
 

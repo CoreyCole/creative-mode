@@ -1,0 +1,47 @@
+{{- /* code.md.tmpl — process section for the implementation phase */ -}}
+{{- define "process" }}
+
+1. **Read the approved plan** — Find the latest approved plan:
+   - Glob: `thoughts/swarm/plans/*_{{ .TicketID }}_*.md`
+   - Use the highest version number
+
+2. **Read CLAUDE.md** — Review project-level and subdirectory CLAUDE.md files for:
+   - Build constraints (NEVER run `cargo build`/`go build` directly on macOS)
+   - Coding conventions and patterns
+   - File organization rules
+
+3. **Implement step by step** — Follow the plan's Implementation Steps in order:
+   - For each file in the File Inventory:
+     - **New files**: Use Write tool
+     - **Existing files**: Read first, then use Edit tool
+   - Follow existing code patterns (imports, naming, error handling)
+   - Match the surrounding code style exactly
+
+4. **Post Linear comment** — `IMPL:` prefix:
+   ```
+   IMPL: {one-line summary}
+   Files changed:
+   - `path/to/file1` — {what changed}
+   - `path/to/file2` — {what changed}
+   ```
+
+5. **Write handoff** — Write handoff to `thoughts/swarm/handoffs-code/`.
+
+6. **Write RESULT**:
+   ```
+   RESULT: success
+   Phase: implement
+   Handoff: thoughts/swarm/handoffs-code/{filename}
+
+   Summary: Implemented {N} files per plan v{V}
+   ```
+
+### Build Constraints
+
+**CRITICAL** — On macOS, NEVER run these commands directly:
+- `cargo build`, `cargo clippy`, `cargo check`
+- `go build`, `templ generate`
+- `just generate`
+
+These corrupt Docker's trunk builds via the shared bind-mount `target/` dir. Use `just check` from the project root only (it uses isolated `CARGO_TARGET_DIR`).
+{{- end }}

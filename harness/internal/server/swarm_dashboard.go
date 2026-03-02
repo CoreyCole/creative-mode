@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -104,64 +105,31 @@ func (s *Server) handleSwarmDashboardSSE(c echo.Context) error {
 	r := c.Request()
 	sse := datastar.NewSSE(c.Response().Writer, r)
 
+	ctx := r.Context()
+
+	// Replay buffered events if client provides last_seq.
+	if lastSeqStr := c.QueryParam("last_seq"); lastSeqStr != "" {
+		if lastSeq, err := strconv.ParseInt(lastSeqStr, 10, 64); err == nil {
+			for _, ne := range s.EventBus.EventsSince(lastSeq) {
+				if s.processSwarmEvent(ctx, sse, ne.Event) != nil {
+					return nil
+				}
+			}
+		}
+	}
+
 	globalCh := s.EventBus.SubscribeGlobal()
 	defer s.EventBus.UnsubscribeGlobal(globalCh)
 
 	heartbeat := time.NewTicker(sseHeartbeatInterval)
 	defer heartbeat.Stop()
 
-	ctx := r.Context()
-
 	for {
 		select {
 		case event := <-globalCh:
-			e, ok := event.(map[string]any)
-			if !ok {
-				continue
-			}
-			eventType, _ := e["event"].(string)
-			if !strings.HasPrefix(eventType, "swarm.") {
-				continue
-			}
-
-			// Live tool activity feed.
-			if eventType == "swarm.tool_use" {
-				ticketID, _ := e["ticket_id"].(string)
-				phase, _ := e["phase"].(string)
-				tool, _ := e["tool"].(string)
-				file, _ := e["file"].(string)
-
-				if err := sse.PatchElementTempl(
-					swarmview.ToolActivityItem(ticketID, phase, tool, file),
-					datastar.WithSelectorID("swarm-tool-activity"),
-					datastar.WithModeAppend(),
-				); err != nil {
-					return nil
-				}
-
-				continue
-			}
-
-			// Refresh workflow + events tabs.
-			workflows, _ := s.DB.ListAllSwarmWorkflows(ctx, defaultQueryLimit)
-			recentEvents, _ := s.DB.ListRecentSwarmEvents(ctx, swarmEventLimit)
-
-			if err := sse.PatchElementTempl(
-				swarmview.WorkflowsTab(workflows),
-				datastar.WithSelectorID("swarm-workflows-tab"),
-			); err != nil {
+			if s.processSwarmEvent(ctx, sse, event) != nil {
 				return nil
 			}
-			if err := sse.PatchElementTempl(
-				swarmview.EventsTab(recentEvents),
-				datastar.WithSelectorID("swarm-events-tab"),
-			); err != nil {
-				return nil
-			}
-
-			// Refresh metrics + health tabs on workflow events.
-			s.patchMetricsAndLearnings(ctx, sse)
-
 		case <-heartbeat.C:
 			if err := sse.MarshalAndPatchSignals(map[string]any{}); err != nil {
 				return nil
@@ -170,6 +138,61 @@ func (s *Server) handleSwarmDashboardSSE(c echo.Context) error {
 			return nil
 		}
 	}
+}
+
+// processSwarmEvent handles a single event for the swarm dashboard SSE stream.
+// Returns non-nil error if the SSE connection should close.
+func (s *Server) processSwarmEvent(
+	ctx context.Context,
+	sse *datastar.ServerSentEventGenerator,
+	event any,
+) error {
+	e, ok := event.(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	eventType, _ := e["event"].(string)
+	if !strings.HasPrefix(eventType, "swarm.") {
+		return nil
+	}
+
+	// Live tool activity feed.
+	if eventType == "swarm.tool_use" {
+		ticketID, _ := e["ticket_id"].(string)
+		phase, _ := e["phase"].(string)
+		tool, _ := e["tool"].(string)
+		file, _ := e["file"].(string)
+
+		return sse.PatchElementTempl(
+			swarmview.ToolActivityItem(ticketID, phase, tool, file),
+			datastar.WithSelectorID("swarm-tool-activity"),
+			datastar.WithModeAppend(),
+		)
+	}
+
+	// Refresh workflow + events tabs.
+	workflows, _ := s.DB.ListAllSwarmWorkflows(ctx, defaultQueryLimit)
+	recentEvents, _ := s.DB.ListRecentSwarmEvents(ctx, swarmEventLimit)
+
+	if err := sse.PatchElementTempl(
+		swarmview.WorkflowsTab(workflows),
+		datastar.WithSelectorID("swarm-workflows-tab"),
+	); err != nil {
+		return err
+	}
+
+	if err := sse.PatchElementTempl(
+		swarmview.EventsTab(recentEvents),
+		datastar.WithSelectorID("swarm-events-tab"),
+	); err != nil {
+		return err
+	}
+
+	// Refresh metrics + health tabs on workflow events.
+	s.patchMetricsAndLearnings(ctx, sse)
+
+	return nil
 }
 
 // patchMetricsAndLearnings pushes updated metrics, health, and learnings tabs via SSE.

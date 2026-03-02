@@ -83,6 +83,14 @@ sql:
           review_feedback: "ReviewFeedback"
           revision_target: "RevisionTarget"
           description: "Description"
+          input_tokens: "InputTokens"
+          output_tokens: "OutputTokens"
+          cache_read_tokens: "CacheReadTokens"
+          cache_creation_tokens: "CacheCreationTokens"
+          model_used: "ModelUsed"
+          estimated_cost_usd: "EstimatedCostUsd"
+          prompt_version_id: "PromptVersionID"
+          content_hash: "ContentHash"
         overrides:
           - db_type: "TIMESTAMP"
             go_type:

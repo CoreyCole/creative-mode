@@ -24,6 +24,8 @@ import (
 	"creative-mode/harness/internal/graphite"
 	"creative-mode/harness/internal/linear"
 	"creative-mode/harness/internal/swarm"
+	"creative-mode/harness/internal/swarm/prompt"
+	"creative-mode/harness/internal/swarm/transcript"
 )
 
 const (
@@ -80,6 +82,10 @@ type Manager struct {
 
 	// Temporal runtime for durable orchestration.
 	temporalRuntime *TemporalRuntime
+
+	// Prompt version IDs keyed by sessionID. Set in spawnSession, read in handleSessionComplete.
+	promptVersionMu  sync.RWMutex
+	promptVersionIDs map[string]string
 }
 
 // NewManager creates a new swarm orchestrator.
@@ -90,17 +96,18 @@ func NewManager(
 	baseDir, logsDir, harnessURL string,
 ) *Manager {
 	return &Manager{
-		db:            database,
-		logger:        logger,
-		eventBus:      eventBus,
-		baseDir:       baseDir,
-		logsDir:       logsDir,
-		harnessURL:    harnessURL,
-		completionReg: NewCompletionRegistry(),
-		startReg:      NewStartRegistry(),
-		ctxPressure:   NewContextPressure(),
-		metricsCache:  newMetricsCache(),
-		jsonlWriters:  make(map[string]*JSONLWriter),
+		db:               database,
+		logger:           logger,
+		eventBus:         eventBus,
+		baseDir:          baseDir,
+		logsDir:          logsDir,
+		harnessURL:       harnessURL,
+		completionReg:    NewCompletionRegistry(),
+		startReg:         NewStartRegistry(),
+		ctxPressure:      NewContextPressure(),
+		metricsCache:     newMetricsCache(),
+		jsonlWriters:     make(map[string]*JSONLWriter),
+		promptVersionIDs: make(map[string]string),
 	}
 }
 
@@ -335,6 +342,35 @@ func (m *Manager) spawnSession(ctx context.Context, wf sqlc.SwarmWorkflow) error
 
 	env, cleanupFn := m.buildEnv(ctx, wf, sessionID)
 
+	// Track prompt version for this session.
+	rendered, renderErr := prompt.RenderPrompt(wf.Phase, prompt.PromptContext{
+		TicketID:   wf.TicketID,
+		WorkflowID: wf.ID,
+		SessionID:  sessionID,
+		Phase:      string(wf.Phase),
+		Attempt:    wf.Attempt,
+		ResultPath: ResultFilePath(sessionID),
+		TicketURL:  env["CM_SWARM_TICKET_URL"],
+		BranchName: wf.BranchName.String,
+	})
+	if renderErr == nil {
+		versionID, upsertErr := m.db.UpsertSwarmPromptVersion(
+			ctx,
+			sqlc.UpsertSwarmPromptVersionParams{
+				ID:          uuid.New().String()[:8],
+				Phase:       string(wf.Phase),
+				ContentHash: rendered.ContentHash,
+			},
+		)
+		if upsertErr == nil {
+			m.setPromptVersionID(sessionID, versionID)
+		} else {
+			m.logger.Warn("upsert prompt version", "error", upsertErr)
+		}
+	} else {
+		m.logger.Warn("render prompt for version tracking", "error", renderErr)
+	}
+
 	// Generate Claude Code hooks config pointing back to harness.
 	// Use localhost for hooks since Claude Code blocks private/link-local
 	// addresses in HTTP hooks (only loopback is allowed).
@@ -342,7 +378,8 @@ func (m *Manager) spawnSession(ctx context.Context, wf sqlc.SwarmWorkflow) error
 	hooksConfigDir, hooksErr := WriteHooksConfig(
 		sessionID,
 		wf.TicketID,
-		"http://localhost:8080",
+		string(wf.Phase),
+		m.harnessURL,
 		hookSecret,
 	)
 	var hooksSettingsPath string
@@ -528,25 +565,73 @@ func (m *Manager) handleSessionComplete(ctx context.Context, sessionID string) {
 	resultPath := ResultFilePath(sessionID)
 	result, _ := swarm.ParseResultFile(resultPath)
 
-	// Best-effort token capture from tmux pane.
-	totalTokens := m.captureTokens(session.SessionName, sessionID)
-
 	// Compute duration from started_at.
 	var durationSec int64
-	if startedAt, parseErr := time.Parse(
+	var startedAt time.Time
+	if parsed, parseErr := time.Parse(
 		"2006-01-02 15:04:05",
 		session.StartedAt,
 	); parseErr == nil {
+		startedAt = parsed
 		durationSec = int64(time.Since(startedAt).Seconds())
 	}
 
-	if completeErr := m.db.CompleteSwarmSession(ctx, sqlc.CompleteSwarmSessionParams{
-		Result:      result.Result,
-		Detail:      toNullString(result.Summary),
-		DurationSec: sql.NullInt64{Int64: durationSec, Valid: durationSec > 0},
-		TotalTokens: sql.NullInt64{Int64: totalTokens, Valid: totalTokens > 0},
-		ID:          sessionID,
-	}); completeErr != nil {
+	// Discover and parse transcript for token/cost tracking.
+	var (
+		totalTokens         int64
+		inputTokens         int64
+		outputTokens        int64
+		cacheReadTokens     int64
+		cacheCreationTokens int64
+		modelUsed           string
+		estimatedCost       float64
+	)
+	if !startedAt.IsZero() {
+		projectKey := transcript.ProjectKeyFromPath(m.baseDir)
+		if transcriptPath, discoverErr := transcript.DiscoverTranscript(
+			transcript.DefaultBaseDir(), projectKey, startedAt,
+		); discoverErr == nil {
+			if ts, parseErr := transcript.ParseFile(transcriptPath); parseErr == nil {
+				totalTokens = ts.TotalTokens
+				inputTokens = ts.InputTokens
+				outputTokens = ts.OutputTokens
+				cacheReadTokens = ts.CacheReadTokens
+				cacheCreationTokens = ts.CacheCreationTokens
+				modelUsed = ts.Model
+				estimatedCost = ts.EstimatedCostUSD
+			}
+		}
+	}
+
+	// Look up prompt version ID stored during spawnSession.
+	promptVersionID := m.getPromptVersionID(sessionID)
+
+	if completeErr := m.db.CompleteSwarmSessionWithTokens(
+		ctx,
+		sqlc.CompleteSwarmSessionWithTokensParams{
+			Result:       result.Result,
+			Detail:       toNullString(result.Summary),
+			DurationSec:  sql.NullInt64{Int64: durationSec, Valid: durationSec > 0},
+			TotalTokens:  sql.NullInt64{Int64: totalTokens, Valid: totalTokens > 0},
+			InputTokens:  sql.NullInt64{Int64: inputTokens, Valid: inputTokens > 0},
+			OutputTokens: sql.NullInt64{Int64: outputTokens, Valid: outputTokens > 0},
+			CacheReadTokens: sql.NullInt64{
+				Int64: cacheReadTokens,
+				Valid: cacheReadTokens > 0,
+			},
+			CacheCreationTokens: sql.NullInt64{
+				Int64: cacheCreationTokens,
+				Valid: cacheCreationTokens > 0,
+			},
+			ModelUsed: toNullString(modelUsed),
+			EstimatedCostUsd: sql.NullFloat64{
+				Float64: estimatedCost,
+				Valid:   estimatedCost > 0,
+			},
+			PromptVersionID: toNullString(promptVersionID),
+			ID:              sessionID,
+		},
+	); completeErr != nil {
 		m.logger.Error(
 			"complete session record",
 			"session_id",
@@ -601,43 +686,7 @@ func (m *Manager) handleSessionComplete(ctx context.Context, sessionID string) {
 	_ = os.Remove(LearningFilePath(sessionID))
 	_ = os.Remove(TokenFilePath(sessionID))
 	CleanupHooksConfig(sessionID)
-}
-
-// captureTokens runs the token capture script and returns the total token count.
-// Returns 0 if capture fails (best-effort).
-func (m *Manager) captureTokens(sessionName, sessionID string) int64 {
-	scriptPath := filepath.Join(
-		m.baseDir,
-		"harness",
-		"scripts",
-		"swarm-capture-tokens.sh",
-	)
-	if _, err := os.Stat(scriptPath); err != nil {
-		return 0
-	}
-
-	const tokenCaptureTimeout = 10 * time.Second
-
-	ctx, cancel := context.WithTimeout(context.Background(), tokenCaptureTimeout)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, scriptPath, sessionName, sessionID)
-	if err := cmd.Run(); err != nil {
-		m.logger.Debug("token capture script failed", "error", err)
-		return 0
-	}
-
-	data, err := os.ReadFile(TokenFilePath(sessionID))
-	if err != nil {
-		return 0
-	}
-
-	tokens, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
-	if err != nil {
-		return 0
-	}
-
-	return tokens
+	m.clearPromptVersionID(sessionID)
 }
 
 // TokenFilePath returns the path where the token capture script writes token counts.
@@ -923,7 +972,7 @@ func (m *Manager) advanceWorkflow(
 func (m *Manager) captureLearnings(
 	ctx context.Context,
 	wf sqlc.SwarmWorkflow,
-	session sqlc.SwarmSession,
+	session sqlc.GetSwarmSessionRow,
 	result *swarm.SessionResultData,
 ) {
 	switch {
@@ -1361,6 +1410,24 @@ func (m *Manager) closeJSONLWriter(sessionID string) {
 		_ = jw.Close()
 		delete(m.jsonlWriters, sessionID)
 	}
+}
+
+func (m *Manager) setPromptVersionID(sessionID, versionID string) {
+	m.promptVersionMu.Lock()
+	m.promptVersionIDs[sessionID] = versionID
+	m.promptVersionMu.Unlock()
+}
+
+func (m *Manager) getPromptVersionID(sessionID string) string {
+	m.promptVersionMu.RLock()
+	defer m.promptVersionMu.RUnlock()
+	return m.promptVersionIDs[sessionID]
+}
+
+func (m *Manager) clearPromptVersionID(sessionID string) {
+	m.promptVersionMu.Lock()
+	delete(m.promptVersionIDs, sessionID)
+	m.promptVersionMu.Unlock()
 }
 
 // WriteJSONLEvent writes an event to the JSONL log for a session.
@@ -1816,7 +1883,7 @@ func LearningFilePath(sessionID string) string {
 func (m *Manager) GetWorkflow(
 	ctx context.Context,
 	workflowID string,
-) (sqlc.SwarmWorkflow, *sqlc.SwarmSession, error) {
+) (sqlc.SwarmWorkflow, *sqlc.GetLatestSwarmSessionRow, error) {
 	wf, err := m.db.GetSwarmWorkflow(ctx, workflowID)
 	if err != nil {
 		return sqlc.SwarmWorkflow{}, nil, fmt.Errorf("get workflow: %w", err)

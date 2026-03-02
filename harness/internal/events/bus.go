@@ -1,15 +1,35 @@
 package events
 
-import "sync"
+import (
+	"sort"
+	"sync"
+	"sync/atomic"
+)
 
-const eventChannelBuffer = 100
+const (
+	eventChannelBuffer = 100
+	ringSize           = 1000
+)
+
+// NumberedEvent is an event with a monotonic sequence number.
+type NumberedEvent struct {
+	Seq   int64 `json:"seq"`
+	Event any   `json:"event"`
+}
 
 // EventBus supports both global (all players) and per-world pub/sub.
 // SSE handlers subscribe to both global and world-specific channels.
+// Global events are also stored in a ring buffer for replay.
 type EventBus struct {
 	mu         sync.RWMutex
 	worldSubs  map[string][]chan any // worldID -> subscriber channels
 	globalSubs []chan any            // all-player subscribers
+
+	// Ring buffer for global event replay.
+	seq      atomic.Int64
+	ringMu   sync.RWMutex
+	ring     [ringSize]NumberedEvent
+	ringHead int // next write position
 }
 
 // NewEventBus creates a new event bus.
@@ -48,8 +68,17 @@ func (b *EventBus) UnsubscribeGlobal(ch chan any) {
 	}
 }
 
-// PublishGlobal sends an event to all global subscribers.
+// PublishGlobal sends an event to all global subscribers and stores it in the ring buffer.
 func (b *EventBus) PublishGlobal(event any) {
+	seq := b.seq.Add(1)
+
+	// Store in ring buffer.
+	b.ringMu.Lock()
+	b.ring[b.ringHead] = NumberedEvent{Seq: seq, Event: event}
+	b.ringHead = (b.ringHead + 1) % ringSize
+	b.ringMu.Unlock()
+
+	// Fan out to subscribers.
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -59,6 +88,32 @@ func (b *EventBus) PublishGlobal(event any) {
 		default: // drop if subscriber is slow
 		}
 	}
+}
+
+// EventsSince returns all buffered events with Seq > lastID, sorted by Seq.
+func (b *EventBus) EventsSince(lastID int64) []NumberedEvent {
+	b.ringMu.RLock()
+	defer b.ringMu.RUnlock()
+
+	var result []NumberedEvent
+
+	for i := range ringSize {
+		ne := b.ring[i]
+		if ne.Seq > lastID {
+			result = append(result, ne)
+		}
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Seq < result[j].Seq
+	})
+
+	return result
+}
+
+// CurrentSeq returns the latest sequence number.
+func (b *EventBus) CurrentSeq() int64 {
+	return b.seq.Load()
 }
 
 // Subscribe creates a channel for world-specific events.

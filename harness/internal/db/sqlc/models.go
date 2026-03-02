@@ -163,18 +163,32 @@ type SwarmProjectMilestone struct {
 	CreatedAt  string
 }
 
-type SwarmSession struct {
+type SwarmPromptVersion struct {
 	ID          string
-	WorkflowID  string
-	SessionName string
-	Skill       string
-	Phase       swarm.Phase
-	Result      swarm.SessionResult
-	Detail      sql.NullString
-	DurationSec sql.NullInt64
-	TotalTokens sql.NullInt64
-	StartedAt   string
-	CompletedAt sql.NullString
+	Phase       string
+	ContentHash string
+	CreatedAt   string
+}
+
+type SwarmSession struct {
+	ID                  string
+	WorkflowID          string
+	SessionName         string
+	Skill               string
+	Phase               swarm.Phase
+	Result              swarm.SessionResult
+	Detail              sql.NullString
+	DurationSec         sql.NullInt64
+	TotalTokens         sql.NullInt64
+	StartedAt           string
+	CompletedAt         sql.NullString
+	InputTokens         sql.NullInt64
+	OutputTokens        sql.NullInt64
+	CacheReadTokens     sql.NullInt64
+	CacheCreationTokens sql.NullInt64
+	ModelUsed           sql.NullString
+	EstimatedCostUsd    sql.NullFloat64
+	PromptVersionID     sql.NullString
 }
 
 type SwarmTicket struct {

@@ -1,0 +1,50 @@
+{{- /* plan_review.md.tmpl — process section for the plan review phase */ -}}
+{{- define "process" }}
+
+**This phase is READ-ONLY** — do NOT modify the plan document.
+
+1. **Find the plan** — Glob: `thoughts/swarm/plans/*_{{ .TicketID }}_*_v{{ .Attempt }}.md`
+   - If not found, try without version suffix (v1 is the default)
+   - Read the full plan document
+
+2. **Read the ticket** — Understand acceptance criteria and requirements.
+
+3. **Verify against codebase** — For each file in the File Inventory:
+   - If Type=Edit: verify the file exists and the described changes make sense
+   - If Type=New: verify the target directory exists and the file doesn't already exist
+   - Check that import paths, function signatures, and types referenced in the plan actually exist
+
+4. **Review checklist** — Evaluate each criterion:
+
+   | # | Criterion | Weight |
+   |---|-----------|--------|
+   | 1 | **Goal alignment** — Does the plan achieve what the ticket asks for? | Critical |
+   | 2 | **Acceptance criteria** — Are all ticket criteria covered? | Critical |
+   | 3 | **File inventory** — Are all needed files listed? Any missing? | High |
+   | 4 | **Implementation steps** — Are steps clear and in correct order? | High |
+   | 5 | **Verification checks** — Are checks sufficient to catch regressions? | High |
+   | 6 | **Risk assessment** — Are risks identified with mitigations? | Medium |
+   | 7 | **Convention compliance** — Does it follow CLAUDE.md and project patterns? | Medium |
+   | 8 | **Scope creep** — Does it stay within ticket scope? No unnecessary changes? | Medium |
+
+5. **Render verdict**:
+   - **Approve** — All Critical criteria pass, no High criteria have blocking issues
+   - **Revise** — Any Critical criterion fails, or multiple High criteria have issues
+
+6. **Post Linear comment** — `PLAN-REVIEW:` prefix with verdict and checklist.
+
+7. **Write handoff** — Write handoff to `thoughts/swarm/handoffs-plan-reviews/`:
+   - If APPROVE: Next Steps should reference the implement phase
+   - If REVISE: What Was NOT Done should list specific issues
+
+8. **Write RESULT**:
+   - Approve: `RESULT: success` (state machine advances to implement)
+   - Revise: `RESULT: logic_failure` (state machine loops back to code_plan)
+   ```
+   RESULT: {success|logic_failure}
+   Phase: plan_review
+   Handoff: thoughts/swarm/handoffs-plan-reviews/{filename}
+
+   Summary: Plan v{{ .Attempt }} {approved|needs revision}: {one-line reason}
+   ```
+{{- end }}

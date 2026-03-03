@@ -7,7 +7,6 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"creative-mode/harness/internal/events"
-	"creative-mode/harness/internal/swarm"
 	"creative-mode/harness/internal/swarmorch"
 )
 
@@ -196,8 +195,8 @@ func (s *Server) handleSwarmHookPreCompact(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
-// handleSwarmHookSessionComplete is called by the Stop hook. It reads the
-// result file and signals the CompletionRegistry.
+// handleSwarmHookSessionComplete is called by the Stop hook. It calls
+// HandleSessionComplete directly to complete the session and advance the workflow.
 func (s *Server) handleSwarmHookSessionComplete(c echo.Context) error {
 	if s.SwarmManager == nil {
 		return c.NoContent(http.StatusNoContent)
@@ -211,28 +210,20 @@ func (s *Server) handleSwarmHookSessionComplete(c echo.Context) error {
 		return c.NoContent(http.StatusNoContent)
 	}
 
-	// Read the result file written by the skill.
-	resultPath := swarmorch.ResultFilePath(sessionID)
-	result, _ := swarm.ParseResultFile(resultPath)
-
 	s.SwarmManager.WriteJSONLEvent(sessionID, map[string]any{
 		"event":      "session_complete",
 		"session_id": sessionID,
-		"result":     string(result.Result),
-		"summary":    result.Summary,
 	})
 
-	s.SwarmManager.SignalCompletion(sessionID, swarmorch.SessionResult{
-		Result:  result.Result,
-		Summary: result.Summary,
-	})
+	s.SwarmManager.HandleSessionComplete(c.Request().Context(), sessionID)
 
 	return c.NoContent(http.StatusNoContent)
 }
 
 // handleSwarmHookSessionEnded is the crash-backup handler. If the Stop hook
-// didn't fire (e.g., Claude crashed), this signals CompletionRegistry with
-// infra_failure.
+// didn't fire (e.g., Claude crashed), this calls HandleSessionComplete
+// directly. The double-fire guard in HandleSessionComplete makes this safe
+// to call even if Stop already completed the session.
 func (s *Server) handleSwarmHookSessionEnded(c echo.Context) error {
 	if s.SwarmManager == nil {
 		return c.NoContent(http.StatusNoContent)
@@ -246,28 +237,14 @@ func (s *Server) handleSwarmHookSessionEnded(c echo.Context) error {
 		return c.NoContent(http.StatusNoContent)
 	}
 
-	// Try to read result file first — Stop hook may have already signaled.
-	resultPath := swarmorch.ResultFilePath(sessionID)
-	result, _ := swarm.ParseResultFile(resultPath)
-
-	// If no result was written, treat as infra failure.
-	if result.Result == "" {
-		result.Result = swarm.ResultInfraFailure
-		result.Summary = "session ended without Stop hook (possible crash)"
-	}
-
 	s.SwarmManager.WriteJSONLEvent(sessionID, map[string]any{
 		"event":      "session_ended",
 		"session_id": sessionID,
-		"result":     string(result.Result),
-		"summary":    result.Summary,
 	})
 
-	// Signal — this is a no-op if Stop already signaled (buffered channel).
-	s.SwarmManager.SignalCompletion(sessionID, swarmorch.SessionResult{
-		Result:  result.Result,
-		Summary: result.Summary,
-	})
+	// HandleSessionComplete has a double-fire guard — safe to call even if
+	// the Stop hook already completed the session.
+	s.SwarmManager.HandleSessionComplete(c.Request().Context(), sessionID)
 
 	return c.NoContent(http.StatusNoContent)
 }

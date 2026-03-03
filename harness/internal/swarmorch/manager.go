@@ -29,12 +29,9 @@ import (
 )
 
 const (
-	sessionPollInterval  = 15 * time.Second
-	startTimeout         = 30 * time.Second
-	tmuxFallbackInterval = 30 * time.Second
-	resultFilePrefix     = "swarm-result-"
-	learningFilePrefix   = "swarm-learning-"
-	promptFilePrefix     = "swarm-prompt-"
+	sessionPollInterval = 15 * time.Second
+	learningFilePrefix  = "swarm-learning-"
+	promptFilePrefix    = "swarm-prompt-"
 
 	// Linear API call timeout.
 	linearTimeout = 30 * time.Second
@@ -54,16 +51,8 @@ type Manager struct {
 	harnessURL string
 	mu         sync.Mutex // serializes workflow advancement
 
-	// Lifecycle context for long-lived goroutines (e.g., watchSession).
-	// Canceled by Shutdown(). Must NOT use HTTP request contexts for
-	// goroutines that outlive the request.
-	ctx    context.Context //nolint:containedctx // lifecycle context, not request-scoped
-	cancel context.CancelFunc
-
-	// Hook-driven completion: registries replace tmux polling as the primary
-	// mechanism. Tmux checks remain as a fallback.
-	completionReg *CompletionRegistry
-	startReg      *StartRegistry
+	// StartRegistry signals that Claude Code has started (for logging).
+	startReg *StartRegistry
 
 	// Decay double-run guard: prevents relevance decay from running
 	// more frequently than the configured interval.
@@ -89,7 +78,7 @@ type Manager struct {
 	// Temporal runtime for durable orchestration.
 	temporalRuntime *TemporalRuntime
 
-	// Prompt version IDs keyed by sessionID. Set in spawnSession, read in handleSessionComplete.
+	// Prompt version IDs keyed by sessionID. Set in spawnSession, read in HandleSessionComplete.
 	promptVersionMu  sync.RWMutex
 	promptVersionIDs map[string]string
 }
@@ -101,28 +90,22 @@ func NewManager(
 	eventBus *events.EventBus,
 	baseDir, logsDir, harnessURL string,
 ) *Manager {
-	ctx, cancel := context.WithCancel(context.Background())
+	// Ensure durable result directory exists.
+	_ = os.MkdirAll(filepath.Join("thoughts", "swarm", "results"), 0o750)
+
 	return &Manager{
-		ctx:              ctx,
-		cancel:           cancel,
 		db:               database,
 		logger:           logger,
 		eventBus:         eventBus,
 		baseDir:          baseDir,
 		logsDir:          logsDir,
 		harnessURL:       harnessURL,
-		completionReg:    NewCompletionRegistry(),
 		startReg:         NewStartRegistry(),
 		ctxPressure:      NewContextPressure(),
 		metricsCache:     newMetricsCache(),
 		jsonlWriters:     make(map[string]*JSONLWriter),
 		promptVersionIDs: make(map[string]string),
 	}
-}
-
-// Shutdown cancels the Manager's lifecycle context, stopping all watchSession goroutines.
-func (m *Manager) Shutdown() {
-	m.cancel()
 }
 
 // CreateProjectTicket creates a Linear ticket for a self-directed project and stores
@@ -301,51 +284,9 @@ func (m *Manager) CancelWorkflow(ctx context.Context, workflowID string) error {
 	return nil
 }
 
-// RecoverWorkflows re-attaches watchSession goroutines for surviving tmux
-// sessions after harness restart. Dead sessions are handled via completion.
-func (m *Manager) RecoverWorkflows(ctx context.Context) error {
-	workflows, err := m.db.ListRunningSwarmWorkflows(ctx)
-	if err != nil {
-		return fmt.Errorf("list running workflows: %w", err)
-	}
-
-	for _, wf := range workflows {
-		session, sessionErr := m.db.GetLatestSwarmSession(ctx, wf.ID)
-		if sessionErr != nil {
-			m.logger.Warn("recovery: no session for workflow", "workflow_id", wf.ID)
-
-			continue
-		}
-
-		// Skip already-completed sessions.
-		if session.CompletedAt.Valid {
-			continue
-		}
-
-		// Check if tmux session is still alive.
-		if isTmuxSessionAlive(session.SessionName) {
-			// Re-attach watcher with fresh registry channels (hooks may not
-			// fire for recovered sessions, but tmux fallback will catch them).
-			m.logger.Info("recovery: re-watching live session",
-				"session", session.SessionName, "workflow_id", wf.ID)
-			startCh := m.startReg.Register(session.ID)
-			completionCh := m.completionReg.Register(session.ID)
-			go m.watchSession(session.ID, session.SessionName, startCh, completionCh)
-
-			continue
-		}
-
-		// Session is dead — handle completion.
-		m.logger.Info("recovery: handling dead session",
-			"session", session.SessionName, "workflow_id", wf.ID)
-		m.handleSessionComplete(ctx, session.ID)
-	}
-
-	return nil
-}
-
 // spawnSession creates a session DB record, builds env vars, creates a tmux
-// session, sends the skill prompt, and starts a watcher goroutine.
+// session, and sends the skill prompt. Completion is driven by hooks calling
+// HandleSessionComplete directly, with Temporal heartbeat as safety net.
 func (m *Manager) spawnSession(ctx context.Context, wf sqlc.SwarmWorkflow) error {
 	// Idempotency: skip if an active session already exists for this phase.
 	if existing, err := m.db.GetLatestSwarmSession(ctx, wf.ID); err == nil {
@@ -426,9 +367,8 @@ func (m *Manager) spawnSession(ctx context.Context, wf sqlc.SwarmWorkflow) error
 		hooksSettingsPath = filepath.Join(hooksConfigDir, "settings.json")
 	}
 
-	// Register in start and completion registries before spawning.
-	startCh := m.startReg.Register(sessionID)
-	completionCh := m.completionReg.Register(sessionID)
+	// Register in start registry for logging.
+	m.startReg.Register(sessionID)
 
 	// Create per-session JSONL writer.
 	jw, jwErr := NewJSONLWriter(m.logsDir, wf.TicketID, sessionID)
@@ -492,102 +432,12 @@ func (m *Manager) spawnSession(ctx context.Context, wf sqlc.SwarmWorkflow) error
 		})
 	}
 
-	go m.watchSession(sessionID, sessionName, startCh, completionCh)
-
 	return nil
 }
 
-// watchSession waits for hook-driven completion signals, falling back to tmux
-// health checks if hooks don't fire.
-func (m *Manager) watchSession(
-	sessionID, sessionName string,
-	startCh chan struct{},
-	completionCh chan SessionResult,
-) {
-	startedAt := time.Now()
-
-	defer func() {
-		m.startReg.Unregister(sessionID)
-		m.completionReg.Unregister(sessionID)
-		m.ctxPressure.Remove(sessionID)
-		CleanupHooksConfig(sessionID)
-	}()
-
-	// Phase 1: Wait for SessionStart hook (30s timeout).
-	select {
-	case <-startCh:
-		m.logger.Info("session started (hook)", "session", sessionName)
-	case <-time.After(startTimeout):
-		// Timeout — check if tmux is alive as fallback.
-		if !isTmuxSessionAlive(sessionName) {
-			m.logger.Warn("session never started and tmux is dead",
-				"session", sessionName)
-			m.handleSessionComplete(context.Background(), sessionID)
-
-			return
-		}
-
-		m.logger.Info("session start hook timed out, tmux alive — continuing",
-			"session", sessionName)
-	case <-m.ctx.Done():
-		m.logger.Info("watchSession shutting down", "session", sessionName)
-		return
-	}
-
-	// Phase 2: Wait for completion signal from Stop/SessionEnd hooks,
-	// with periodic tmux health checks as fallback.
-	tmuxTicker := time.NewTicker(tmuxFallbackInterval)
-	defer tmuxTicker.Stop()
-
-	for {
-		select {
-		case <-completionCh:
-			m.logger.Info("session completed (hook)",
-				"session", sessionName,
-				"duration", time.Since(startedAt).Round(time.Second))
-			m.handleSessionComplete(context.Background(), sessionID)
-
-			return
-
-		case <-m.ctx.Done():
-			m.logger.Info("watchSession shutting down", "session", sessionName)
-			return
-
-		case <-tmuxTicker.C:
-			if isTmuxSessionAlive(sessionName) {
-				continue
-			}
-
-			// Tmux died without hooks firing — handle completion.
-			m.logger.Info("session ended (tmux fallback)",
-				"session", sessionName,
-				"duration", time.Since(startedAt).Round(time.Second))
-
-			if m.alertMgr != nil {
-				// Look up session to get ticket/phase for the alert.
-				if sess, sessErr := m.db.GetSwarmSession(
-					context.Background(),
-					sessionID,
-				); sessErr == nil {
-					if wf, wfErr := m.db.GetSwarmWorkflow(
-						context.Background(),
-						sess.WorkflowID,
-					); wfErr == nil {
-						m.alertMgr.FireCrashRecovery(wf.TicketID, sess.Phase)
-					}
-				}
-			}
-
-			m.handleSessionComplete(context.Background(), sessionID)
-
-			return
-		}
-	}
-}
-
-// handleSessionComplete reads the result file, completes the session record,
+// HandleSessionComplete reads the result file, completes the session record,
 // captures learnings, and advances the workflow.
-func (m *Manager) handleSessionComplete(ctx context.Context, sessionID string) {
+func (m *Manager) HandleSessionComplete(ctx context.Context, sessionID string) {
 	session, err := m.db.GetSwarmSession(ctx, sessionID)
 	if err != nil {
 		m.logger.Error(
@@ -754,12 +604,14 @@ func (m *Manager) handleSessionComplete(ctx context.Context, sessionID string) {
 	// Close JSONL writer for this session.
 	m.closeJSONLWriter(sessionID)
 
-	// Clean up temp files and hooks config.
-	_ = os.Remove(resultPath)
+	// Clean up temp files, hooks config, and registries.
+	// Result files are NOT removed — they're a durable audit trail.
 	_ = os.Remove(LearningFilePath(sessionID))
 	_ = os.Remove(TokenFilePath(sessionID))
 	CleanupHooksConfig(sessionID)
 	m.clearPromptVersionID(sessionID)
+	m.startReg.Unregister(sessionID)
+	m.ctxPressure.Remove(sessionID)
 }
 
 // TokenFilePath returns the path where the token capture script writes token counts.
@@ -1575,11 +1427,6 @@ func (m *Manager) SignalStart(sessionID string) {
 	m.startReg.Signal(sessionID)
 }
 
-// SignalCompletion notifies the watcher that a session has completed.
-func (m *Manager) SignalCompletion(sessionID string, result SessionResult) {
-	m.completionReg.Signal(sessionID, result)
-}
-
 // IncrementContextPressure records a compaction event for the session and
 // returns the updated count.
 func (m *Manager) IncrementContextPressure(sessionID string) int {
@@ -2023,9 +1870,10 @@ func (m *Manager) LogsDir() string {
 	return m.logsDir
 }
 
-// ResultFilePath returns the temp file path for a session's RESULT output.
+// ResultFilePath returns the durable path for a session's RESULT output.
+// Results are stored as markdown in thoughts/swarm/results/ for auditability.
 func ResultFilePath(sessionID string) string {
-	return filepath.Join(os.TempDir(), resultFilePrefix+sessionID+".txt")
+	return filepath.Join("thoughts", "swarm", "results", sessionID+".md")
 }
 
 // LearningFilePath returns the temp file path for learning context.

@@ -80,6 +80,23 @@ func ParseResultFile(path string) (*SessionResultData, error) {
 		}, nil
 	}
 
+	// Treat in_progress as a crash — the session started but never completed.
+	if data.Result == "in_progress" {
+		summary := "session crashed mid-execution"
+		if data.Summary != "" {
+			summary = fmt.Sprintf(
+				"session crashed mid-execution (progress: %s)",
+				data.Summary,
+			)
+		}
+
+		return &SessionResultData{
+			Result:  ResultInfraFailure,
+			Phase:   data.Phase,
+			Summary: summary,
+		}, nil
+	}
+
 	if !data.Result.Valid() {
 		return &SessionResultData{
 			Result:  ResultInfraFailure,

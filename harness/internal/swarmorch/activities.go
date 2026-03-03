@@ -160,7 +160,7 @@ func (a *Activities) ReadTicketQueue(ctx context.Context) ([]SpawnRequest, error
 		if !isTmuxSessionAlive(session.SessionName) {
 			// Tmux died but session not marked complete. The watcher goroutine
 			// should handle this, but if it crashed we mark completion here.
-			a.mgr.handleSessionComplete(ctx, session.ID)
+			a.mgr.HandleSessionComplete(ctx, session.ID)
 		}
 	}
 

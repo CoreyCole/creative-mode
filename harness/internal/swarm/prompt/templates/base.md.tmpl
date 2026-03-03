@@ -92,6 +92,23 @@ timestamp: {ISO 8601}
 - {Concrete next actions}
 ```
 
+## Session Initialization
+
+As your **very first step**, before any research or analysis, write the result file to `{{ .ResultPath }}`:
+
+```
+RESULT: in_progress
+Phase: {{ .Phase }}
+Ticket: {{ .TicketID }}
+Session: {{ .SessionID }}
+Started: {ISO 8601 timestamp}
+
+## Progress
+- Starting {{ .Phase }} phase...
+```
+
+Update this file as you make progress — append key milestones to the Progress section.
+
 ## Process
 
 {{- block "process" . }}
@@ -114,5 +131,14 @@ timestamp: {ISO 8601}
 
 ## Result File Output
 
-As the **very last step**, write the RESULT block to `{{ .ResultPath }}`.
-This is how the orchestrator detects completion and advances the workflow.
+As your **final step**, update `{{ .ResultPath }}` with the final status:
+
+```
+RESULT: success
+Phase: {{ .Phase }}
+Handoff: thoughts/swarm/handoffs-{type}/{filename}
+
+Summary: {one-line summary}
+```
+
+Replace the entire file content — do not append. This is how the orchestrator detects completion and advances the workflow.

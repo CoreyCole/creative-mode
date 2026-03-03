@@ -187,6 +187,57 @@ func TestParseResultFileMalformed(t *testing.T) {
 	}
 }
 
+func TestParseResultFileInProgress(t *testing.T) {
+	t.Parallel()
+
+	content := "RESULT: in_progress\nPhase: research\n\nSummary: Starting research phase...\n"
+	path := filepath.Join(t.TempDir(), "result.md")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	data, err := ParseResultFile(path)
+	if err != nil {
+		t.Fatalf("ParseResultFile: %v", err)
+	}
+
+	if data.Result != ResultInfraFailure {
+		t.Errorf(
+			"Result = %q, want %q (in_progress treated as crash)",
+			data.Result,
+			ResultInfraFailure,
+		)
+	}
+	if data.Phase != PhaseResearch {
+		t.Errorf("Phase = %q, want %q", data.Phase, PhaseResearch)
+	}
+	if data.Summary == "" {
+		t.Error("expected non-empty summary")
+	}
+}
+
+func TestParseResultFileInProgressNoSummary(t *testing.T) {
+	t.Parallel()
+
+	content := "RESULT: in_progress\nPhase: implement\n"
+	path := filepath.Join(t.TempDir(), "result.md")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	data, err := ParseResultFile(path)
+	if err != nil {
+		t.Fatalf("ParseResultFile: %v", err)
+	}
+
+	if data.Result != ResultInfraFailure {
+		t.Errorf("Result = %q, want %q", data.Result, ResultInfraFailure)
+	}
+	if data.Summary != "session crashed mid-execution" {
+		t.Errorf("Summary = %q, want 'session crashed mid-execution'", data.Summary)
+	}
+}
+
 func TestParseResultFileMissingOptionalFields(t *testing.T) {
 	t.Parallel()
 

@@ -594,14 +594,9 @@ func TestResultFilePath(t *testing.T) {
 	t.Parallel()
 
 	path := ResultFilePath("abc123")
-	if !filepath.IsAbs(path) {
-		t.Errorf("expected absolute path, got %q", path)
-	}
-
-	dir := filepath.Dir(path)
-	want := filepath.Clean(os.TempDir())
-	if dir != want {
-		t.Errorf("dir = %q, want %q", dir, want)
+	want := filepath.Join("thoughts", "swarm", "results", "abc123.md")
+	if path != want {
+		t.Errorf("ResultFilePath = %q, want %q", path, want)
 	}
 }
 
@@ -1137,11 +1132,12 @@ func TestHandleSessionCompleteDoubleFireGuard(t *testing.T) {
 
 	// Write a result file so first completion has data.
 	resultPath := ResultFilePath("sess-double")
-	_ = os.WriteFile(resultPath, []byte("RESULT: success\nSUMMARY: done\n"), 0o600)
+	_ = os.MkdirAll(filepath.Dir(resultPath), 0o750)
+	_ = os.WriteFile(resultPath, []byte("RESULT: success\nSummary: done\n"), 0o600)
 	t.Cleanup(func() { _ = os.Remove(resultPath) })
 
 	// First call should complete the session.
-	mgr.handleSessionComplete(ctx, "sess-double")
+	mgr.HandleSessionComplete(ctx, "sess-double")
 
 	session, _ := database.GetSwarmSession(ctx, "sess-double")
 	if !session.CompletedAt.Valid {
@@ -1153,7 +1149,7 @@ func TestHandleSessionCompleteDoubleFireGuard(t *testing.T) {
 	countBefore := len(eventsBefore)
 
 	// Second call should be a no-op (double-fire guard).
-	mgr.handleSessionComplete(ctx, "sess-double")
+	mgr.HandleSessionComplete(ctx, "sess-double")
 
 	eventsAfter, _ := database.ListRecentSwarmEvents(ctx, 100)
 	if len(eventsAfter) != countBefore {

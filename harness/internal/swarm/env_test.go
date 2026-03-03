@@ -11,7 +11,7 @@ func TestSwarmEnvToMap(t *testing.T) {
 		SessionID:  "sess1",
 		Phase:      "research",
 		Attempt:    "1",
-		ResultPath: "/tmp/result.txt",
+		ResultPath: "thoughts/swarm/results/sess1.md",
 		HarnessURL: "http://localhost:8080",
 	}
 

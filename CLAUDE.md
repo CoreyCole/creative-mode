@@ -47,7 +47,9 @@ The swarm is a multi-phase AI orchestration system that takes Linear tickets thr
 
 **Human review gates**: Every code workflow pauses at `human_review` after PR creation. Configurable gates at `plan_review` and `project_review` (opt-in). Humans approve/reject via dashboard (`/swarm/:id`) or API (`POST /api/swarm/gate/:id/approve|reject`).
 
-**Integrations**: Linear (ticket status/comments), Graphite (branch stacking), Discord (alerts), Temporal (optional workflow engine).
+**Execution model**: Session monitoring is hook-driven with Temporal heartbeat as safety net. No long-lived goroutines for session watching — process restarts are transparent. Result files are durable (`thoughts/swarm/results/`), written at session start with `in_progress` and updated on completion.
+
+**Integrations**: Linear (ticket status/comments), Graphite (branch stacking), Discord (alerts), Temporal (workflow engine).
 
 **Swarm Dashboard**: `/swarm` — workflows table, metrics/health, events log, learnings. `/swarm/:id` — workflow detail with phase timeline, sessions, gate review panel.
 

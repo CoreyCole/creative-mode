@@ -16,7 +16,7 @@ func TestRenderPrompt_AllPhases(t *testing.T) {
 		SessionID:  "sess-123",
 		Phase:      "research",
 		Attempt:    1,
-		ResultPath: "/tmp/swarm-result-sess-123.txt",
+		ResultPath: "thoughts/swarm/results/sess-123.md",
 		TicketURL:  "https://linear.app/cm/issue/CM-42",
 		DryRun:     false,
 	}
@@ -87,7 +87,7 @@ func TestRenderPrompt_AllPhases(t *testing.T) {
 			// Check that shared sections are present.
 			for _, section := range []string{
 				"CM-42", "wf-abc", "sess-123",
-				"Result File Output", "Error Handling",
+				"Session Initialization", "Result File Output", "Error Handling",
 			} {
 				if !strings.Contains(result.Content, section) {
 					t.Errorf("rendered content missing expected section %q", section)
@@ -113,7 +113,7 @@ func TestRenderPrompt_DeterministicHash(t *testing.T) {
 		SessionID:  "s-1",
 		Phase:      "research",
 		Attempt:    1,
-		ResultPath: "/tmp/result.txt",
+		ResultPath: "thoughts/swarm/results/test.md",
 	}
 
 	r1, err := RenderPrompt(swarm.PhaseResearch, ctx)
@@ -140,7 +140,7 @@ func TestRenderPrompt_DryRunSection(t *testing.T) {
 		SessionID:  "s-1",
 		Phase:      "research",
 		Attempt:    1,
-		ResultPath: "/tmp/result.txt",
+		ResultPath: "thoughts/swarm/results/test.md",
 		DryRun:     true,
 	}
 
@@ -163,7 +163,7 @@ func TestRenderPrompt_NoDryRunByDefault(t *testing.T) {
 		SessionID:  "s-1",
 		Phase:      "research",
 		Attempt:    1,
-		ResultPath: "/tmp/result.txt",
+		ResultPath: "thoughts/swarm/results/test.md",
 		DryRun:     false,
 	}
 

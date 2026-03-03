@@ -167,8 +167,10 @@ Claude Code sessions POST hook events to the harness during execution. The orche
 | `/api/swarm/hook/pre-tool-use` | POST | Enforces bash deny list |
 | `/api/swarm/hook/post-tool-use` | POST | Tracks context pressure |
 | `/api/swarm/hook/pre-compact` | POST | Context pressure threshold |
-| `/api/swarm/hook/session-complete` | POST | Triggers completion + `advanceWorkflow()` |
-| `/api/swarm/hook/session-ended` | POST | Cleanup |
+| `/api/swarm/hook/session-complete` | POST | Calls `HandleSessionComplete` directly → advances workflow |
+| `/api/swarm/hook/session-ended` | POST | Crash backup — calls `HandleSessionComplete` (double-fire guard) |
+
+**Completion model**: Hooks call `HandleSessionComplete` directly (no goroutines). The `SpawnPendingSessions` Temporal heartbeat activity is the recovery path — detects dead tmux sessions and calls `HandleSessionComplete` within 2 minutes. Result files are durable at `thoughts/swarm/results/<sessionID>.md`.
 
 **Bash deny list** (`hooks.go`): blocks `cargo build/clippy/check`, `go build`, `templ generate`, `just generate` during swarm sessions to prevent build corruption.
 
@@ -237,7 +239,7 @@ Migrations in `internal/db/migrations/`:
 | `CM_SWARM_SESSION_ID` | Session UUID |
 | `CM_SWARM_PHASE` | Current phase (e.g., `implement`) |
 | `CM_SWARM_ATTEMPT` | Attempt number (1 = first, 2+ = retry) |
-| `CM_SWARM_RESULT_PATH` | Path to write session result JSON |
+| `CM_SWARM_RESULT_PATH` | Durable result file path (`thoughts/swarm/results/<sessionID>.md`) |
 | `CM_HARNESS_URL` | Harness base URL for API calls |
 | `CM_SWARM_BRANCH` | Git branch name |
 | `CM_HOOK_SECRET` | Hook auth secret |

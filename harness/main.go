@@ -325,11 +325,6 @@ func main() {
 	swarmManager.SetTemporalRuntime(temporalRuntime)
 	logger.Info("Swarm Temporal runtime enabled")
 
-	// Recover running workflows (re-attach watchers for surviving tmux sessions).
-	if recoverErr := swarmManager.RecoverWorkflows(ctx); recoverErr != nil {
-		logger.Error("failed to recover swarm workflows", "error", recoverErr)
-	}
-
 	// Set up Gemini image generation (optional — requires GEMINI_API_KEY).
 	geminiClient, geminiErr := gemini.NewClient(ctx, os.Getenv("GEMINI_API_KEY"), logger)
 	if geminiErr != nil {
@@ -417,7 +412,6 @@ func main() {
 	go func() {
 		<-ctx.Done()
 		logger.Info("Shutting down server...")
-		swarmManager.Shutdown()
 		worldManager.Shutdown()
 		temporalRuntime.Stop()
 

@@ -163,6 +163,7 @@ func (m *Manager) CreateProjectTicket(
 		Url:         ticketURL,
 		CreatedAt:   nowUTC(),
 		UpdatedAt:   nowUTC(),
+		TicketType:  string(swarm.WorkflowTypeProject),
 	})
 
 	return ticketID, ticketURL, nil
@@ -215,6 +216,7 @@ func (m *Manager) StartWorkflow(
 			Url:        ticketURL,
 			CreatedAt:  nowUTC(),
 			UpdatedAt:  nowUTC(),
+			TicketType: string(workflowType),
 		})
 	}
 
@@ -1310,8 +1312,8 @@ func (m *Manager) populateStackContext(
 // resolveTicketDescription fetches the ticket description from Linear (with DB
 // fallback) for project workflows. Returns empty string if unavailable.
 func (m *Manager) resolveTicketDescription(ctx context.Context, ticketID string) string {
-	// Try Linear first for the latest description.
-	if m.linearClient != nil {
+	// Try Linear first for the latest description (only for real Linear IDs).
+	if m.linearClient != nil && linear.IsLinearIdentifier(ticketID) {
 		linearCtx, cancel := context.WithTimeout(ctx, linearTimeout)
 		defer cancel()
 
@@ -1440,7 +1442,7 @@ func (m *Manager) emitEvent(
 // linearComment posts a comment to the Linear ticket associated with a workflow.
 // Non-blocking — errors are logged but do not affect workflow progression.
 func (m *Manager) linearComment(ticketID, body string) {
-	if m.linearClient == nil {
+	if m.linearClient == nil || !linear.IsLinearIdentifier(ticketID) {
 		return
 	}
 
@@ -1477,7 +1479,7 @@ func (m *Manager) linearComment(ticketID, body string) {
 
 // linearUpdateStatus updates the Linear ticket status. Non-blocking.
 func (m *Manager) linearUpdateStatus(ticketID, status string) {
-	if m.linearClient == nil {
+	if m.linearClient == nil || !linear.IsLinearIdentifier(ticketID) {
 		return
 	}
 
@@ -1945,8 +1947,8 @@ func (m *Manager) classifyTicket(
 	title := ticketID
 	description := ""
 
-	// Try to get ticket details from Linear.
-	if m.linearClient != nil {
+	// Try to get ticket details from Linear (only for real Linear IDs).
+	if m.linearClient != nil && linear.IsLinearIdentifier(ticketID) {
 		linCtx, cancel := context.WithTimeout(ctx, linearTimeout)
 		defer cancel()
 

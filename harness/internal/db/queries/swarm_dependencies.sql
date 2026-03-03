@@ -15,13 +15,13 @@ WHERE project_id = ?
 ORDER BY created_at ASC;
 
 -- name: ListSwarmTicketsByParent :many
-SELECT id, identifier, title, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at, description
+SELECT id, identifier, title, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at, description, ticket_type
 FROM swarm_tickets
 WHERE parent_id = ?
 ORDER BY created_at ASC;
 
 -- name: ListSwarmTicketsByProject :many
-SELECT id, identifier, title, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at, description
+SELECT id, identifier, title, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at, description, ticket_type
 FROM swarm_tickets
 WHERE project_id = ?
 ORDER BY created_at ASC;

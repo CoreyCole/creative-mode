@@ -354,6 +354,7 @@ func TestReconcileProjectTickets(t *testing.T) {
 			ProjectID:  sql.NullString{String: projectID, Valid: true},
 			CreatedAt:  nowUTC(),
 			UpdatedAt:  nowUTC(),
+			TicketType: string(swarm.WorkflowTypeCode),
 		})
 	}
 
@@ -460,6 +461,7 @@ func TestSpawnProjectWorkflowsCreatesChildWorkflows(t *testing.T) {
 		ProjectID:  sql.NullString{String: projectID, Valid: true},
 		CreatedAt:  nowUTC(),
 		UpdatedAt:  nowUTC(),
+		TicketType: string(swarm.WorkflowTypeResearch),
 	})
 	_ = database.UpsertSwarmTicket(ctx, sqlc.UpsertSwarmTicketParams{
 		ID:         "spawn-child-2",
@@ -469,6 +471,7 @@ func TestSpawnProjectWorkflowsCreatesChildWorkflows(t *testing.T) {
 		ProjectID:  sql.NullString{String: projectID, Valid: true},
 		CreatedAt:  nowUTC(),
 		UpdatedAt:  nowUTC(),
+		TicketType: string(swarm.WorkflowTypeCode),
 	})
 	_ = database.CreateSwarmDependency(ctx, sqlc.CreateSwarmDependencyParams{
 		ID:                "dep-spawn-1",
@@ -513,7 +516,7 @@ func TestBuildProjectGraph(t *testing.T) {
 	ctx := t.Context()
 	projectID := "proj-graph"
 
-	// Seed tickets.
+	// Seed tickets with explicit ticket_type.
 	_ = database.UpsertSwarmTicket(ctx, sqlc.UpsertSwarmTicketParams{
 		ID:         "g-1",
 		Identifier: "CRE-G-1",
@@ -522,6 +525,7 @@ func TestBuildProjectGraph(t *testing.T) {
 		ProjectID:  sql.NullString{String: projectID, Valid: true},
 		CreatedAt:  nowUTC(),
 		UpdatedAt:  nowUTC(),
+		TicketType: string(swarm.WorkflowTypeResearch),
 	})
 	_ = database.UpsertSwarmTicket(ctx, sqlc.UpsertSwarmTicketParams{
 		ID:         "g-2",
@@ -531,6 +535,7 @@ func TestBuildProjectGraph(t *testing.T) {
 		ProjectID:  sql.NullString{String: projectID, Valid: true},
 		CreatedAt:  nowUTC(),
 		UpdatedAt:  nowUTC(),
+		TicketType: string(swarm.WorkflowTypeCode),
 	})
 	_ = database.CreateSwarmDependency(ctx, sqlc.CreateSwarmDependencyParams{
 		ID:                "dep-g-1",
@@ -548,7 +553,7 @@ func TestBuildProjectGraph(t *testing.T) {
 		t.Fatalf("graph edges = %d, want 1", len(graph.Edges))
 	}
 
-	// "Research:" in title should infer research type.
+	// ticket_type should determine workflow type.
 	for _, tk := range graph.Tickets {
 		if tk.TicketID == "CRE-G-1" && tk.WorkflowType != swarm.WorkflowTypeResearch {
 			t.Errorf("CRE-G-1 type = %q, want research", tk.WorkflowType)

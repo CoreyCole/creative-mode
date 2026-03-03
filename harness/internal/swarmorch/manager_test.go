@@ -103,7 +103,8 @@ CREATE TABLE IF NOT EXISTS swarm_tickets (
     created_at  TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
     synced_at   TEXT NOT NULL DEFAULT (datetime('now')),
-    description TEXT
+    description TEXT,
+    ticket_type TEXT NOT NULL DEFAULT 'code'
 );
 CREATE TABLE IF NOT EXISTS swarm_config (
     id     TEXT PRIMARY KEY,
@@ -206,6 +207,7 @@ func TestBuildEnv(t *testing.T) {
 		Url:        "https://linear.app/cm/issue/CM-42",
 		CreatedAt:  "2026-01-01T00:00:00Z",
 		UpdatedAt:  "2026-01-01T00:00:00Z",
+		TicketType: string(swarm.WorkflowTypeCode),
 	})
 
 	wf := sqlc.SwarmWorkflow{

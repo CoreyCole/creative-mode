@@ -137,6 +137,12 @@ func main() {
 		baseURL = "http://localhost:8080"
 	}
 
+	// Hook URL for Claude Code sessions — must be localhost since Claude blocks private IPs.
+	hookURL := os.Getenv("HARNESS_HOOK_URL")
+	if hookURL == "" {
+		hookURL = baseURL
+	}
+
 	switch {
 	case discordClientID != "" && discordClientSecret != "":
 		authHandler = auth.NewHandler(database, &auth.Config{
@@ -243,7 +249,7 @@ func main() {
 		database, logger, eventBus,
 		"..", // baseDir: project root (harness runs from harness/)
 		filepath.Join(dataDir, "logs"),
-		baseURL,
+		hookURL,
 	)
 
 	// Wire swarm alert manager (Discord alerts for failures/stalls/crashes).

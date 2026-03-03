@@ -91,6 +91,7 @@ func (m *Manager) CreateProjectTicketsFromPlan(
 			Url:        "",
 			CreatedAt:  nowUTC(),
 			UpdatedAt:  nowUTC(),
+			TicketType: string(pt.Type),
 		}); upsertErr != nil {
 			return fmt.Errorf("upsert child ticket %d: %w", pt.Num, upsertErr)
 		}
@@ -128,6 +129,7 @@ func (m *Manager) CreateProjectTicketsFromPlan(
 			Url:        linearResult.URL,
 			CreatedAt:  nowUTC(),
 			UpdatedAt:  nowUTC(),
+			TicketType: string(pt.Type),
 		})
 	}
 
@@ -560,10 +562,9 @@ func (m *Manager) buildProjectGraph(
 	}
 
 	for _, t := range tickets {
-		wfType := swarm.WorkflowTypeCode // default
-
-		if strings.Contains(strings.ToLower(t.Title), "research") {
-			wfType = swarm.WorkflowTypeResearch
+		wfType := swarm.WorkflowType(t.TicketType)
+		if !wfType.Valid() {
+			wfType = swarm.WorkflowTypeCode
 		}
 
 		graph.Tickets = append(graph.Tickets, swarm.TicketNode{
@@ -704,6 +705,7 @@ func (m *Manager) SpawnProjectResearchChildren(
 			Url:        "",
 			CreatedAt:  nowUTC(),
 			UpdatedAt:  nowUTC(),
+			TicketType: string(swarm.WorkflowTypeResearch),
 		}); upsertErr != nil {
 			return fmt.Errorf("upsert research child ticket %d: %w", topic.Num, upsertErr)
 		}
@@ -728,6 +730,7 @@ func (m *Manager) SpawnProjectResearchChildren(
 					Url:        "",
 					CreatedAt:  nowUTC(),
 					UpdatedAt:  nowUTC(),
+					TicketType: string(swarm.WorkflowTypeResearch),
 				})
 			}
 		}

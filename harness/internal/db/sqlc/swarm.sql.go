@@ -349,7 +349,7 @@ func (q *Queries) GetSwarmSession(ctx context.Context, id string) (GetSwarmSessi
 }
 
 const getSwarmTicket = `-- name: GetSwarmTicket :one
-SELECT id, identifier, title, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at, description
+SELECT id, identifier, title, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at, description, ticket_type
 FROM swarm_tickets WHERE id = ?
 `
 
@@ -371,12 +371,13 @@ func (q *Queries) GetSwarmTicket(ctx context.Context, id string) (SwarmTicket, e
 		&i.UpdatedAt,
 		&i.SyncedAt,
 		&i.Description,
+		&i.TicketType,
 	)
 	return i, err
 }
 
 const getSwarmTicketByIdentifier = `-- name: GetSwarmTicketByIdentifier :one
-SELECT id, identifier, title, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at, description
+SELECT id, identifier, title, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at, description, ticket_type
 FROM swarm_tickets WHERE identifier = ?
 `
 
@@ -398,6 +399,7 @@ func (q *Queries) GetSwarmTicketByIdentifier(ctx context.Context, identifier str
 		&i.UpdatedAt,
 		&i.SyncedAt,
 		&i.Description,
+		&i.TicketType,
 	)
 	return i, err
 }
@@ -930,7 +932,7 @@ func (q *Queries) ListSwarmTicketComments(ctx context.Context, ticketID string) 
 }
 
 const listSwarmTickets = `-- name: ListSwarmTickets :many
-SELECT id, identifier, title, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at, description
+SELECT id, identifier, title, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at, description, ticket_type
 FROM swarm_tickets ORDER BY updated_at DESC
 `
 
@@ -958,6 +960,7 @@ func (q *Queries) ListSwarmTickets(ctx context.Context) ([]SwarmTicket, error) {
 			&i.UpdatedAt,
 			&i.SyncedAt,
 			&i.Description,
+			&i.TicketType,
 		); err != nil {
 			return nil, err
 		}
@@ -1165,8 +1168,8 @@ func (q *Queries) UpdateSwarmWorkflowStatus(ctx context.Context, arg UpdateSwarm
 
 const upsertSwarmTicket = `-- name: UpsertSwarmTicket :exec
 
-INSERT INTO swarm_tickets (id, identifier, title, description, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+INSERT INTO swarm_tickets (id, identifier, title, description, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, ticket_type, synced_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 ON CONFLICT(id) DO UPDATE SET
     identifier = excluded.identifier,
     title = excluded.title,
@@ -1179,6 +1182,7 @@ ON CONFLICT(id) DO UPDATE SET
     project_id = excluded.project_id,
     url = excluded.url,
     updated_at = excluded.updated_at,
+    ticket_type = excluded.ticket_type,
     synced_at = datetime('now')
 `
 
@@ -1196,6 +1200,7 @@ type UpsertSwarmTicketParams struct {
 	Url         string
 	CreatedAt   string
 	UpdatedAt   string
+	TicketType  string
 }
 
 // swarm_tickets
@@ -1214,6 +1219,7 @@ func (q *Queries) UpsertSwarmTicket(ctx context.Context, arg UpsertSwarmTicketPa
 		arg.Url,
 		arg.CreatedAt,
 		arg.UpdatedAt,
+		arg.TicketType,
 	)
 	return err
 }

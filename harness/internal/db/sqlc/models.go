@@ -206,6 +206,7 @@ type SwarmTicket struct {
 	UpdatedAt   string
 	SyncedAt    string
 	Description sql.NullString
+	TicketType  string
 }
 
 type SwarmTicketComment struct {

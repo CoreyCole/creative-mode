@@ -117,8 +117,8 @@ UPDATE swarm_project_milestones SET status = ?, verified_at = ? WHERE id = ?;
 -- swarm_tickets
 
 -- name: UpsertSwarmTicket :exec
-INSERT INTO swarm_tickets (id, identifier, title, description, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+INSERT INTO swarm_tickets (id, identifier, title, description, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, ticket_type, synced_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 ON CONFLICT(id) DO UPDATE SET
     identifier = excluded.identifier,
     title = excluded.title,
@@ -131,21 +131,22 @@ ON CONFLICT(id) DO UPDATE SET
     project_id = excluded.project_id,
     url = excluded.url,
     updated_at = excluded.updated_at,
+    ticket_type = excluded.ticket_type,
     synced_at = datetime('now');
 
 -- name: UpdateSwarmTicketDescription :exec
 UPDATE swarm_tickets SET description = ?, updated_at = datetime('now') WHERE id = ?;
 
 -- name: GetSwarmTicket :one
-SELECT id, identifier, title, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at, description
+SELECT id, identifier, title, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at, description, ticket_type
 FROM swarm_tickets WHERE id = ?;
 
 -- name: GetSwarmTicketByIdentifier :one
-SELECT id, identifier, title, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at, description
+SELECT id, identifier, title, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at, description, ticket_type
 FROM swarm_tickets WHERE identifier = ?;
 
 -- name: ListSwarmTickets :many
-SELECT id, identifier, title, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at, description
+SELECT id, identifier, title, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at, description, ticket_type
 FROM swarm_tickets ORDER BY updated_at DESC;
 
 -- swarm_ticket_comments

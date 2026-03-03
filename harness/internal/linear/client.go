@@ -572,6 +572,21 @@ func (c *Client) SetParent(ctx context.Context, issueID, parentID string) error 
 	return c.doQuery(ctx, issueUpdateMutation, vars, &resp)
 }
 
+// IsLinearIdentifier returns true if the identifier matches the Linear
+// "TEAM-NUMBER" format (e.g. "CRE-5"). Synthetic child identifiers like
+// "CRE-8-1" or "CRE-8-r1" return false.
+func IsLinearIdentifier(identifier string) bool {
+	const nParts = 2
+	parts := strings.SplitN(identifier, "-", nParts)
+	if len(parts) != nParts || parts[0] == "" || parts[1] == "" {
+		return false
+	}
+
+	_, err := strconv.Atoi(parts[1])
+
+	return err == nil
+}
+
 // parseIdentifier splits "CRE-5" into team key "CRE" and number 5.
 func parseIdentifier(identifier string) (string, int, error) {
 	const nParts = 2

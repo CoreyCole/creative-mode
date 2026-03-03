@@ -114,6 +114,7 @@ func (d *DB) runMigrations(ctx context.Context) error {
 		"migrations/010_project_create.sql",
 		"migrations/011_linear_project_id.sql",
 		"migrations/011_prompt_versions_and_tokens.sql",
+		"migrations/012_ticket_type.sql",
 	}
 	for _, file := range migrationFiles {
 		// Check if already applied.

@@ -123,7 +123,7 @@ func (q *Queries) ListSwarmDependenciesByTicket(ctx context.Context, ticketID st
 }
 
 const listSwarmTicketsByParent = `-- name: ListSwarmTicketsByParent :many
-SELECT id, identifier, title, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at, description
+SELECT id, identifier, title, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at, description, ticket_type
 FROM swarm_tickets
 WHERE parent_id = ?
 ORDER BY created_at ASC
@@ -153,6 +153,7 @@ func (q *Queries) ListSwarmTicketsByParent(ctx context.Context, parentID sql.Nul
 			&i.UpdatedAt,
 			&i.SyncedAt,
 			&i.Description,
+			&i.TicketType,
 		); err != nil {
 			return nil, err
 		}
@@ -168,7 +169,7 @@ func (q *Queries) ListSwarmTicketsByParent(ctx context.Context, parentID sql.Nul
 }
 
 const listSwarmTicketsByProject = `-- name: ListSwarmTicketsByProject :many
-SELECT id, identifier, title, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at, description
+SELECT id, identifier, title, status, priority, assignee, labels, parent_id, project_id, url, created_at, updated_at, synced_at, description, ticket_type
 FROM swarm_tickets
 WHERE project_id = ?
 ORDER BY created_at ASC
@@ -198,6 +199,7 @@ func (q *Queries) ListSwarmTicketsByProject(ctx context.Context, projectID sql.N
 			&i.UpdatedAt,
 			&i.SyncedAt,
 			&i.Description,
+			&i.TicketType,
 		); err != nil {
 			return nil, err
 		}

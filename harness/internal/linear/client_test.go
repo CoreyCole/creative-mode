@@ -170,6 +170,33 @@ func TestParseIdentifier(t *testing.T) {
 	}
 }
 
+func TestIsLinearIdentifier(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"CRE-5", true},
+		{"CM-123", true},
+		{"TEAM-1", true},
+		{"CRE-8-1", false},  // synthetic child
+		{"CRE-8-r1", false}, // synthetic research child
+		{"CRE-abc", false},  // non-numeric
+		{"bad", false},      // no hyphen
+		{"", false},         // empty
+		{"-5", false},       // no team
+		{"CRE-", false},     // no number
+	}
+
+	for _, tt := range tests {
+		got := IsLinearIdentifier(tt.input)
+		if got != tt.want {
+			t.Errorf("IsLinearIdentifier(%q) = %v, want %v", tt.input, got, tt.want)
+		}
+	}
+}
+
 func TestGetTicket(t *testing.T) {
 	t.Parallel()
 

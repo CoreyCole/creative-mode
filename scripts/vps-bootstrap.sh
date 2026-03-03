@@ -241,30 +241,93 @@ else
 fi
 
 # ============================================================================
+# Step 4b: Detect local network interfaces
+# ============================================================================
+# Find non-Tailscale, non-loopback private IPs so we can allow fast local SSH.
+# This handles UTM NAT (192.168.66.x), bridged networking, cloud private
+# subnets, etc. — whatever local network the machine is on.
+# ============================================================================
+section "Step 4b: Detect local network interfaces"
+
+TS_IP=$(tailscale ip -4 2>/dev/null || true)
+LOCAL_IPS=()
+LOCAL_SUBNETS=()
+
+if [ -n "$TS_IP" ]; then
+    # Collect all IPv4 addresses that are NOT Tailscale and NOT loopback
+    while IFS= read -r line; do
+        ip_addr=$(echo "$line" | awk '{print $1}')
+        iface=$(echo "$line" | awk '{print $2}')
+        # Skip Tailscale interface and loopback
+        [[ "$iface" == "tailscale0" ]] && continue
+        [[ "$iface" == "lo" ]] && continue
+        [[ "$ip_addr" == "$TS_IP" ]] && continue
+        # Only keep private IPs (RFC 1918)
+        case "$ip_addr" in
+            10.*|172.1[6-9].*|172.2[0-9].*|172.3[0-1].*|192.168.*)
+                LOCAL_IPS+=("$ip_addr")
+                # Derive /24 subnet for UFW rules
+                subnet=$(echo "$ip_addr" | sed 's/\.[0-9]*$/.0\/24/')
+                LOCAL_SUBNETS+=("$subnet")
+                ok "Found local interface: $ip_addr on $iface (subnet $subnet)"
+                ;;
+            *)
+                info "Skipping public IP: $ip_addr on $iface"
+                ;;
+        esac
+    done < <(ip -4 addr show | awk '/inet / {gsub(/\/.*/, "", $2); print $2, $NF}')
+fi
+
+if [ ${#LOCAL_IPS[@]} -eq 0 ]; then
+    info "No local private IPs detected (Tailscale-only access)"
+else
+    ok "Detected ${#LOCAL_IPS[@]} local interface(s) for fast SSH"
+fi
+
+# ============================================================================
 # Step 5: Configure UFW firewall
 # ============================================================================
-# UFW (Uncomplicated Firewall) is like a bouncer at the door. It blocks all
-# uninvited network traffic by default and only lets through connections from
-# Tailscale (your private network).
+# UFW (Uncomplicated Firewall) blocks all uninvited network traffic by default
+# and only lets through connections from Tailscale and detected local networks.
 #
 # Rules:
 #   - Deny all incoming traffic (nothing from the public internet gets in)
 #   - Allow all outgoing traffic (the server can still reach the internet)
 #   - Allow traffic on the tailscale0 interface (your private tunnel)
+#   - Allow SSH (port 2222) from detected local subnets (fast local access)
 # ============================================================================
 section "Step 5: Configure UFW firewall"
 
 if ufw status | grep -q "Status: active"; then
-    skip "UFW is already active"
+    # UFW already active — just ensure local subnet rules exist
+    for subnet in "${LOCAL_SUBNETS[@]}"; do
+        if ufw status | grep -q "$subnet.*2222"; then
+            skip "UFW rule already exists: $subnet → port 2222"
+        else
+            if $DRY_RUN; then
+                info "Would add UFW rule: allow from $subnet to port 2222"
+            else
+                ufw allow from "$subnet" to any port 2222 proto tcp comment "Local SSH ($subnet)"
+                ok "Added UFW rule: $subnet → port 2222"
+            fi
+        fi
+    done
 else
     if $DRY_RUN; then
         info "Would configure UFW: deny incoming, allow outgoing, allow tailscale0"
+        for subnet in "${LOCAL_SUBNETS[@]}"; do
+            info "Would add UFW rule: allow from $subnet to port 2222"
+        done
     else
         ufw default deny incoming
         ufw default allow outgoing
         ufw allow in on tailscale0
+        ufw allow 41641/udp comment "Tailscale direct connections"
+        for subnet in "${LOCAL_SUBNETS[@]}"; do
+            ufw allow from "$subnet" to any port 2222 proto tcp comment "Local SSH ($subnet)"
+        done
         ufw --force enable
-        ok "UFW enabled — only Tailscale traffic allowed"
+        ok "UFW enabled — Tailscale + local subnet traffic allowed"
     fi
 fi
 
@@ -295,8 +358,9 @@ fi
 # ============================================================================
 # We make SSH much harder to attack by:
 #
-#   ListenAddress {tailscale_ip} — SSH only listens on the Tailscale IP, so
-#     it's literally unreachable from the public internet.
+#   ListenAddress — SSH listens on the Tailscale IP (remote access) plus any
+#     detected local private IPs (fast local access). Not reachable from the
+#     public internet thanks to both ListenAddress and UFW.
 #
 #   Port 2222 — Move SSH off the default port 22. This alone stops most
 #     automated scanners (they only try port 22).
@@ -315,12 +379,21 @@ section "Step 7: Lock down SSH"
 SSHD_CONFIG="/etc/ssh/sshd_config"
 SSHD_DROP_IN="/etc/ssh/sshd_config.d/99-creative-mode.conf"
 
-# Get this machine's Tailscale IPv4 address
-TS_IP=$(tailscale ip -4 2>/dev/null || true)
+# TS_IP was already set in Step 4b
+if [ -z "$TS_IP" ]; then
+    TS_IP=$(tailscale ip -4 2>/dev/null || true)
+fi
 if [ -z "$TS_IP" ]; then
     fail "Cannot get Tailscale IP — is Tailscale connected?"
     exit 1
 fi
+
+# Build the list of ListenAddress lines
+LISTEN_ADDRS="ListenAddress $TS_IP"
+for local_ip in "${LOCAL_IPS[@]}"; do
+    LISTEN_ADDRS="$LISTEN_ADDRS
+ListenAddress $local_ip"
+done
 
 # Migration: remove old append-style config from sshd_config if present
 # (Previous versions of this script appended directly to sshd_config, which
@@ -335,26 +408,33 @@ if grep -q "# Creative Mode: SSH lockdown" "$SSHD_CONFIG" 2>/dev/null; then
     fi
 fi
 
-# Write the drop-in config (always overwrite to pick up Tailscale IP changes)
-if [ -f "$SSHD_DROP_IN" ] && grep -q "ListenAddress $TS_IP" "$SSHD_DROP_IN" 2>/dev/null; then
-    skip "SSH drop-in already correct (ListenAddress $TS_IP, Port 2222)"
+# Build expected config content for comparison
+EXPECTED_CONFIG="# Creative Mode: SSH lockdown — Tailscale + local interfaces
+$LISTEN_ADDRS
+Port 2222
+PermitRootLogin no
+PasswordAuthentication no"
+
+# Write the drop-in config (overwrite if IPs changed)
+if [ -f "$SSHD_DROP_IN" ] && [ "$(cat "$SSHD_DROP_IN")" = "$EXPECTED_CONFIG" ]; then
+    skip "SSH drop-in already correct ($(echo "$LISTEN_ADDRS" | wc -l) address(es), Port 2222)"
 else
     if $DRY_RUN; then
         info "Would write $SSHD_DROP_IN:"
-        info "  ListenAddress $TS_IP"
+        info "  $LISTEN_ADDRS"
         info "  Port 2222"
         info "  PermitRootLogin no"
         info "  PasswordAuthentication no"
     else
         mkdir -p /etc/ssh/sshd_config.d
         cat > "$SSHD_DROP_IN" << EOF
-# Creative Mode: SSH lockdown — only accessible via Tailscale
-ListenAddress $TS_IP
-Port 2222
-PermitRootLogin no
-PasswordAuthentication no
+$EXPECTED_CONFIG
 EOF
         ok "Wrote SSH drop-in config ($SSHD_DROP_IN)"
+        for local_ip in "${LOCAL_IPS[@]}"; do
+            ok "  SSH will listen on $local_ip (local)"
+        done
+        ok "  SSH will listen on $TS_IP (Tailscale)"
     fi
 fi
 
@@ -455,7 +535,8 @@ else
     cat > "$SERVICE_FILE" << EOF
 [Unit]
 Description=Creative Mode Harness
-After=network.target
+After=network.target temporal-dev.service
+Requires=temporal-dev.service
 
 [Service]
 Type=simple
@@ -1105,9 +1186,25 @@ echo -e "  2. ${YELLOW}IMPORTANT:${NC} Update your Discord OAuth App redirect UR
 echo "       https://$TS_DNS_NAME/auth/discord/callback"
 echo "     (Discord Developer Portal > Your App > OAuth2 > Redirects)"
 echo ""
-echo "  3. SSH in via Tailscale going forward:"
+echo "  3. SSH access:"
+echo ""
+echo "     Remote (via Tailscale, works from anywhere):"
 echo "       ssh deploy@$TS_DNS_NAME"
 echo ""
+if [ ${#LOCAL_IPS[@]} -gt 0 ]; then
+    echo "     Local (fast, bypasses Tailscale relay):"
+    for local_ip in "${LOCAL_IPS[@]}"; do
+        echo "       ssh -p 2222 deploy@$local_ip"
+    done
+    echo ""
+    echo "     Recommended: add to your ~/.ssh/config for convenience:"
+    echo ""
+    echo "       Host cm"
+    echo "         HostName ${LOCAL_IPS[0]}"
+    echo "         Port 2222"
+    echo "         User deploy"
+    echo ""
+fi
 echo "  4. Visit your server:"
 echo "       https://$TS_DNS_NAME"
 echo ""

@@ -314,7 +314,7 @@ func (m *Manager) RecoverWorkflows(ctx context.Context) error {
 				"session", session.SessionName, "workflow_id", wf.ID)
 			startCh := m.startReg.Register(session.ID)
 			completionCh := m.completionReg.Register(session.ID)
-			go m.watchSession(session.ID, session.SessionName, startCh, completionCh)
+			go m.watchSession(ctx, session.ID, session.SessionName, startCh, completionCh)
 
 			continue
 		}
@@ -476,7 +476,7 @@ func (m *Manager) spawnSession(ctx context.Context, wf sqlc.SwarmWorkflow) error
 		})
 	}
 
-	go m.watchSession(sessionID, sessionName, startCh, completionCh)
+	go m.watchSession(ctx, sessionID, sessionName, startCh, completionCh)
 
 	return nil
 }
@@ -484,6 +484,7 @@ func (m *Manager) spawnSession(ctx context.Context, wf sqlc.SwarmWorkflow) error
 // watchSession waits for hook-driven completion signals, falling back to tmux
 // health checks if hooks don't fire.
 func (m *Manager) watchSession(
+	ctx context.Context,
 	sessionID, sessionName string,
 	startCh chan struct{},
 	completionCh chan SessionResult,
@@ -513,6 +514,9 @@ func (m *Manager) watchSession(
 
 		m.logger.Info("session start hook timed out, tmux alive — continuing",
 			"session", sessionName)
+	case <-ctx.Done():
+		m.logger.Info("watchSession context canceled", "session", sessionName)
+		return
 	}
 
 	// Phase 2: Wait for completion signal from Stop/SessionEnd hooks,
@@ -528,6 +532,10 @@ func (m *Manager) watchSession(
 				"duration", time.Since(startedAt).Round(time.Second))
 			m.handleSessionComplete(context.Background(), sessionID)
 
+			return
+
+		case <-ctx.Done():
+			m.logger.Info("watchSession context canceled", "session", sessionName)
 			return
 
 		case <-tmuxTicker.C:

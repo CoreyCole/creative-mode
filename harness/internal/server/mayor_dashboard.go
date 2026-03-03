@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/starfederation/datastar-go/datastar"
@@ -79,6 +80,9 @@ func (s *Server) handleMayorDashboardSSE(c echo.Context) error {
 	worldCh := s.EventBus.Subscribe(worldID)
 	defer s.EventBus.Unsubscribe(worldID, worldCh)
 
+	heartbeat := time.NewTicker(sseHeartbeatInterval)
+	defer heartbeat.Stop()
+
 	// Stream events until client disconnects.
 	for {
 		select {
@@ -108,6 +112,10 @@ func (s *Server) handleMayorDashboardSSE(c echo.Context) error {
 				mayorview.MessagesTab(messages),
 				datastar.WithSelectorID("mayor-messages-tab"),
 			); err != nil {
+				return nil
+			}
+		case <-heartbeat.C:
+			if err := sse.MarshalAndPatchSignals(map[string]any{}); err != nil {
 				return nil
 			}
 		case <-r.Context().Done():

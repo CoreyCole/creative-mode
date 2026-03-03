@@ -54,6 +54,12 @@ type Manager struct {
 	harnessURL string
 	mu         sync.Mutex // serializes workflow advancement
 
+	// Lifecycle context for long-lived goroutines (e.g., watchSession).
+	// Canceled by Shutdown(). Must NOT use HTTP request contexts for
+	// goroutines that outlive the request.
+	ctx    context.Context //nolint:containedctx // lifecycle context, not request-scoped
+	cancel context.CancelFunc
+
 	// Hook-driven completion: registries replace tmux polling as the primary
 	// mechanism. Tmux checks remain as a fallback.
 	completionReg *CompletionRegistry
@@ -95,7 +101,10 @@ func NewManager(
 	eventBus *events.EventBus,
 	baseDir, logsDir, harnessURL string,
 ) *Manager {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Manager{
+		ctx:              ctx,
+		cancel:           cancel,
 		db:               database,
 		logger:           logger,
 		eventBus:         eventBus,
@@ -109,6 +118,11 @@ func NewManager(
 		jsonlWriters:     make(map[string]*JSONLWriter),
 		promptVersionIDs: make(map[string]string),
 	}
+}
+
+// Shutdown cancels the Manager's lifecycle context, stopping all watchSession goroutines.
+func (m *Manager) Shutdown() {
+	m.cancel()
 }
 
 // CreateProjectTicket creates a Linear ticket for a self-directed project and stores
@@ -314,7 +328,7 @@ func (m *Manager) RecoverWorkflows(ctx context.Context) error {
 				"session", session.SessionName, "workflow_id", wf.ID)
 			startCh := m.startReg.Register(session.ID)
 			completionCh := m.completionReg.Register(session.ID)
-			go m.watchSession(ctx, session.ID, session.SessionName, startCh, completionCh)
+			go m.watchSession(session.ID, session.SessionName, startCh, completionCh)
 
 			continue
 		}
@@ -476,7 +490,7 @@ func (m *Manager) spawnSession(ctx context.Context, wf sqlc.SwarmWorkflow) error
 		})
 	}
 
-	go m.watchSession(ctx, sessionID, sessionName, startCh, completionCh)
+	go m.watchSession(sessionID, sessionName, startCh, completionCh)
 
 	return nil
 }
@@ -484,7 +498,6 @@ func (m *Manager) spawnSession(ctx context.Context, wf sqlc.SwarmWorkflow) error
 // watchSession waits for hook-driven completion signals, falling back to tmux
 // health checks if hooks don't fire.
 func (m *Manager) watchSession(
-	ctx context.Context,
 	sessionID, sessionName string,
 	startCh chan struct{},
 	completionCh chan SessionResult,
@@ -514,8 +527,8 @@ func (m *Manager) watchSession(
 
 		m.logger.Info("session start hook timed out, tmux alive — continuing",
 			"session", sessionName)
-	case <-ctx.Done():
-		m.logger.Info("watchSession context canceled", "session", sessionName)
+	case <-m.ctx.Done():
+		m.logger.Info("watchSession shutting down", "session", sessionName)
 		return
 	}
 
@@ -534,8 +547,8 @@ func (m *Manager) watchSession(
 
 			return
 
-		case <-ctx.Done():
-			m.logger.Info("watchSession context canceled", "session", sessionName)
+		case <-m.ctx.Done():
+			m.logger.Info("watchSession shutting down", "session", sessionName)
 			return
 
 		case <-tmuxTicker.C:

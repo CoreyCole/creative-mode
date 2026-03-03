@@ -411,6 +411,7 @@ func main() {
 	go func() {
 		<-ctx.Done()
 		logger.Info("Shutting down server...")
+		swarmManager.Shutdown()
 		worldManager.Shutdown()
 		temporalRuntime.Stop()
 

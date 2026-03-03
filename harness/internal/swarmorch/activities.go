@@ -306,11 +306,17 @@ func (a *Activities) AdvanceProject(
 		}, nil
 	}
 
-	// Start newly-unblocked tickets.
+	// Start newly-unblocked tickets, respecting session capacity.
 	ready := graph.ReadyTickets(completed)
 	started := 0
 
+	config := a.mgr.loadConfig(ctx)
+
 	for _, rt := range ready {
+		if started >= config.MaxSessions {
+			break
+		}
+
 		existing, existErr := a.mgr.db.GetSwarmWorkflowsByTicket(
 			ctx,
 			rt.TicketID,

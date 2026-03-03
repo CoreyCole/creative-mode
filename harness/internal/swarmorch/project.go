@@ -196,9 +196,24 @@ func (m *Manager) SpawnProjectWorkflows(
 		return nil
 	}
 
-	readyTickets := graph.ReadyTickets(map[string]bool{})
+	// Skip tickets that already have completed workflows (e.g., research
+	// children from the decompose phase that already ran).
+	completed := m.completedChildTickets(ctx, graph)
+	readyTickets := graph.ReadyTickets(completed)
+
+	// Respect session capacity — only spawn up to maxSessions initially.
+	// The heartbeat/orchestrator will pick up remaining queued workflows.
+	config := m.loadConfig(ctx)
+	spawned := 0
 
 	for _, rt := range readyTickets {
+		if spawned >= config.MaxSessions {
+			m.logger.Info("capacity reached, remaining tickets will be queued",
+				"spawned", spawned, "remaining", len(readyTickets)-spawned)
+
+			break
+		}
+
 		if _, startErr := m.StartWorkflow(
 			ctx,
 			rt.TicketID,
@@ -208,21 +223,26 @@ func (m *Manager) SpawnProjectWorkflows(
 		); startErr != nil {
 			m.logger.Warn("start child workflow",
 				"ticket", rt.TicketID, "error", startErr)
+		} else {
+			spawned++
 		}
 	}
 
 	m.logger.Info("project workflows spawned",
 		"workflow_id", wf.ID,
 		"total_tickets", len(graph.Tickets),
-		"wave1", len(readyTickets),
+		"wave1_ready", len(readyTickets),
+		"spawned", spawned,
+		"already_completed", len(completed),
 	)
 
 	m.linearComment(
 		wf.TicketID,
 		fmt.Sprintf(
-			"🚀 Project approved: %d child tickets, %d in Wave 1",
+			"🚀 Project approved: %d child tickets, %d ready in Wave 1, %d spawned",
 			len(graph.Tickets),
 			len(readyTickets),
+			spawned,
 		),
 	)
 

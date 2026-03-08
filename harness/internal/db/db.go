@@ -96,6 +96,7 @@ func (d *DB) runMigrations(ctx context.Context) error {
 		"migrations/003_template_type.sql",
 		"migrations/004_mayor_and_instrumentation.sql",
 		"migrations/005_cover_image.sql",
+		"migrations/006_swarm_tables.sql",
 	}
 	for _, file := range migrationFiles {
 		// Check if already applied.
@@ -182,6 +183,17 @@ func (d *DB) bootstrapExistingMigrations(ctx context.Context) {
 		_, _ = d.db.ExecContext(ctx,
 			"INSERT OR IGNORE INTO _migrations (name) VALUES (?)",
 			"migrations/005_cover_image.sql")
+	}
+
+	// 006: creates swarm_tasks table (and related swarm tables).
+	var swarmTasksExist int
+	_ = d.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='swarm_tasks'",
+	).Scan(&swarmTasksExist)
+	if swarmTasksExist > 0 {
+		_, _ = d.db.ExecContext(ctx,
+			"INSERT OR IGNORE INTO _migrations (name) VALUES (?)",
+			"migrations/006_swarm_tables.sql")
 	}
 }
 

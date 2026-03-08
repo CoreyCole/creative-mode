@@ -92,6 +92,52 @@ type Session struct {
 	ExpiresAt time.Time
 }
 
+type SwarmArtifact struct {
+	ID           string
+	TaskID       string
+	ArtifactType string
+	FilePath     string
+	CreatedAt    string
+}
+
+type SwarmResearchQuestion struct {
+	ID            string
+	TaskID        string
+	QuestionText  string
+	AgentIndex    int64
+	Status        string
+	ResultSummary sql.NullString
+	CreatedAt     string
+	UpdatedAt     string
+}
+
+type SwarmSpan struct {
+	ID           string
+	TaskID       string
+	ParentSpanID sql.NullString
+	SpanType     string
+	Name         string
+	Status       string
+	InputJSON    sql.NullString
+	OutputJSON   sql.NullString
+	ErrorMessage sql.NullString
+	StartedAt    string
+	EndedAt      sql.NullString
+	DurationMs   sql.NullInt64
+	MetadataJSON sql.NullString
+}
+
+type SwarmTask struct {
+	ID            string
+	PrimitiveType string
+	RequestText   string
+	Status        string
+	WorkflowID    sql.NullString
+	LinearIssueID sql.NullString
+	CreatedAt     string
+	UpdatedAt     string
+}
+
 type User struct {
 	ID              string
 	DiscordID       string

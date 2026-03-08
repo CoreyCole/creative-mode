@@ -10,6 +10,9 @@ import (
 )
 
 type Querier interface {
+	// Mark stale running spans as failed (e.g. after crash recovery).
+	CleanupOrphanedSpans(ctx context.Context) error
+	CompleteSwarmSpan(ctx context.Context, arg CompleteSwarmSpanParams) error
 	CountActiveBuilds(ctx context.Context, createdBy sql.NullString) (int64, error)
 	CountUsers(ctx context.Context) (int64, error)
 	CreateCheckpoint(ctx context.Context, arg CreateCheckpointParams) error
@@ -19,6 +22,14 @@ type Querier interface {
 	CreateMessage(ctx context.Context, arg CreateMessageParams) error
 	CreatePromptHistory(ctx context.Context, arg CreatePromptHistoryParams) error
 	CreateSession(ctx context.Context, arg CreateSessionParams) error
+	// Swarm Artifacts
+	CreateSwarmArtifact(ctx context.Context, arg CreateSwarmArtifactParams) error
+	// Swarm Research Questions
+	CreateSwarmResearchQuestion(ctx context.Context, arg CreateSwarmResearchQuestionParams) error
+	// Swarm Spans
+	CreateSwarmSpan(ctx context.Context, arg CreateSwarmSpanParams) error
+	// Swarm Tasks
+	CreateSwarmTask(ctx context.Context, arg CreateSwarmTaskParams) error
 	CreateWorld(ctx context.Context, arg CreateWorldParams) error
 	CreateWorldInvite(ctx context.Context, arg CreateWorldInviteParams) error
 	DeleteExpiredSessions(ctx context.Context) error
@@ -29,6 +40,7 @@ type Querier interface {
 	DeleteUser(ctx context.Context, id string) error
 	DeleteUserPositionsByUserID(ctx context.Context, userID string) error
 	DeleteWorldInvite(ctx context.Context, arg DeleteWorldInviteParams) error
+	FailSwarmSpan(ctx context.Context, arg FailSwarmSpanParams) error
 	GetCheckpoint(ctx context.Context, id string) (Checkpoint, error)
 	GetCheckpointTree(ctx context.Context, worldID string) ([]Checkpoint, error)
 	GetMayorActivity(ctx context.Context, arg GetMayorActivityParams) ([]MayorActivity, error)
@@ -42,6 +54,14 @@ type Querier interface {
 	GetRecentMessagesByWorld(ctx context.Context, arg GetRecentMessagesByWorldParams) ([]Message, error)
 	GetRecentMessagesWithUser(ctx context.Context, limit int64) ([]GetRecentMessagesWithUserRow, error)
 	GetSession(ctx context.Context, id string) (Session, error)
+	GetSwarmArtifactsByTask(ctx context.Context, taskID string) ([]SwarmArtifact, error)
+	GetSwarmResearchQuestionsByTask(ctx context.Context, taskID string) ([]SwarmResearchQuestion, error)
+	GetSwarmSpan(ctx context.Context, id string) (SwarmSpan, error)
+	// Recursive CTE to get the full span tree for a task, ordered for tree rendering.
+	// Returns spans depth-first: parent before children, siblings by start time.
+	GetSwarmSpanTree(ctx context.Context, taskID string) ([]GetSwarmSpanTreeRow, error)
+	GetSwarmSpansByTask(ctx context.Context, taskID string) ([]SwarmSpan, error)
+	GetSwarmTask(ctx context.Context, id string) (SwarmTask, error)
 	GetUserByDiscordID(ctx context.Context, discordID string) (User, error)
 	GetUserByID(ctx context.Context, id string) (User, error)
 	GetUserPosition(ctx context.Context, arg GetUserPositionParams) (string, error)
@@ -51,6 +71,8 @@ type Querier interface {
 	GetWorldInvites(ctx context.Context, worldID string) ([]WorldInvite, error)
 	GetWorldsWithDiscordChannels(ctx context.Context) ([]World, error)
 	ListPendingUsers(ctx context.Context) ([]User, error)
+	ListSwarmTasks(ctx context.Context, limit int64) ([]SwarmTask, error)
+	ListSwarmTasksByStatus(ctx context.Context, arg ListSwarmTasksByStatusParams) ([]SwarmTask, error)
 	ListUsers(ctx context.Context) ([]User, error)
 	ListWorlds(ctx context.Context) ([]World, error)
 	SetUserPosition(ctx context.Context, arg SetUserPositionParams) error
@@ -62,6 +84,9 @@ type Querier interface {
 	UpdateCheckpointWasmPath(ctx context.Context, arg UpdateCheckpointWasmPathParams) error
 	UpdateLastSeen(ctx context.Context, id string) error
 	UpdateMayorBuildStatus(ctx context.Context, arg UpdateMayorBuildStatusParams) error
+	UpdateSwarmResearchQuestion(ctx context.Context, arg UpdateSwarmResearchQuestionParams) error
+	UpdateSwarmTaskStatus(ctx context.Context, arg UpdateSwarmTaskStatusParams) error
+	UpdateSwarmTaskWorkflowID(ctx context.Context, arg UpdateSwarmTaskWorkflowIDParams) error
 	UpdateUserRole(ctx context.Context, arg UpdateUserRoleParams) (sql.Result, error)
 	UpdateWorldCoverImage(ctx context.Context, arg UpdateWorldCoverImageParams) error
 	UpdateWorldMayor(ctx context.Context, arg UpdateWorldMayorParams) error

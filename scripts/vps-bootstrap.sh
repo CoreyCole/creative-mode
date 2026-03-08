@@ -588,22 +588,35 @@ chown -R deploy:deploy /usr/local/cargo/registry/ 2>/dev/null || true
 # trunk: WASM bundler for Bevy client
 # cargo-watch: auto-rebuild during Claude dev sessions
 # wasm-bindgen-cli: WASM bindings (pinned version must match Cargo.lock)
+# linear-cli: Linear issue tracker CLI (needs openssl via pkg-config)
 # ============================================================================
 section "Step 12c: Install cargo tools"
 
 export RUSTUP_HOME=/usr/local/rustup
 export CARGO_HOME=/usr/local/cargo
 export PATH="/usr/local/cargo/bin:$PATH"
+export PKG_CONFIG_PATH="$HOME/.nix-profile/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 
 if command -v trunk &>/dev/null && command -v cargo-watch &>/dev/null; then
     skip "trunk and cargo-watch already installed"
 else
     if $DRY_RUN; then
-        info "Would install trunk, cargo-watch, wasm-bindgen-cli"
+        info "Would install trunk, cargo-watch, wasm-bindgen-cli, linear-cli"
     else
         cargo install trunk cargo-watch
         cargo install wasm-bindgen-cli --version 0.2.108
         ok "Installed trunk, cargo-watch, wasm-bindgen-cli"
+    fi
+fi
+
+if command -v linear-cli &>/dev/null; then
+    skip "linear-cli already installed"
+else
+    if $DRY_RUN; then
+        info "Would install linear-cli"
+    else
+        cargo install linear-cli
+        ok "Installed linear-cli"
     fi
 fi
 

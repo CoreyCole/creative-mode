@@ -104,6 +104,11 @@ func main() {
 		logger.Error("failed to clean expired sessions", "error", cleanErr)
 	}
 
+	// Clean up orphaned swarm spans on startup (from prior crashes).
+	if cleanErr := database.CleanupOrphanedSpans(context.Background()); cleanErr != nil {
+		logger.Error("failed to clean orphaned swarm spans", "error", cleanErr)
+	}
+
 	// Periodically clean expired sessions.
 	go func() {
 		ticker := time.NewTicker(1 * time.Hour)
@@ -115,6 +120,23 @@ func main() {
 				if cleanupErr != nil {
 					logger.Error("periodic session cleanup failed", "error", cleanupErr)
 				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	// Periodically clean up old swarm JSONL logs (7-day retention).
+	swarmLogDir := filepath.Join(dataDir, "logs", "swarm")
+	_ = os.MkdirAll(swarmLogDir, 0o750)
+	go func() {
+		const swarmLogMaxAge = 7 * 24 * time.Hour
+		ticker := time.NewTicker(swarmLogMaxAge / 7) //nolint:mnd // daily = maxAge/7
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				cleanSwarmLogs(swarmLogDir, swarmLogMaxAge, logger)
 			case <-ctx.Done():
 				return
 			}
@@ -389,6 +411,35 @@ func initMayorManager(
 		"guild_id", guildID,
 	)
 	return mgr
+}
+
+func cleanSwarmLogs(dir string, maxAge time.Duration, logger *slog.Logger) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-maxAge)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			continue
+		}
+		if !info.ModTime().Before(cutoff) {
+			continue
+		}
+		if rmErr := os.Remove(filepath.Join(dir, entry.Name())); rmErr != nil {
+			logger.Warn(
+				"failed to remove old swarm log",
+				"file",
+				entry.Name(),
+				"error",
+				rmErr,
+			)
+		}
+	}
 }
 
 func initPresidentManager(

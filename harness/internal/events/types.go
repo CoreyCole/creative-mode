@@ -12,4 +12,11 @@ const (
 	EventClaudeRateLimited = "claude.rate_limited"
 	EventExecuteScript     = "execute_script"
 	EventMayorMessage      = "mayor.message"
+
+	// Swarm span lifecycle events (published to EventBus("swarm"))
+	EventSpanStarted        = "span.started"
+	EventSpanCompleted      = "span.completed"
+	EventSpanFailed         = "span.failed"
+	EventSwarmTaskCompleted = "swarm.task.completed"
+	EventSwarmTaskFailed    = "swarm.task.failed"
 )

@@ -705,7 +705,6 @@ func copyDir(src, dst string, exclude []string) error {
 
 // copyFile copies a single file, preserving permissions.
 func copyFile(src, dst string) error {
-	//nolint:gosec // G304: internal paths from controlled directory walks
 	in, err := os.Open(src)
 	if err != nil {
 		return err
@@ -717,7 +716,6 @@ func copyFile(src, dst string) error {
 		return err
 	}
 
-	//nolint:gosec // G304: internal paths from controlled directory walks
 	out, err := os.OpenFile(
 		dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode().Perm(),
 	)

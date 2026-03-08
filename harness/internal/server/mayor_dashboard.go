@@ -49,10 +49,10 @@ func (s *Server) handleMayorDashboard(c echo.Context) error {
 	wsDir := filepath.Join(openclawHome, "workspaces", "world-"+worldID)
 	p1 := filepath.Join(wsDir, "SOUL.md")
 	p2 := filepath.Join(wsDir, "MEMORY.md")
-	if b, err := os.ReadFile(p1); err == nil { //nolint:gosec // hardcoded filename
+	if b, err := os.ReadFile(p1); err == nil {
 		soulHTML = s.CreateMDRenderer.MarkdownBytesToHTML(b)
 	}
-	if b, err := os.ReadFile(p2); err == nil { //nolint:gosec // hardcoded filename
+	if b, err := os.ReadFile(p2); err == nil {
 		memoryHTML = s.CreateMDRenderer.MarkdownBytesToHTML(b)
 	}
 

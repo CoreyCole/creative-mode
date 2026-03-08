@@ -27,7 +27,8 @@ rs_clippy_server_out=$(mktemp)
 rs_clippy_client_out=$(mktemp)
 rs_clippy_2d_out=$(mktemp)
 rs_clippy_boardgame_out=$(mktemp)
-trap 'rm -f "$go_out" "$go_exit_file" "$site_go_out" "$site_go_exit_file" "$rs_clippy_server_out" "$rs_clippy_client_out" "$rs_clippy_2d_out" "$rs_clippy_boardgame_out"' EXIT
+js_out=$(mktemp)
+trap 'rm -f "$go_out" "$go_exit_file" "$site_go_out" "$site_go_exit_file" "$rs_clippy_server_out" "$rs_clippy_client_out" "$rs_clippy_2d_out" "$rs_clippy_boardgame_out" "$js_out"' EXIT
 
 # golangci-lint uses a file lock — run harness and site sequentially, then
 # combine into one background job so clippy can still run in parallel.
@@ -50,6 +51,9 @@ pid_clippy_2d=$!
 
 (cd "$ROOT/templates/boardgame" && CARGO_TARGET_DIR="$CHECK_TARGET/boardgame" cargo clippy --target wasm32-unknown-unknown -- -D warnings 2>&1) >"$rs_clippy_boardgame_out" 2>&1 &
 pid_clippy_boardgame=$!
+
+(cd "$ROOT/harness/agents" && npx eslint . 2>&1) >"$js_out" 2>&1 &
+pid_js=$!
 
 # Wait and report.
 # Wait for the combined Go lint job, then check exit codes.
@@ -100,6 +104,14 @@ if wait $pid_clippy_boardgame; then
 else
   echo "FAIL  templates/boardgame (clippy wasm)" >&2
   cat "$rs_clippy_boardgame_out" >&2
+  failed=1
+fi
+
+if wait $pid_js; then
+  echo "  ok  harness/agents (eslint)"
+else
+  echo "FAIL  harness/agents (eslint)" >&2
+  cat "$js_out" >&2
   failed=1
 fi
 

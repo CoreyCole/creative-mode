@@ -1016,7 +1016,7 @@ func (s *Server) handleCreateHatch(c echo.Context) error {
 	var coverData []byte
 	var coverMIME string
 	if artPath, mime, ok := s.CreateConvMgr.GetCoverArtPath(user.ID); ok {
-		data, readErr := os.ReadFile( //nolint:gosec // trusted path from ConversationManager
+		data, readErr := os.ReadFile(
 			artPath,
 		)
 		if readErr != nil {

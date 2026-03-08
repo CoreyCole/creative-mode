@@ -12,7 +12,7 @@ import (
 // about what the user asked for.
 func updateMemory(checkpointDir, prompt string) {
 	memoryPath := filepath.Join(checkpointDir, "MEMORY.md")
-	//nolint:gosec // G304: internal checkpoint path
+
 	content, err := os.ReadFile(memoryPath)
 	if err != nil && !os.IsNotExist(err) {
 		slog.Warn("failed to read MEMORY.md",

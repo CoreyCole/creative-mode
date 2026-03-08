@@ -1,0 +1,19 @@
+{
+  "name": "swarm-agents",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "eslint .",
+    "lint:fix": "eslint --fix ."
+  },
+  "dependencies": {
+    "@mariozechner/pi-ai": "^0.54.0",
+    "@mariozechner/pi-agent-core": "^0.54.0",
+    "@mariozechner/pi-coding-agent": "^0.54.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "eslint": "^9.0.0",
+    "globals": "^15.0.0"
+  }
+}

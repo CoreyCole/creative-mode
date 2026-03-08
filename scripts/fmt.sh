@@ -12,7 +12,8 @@ site_templ_out=$(mktemp)
 rs_3d_out=$(mktemp)
 rs_2d_out=$(mktemp)
 rs_boardgame_out=$(mktemp)
-trap 'rm -f "$go_out" "$templ_out" "$site_go_out" "$site_templ_out" "$rs_3d_out" "$rs_2d_out" "$rs_boardgame_out"' EXIT
+js_out=$(mktemp)
+trap 'rm -f "$go_out" "$templ_out" "$site_go_out" "$site_templ_out" "$rs_3d_out" "$rs_2d_out" "$rs_boardgame_out" "$js_out"' EXIT
 
 (cd "$ROOT/harness" && golangci-lint fmt ./... 2>&1) >"$go_out" 2>&1 &
 pid_go=$!
@@ -34,6 +35,9 @@ pid_rs_2d=$!
 
 (cd "$ROOT/templates/boardgame" && cargo fmt 2>&1) >"$rs_boardgame_out" 2>&1 &
 pid_rs_boardgame=$!
+
+(cd "$ROOT/harness/agents" && npx eslint --fix . 2>&1) >"$js_out" 2>&1 &
+pid_js=$!
 
 # Wait and report.
 if wait $pid_go; then
@@ -89,6 +93,14 @@ if wait $pid_rs_boardgame; then
 else
   echo "FAIL  templates/boardgame (cargo fmt)"
   cat "$rs_boardgame_out"
+  failed=1
+fi
+
+if wait $pid_js; then
+  echo "  ok  harness/agents (eslint --fix)"
+else
+  echo "FAIL  harness/agents (eslint --fix)"
+  cat "$js_out"
   failed=1
 fi
 

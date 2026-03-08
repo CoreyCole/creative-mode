@@ -259,23 +259,24 @@ linters:
       os-setenv: true
       os-temp-dir: false
       os-create-temp: true
-exclusions:
-  paths:
-    - third_party$
-    - builtin$
-    - examples$
-    - _templ\.go$
-    - internal/db/sqlc/
-  generated: lax
-  presets:
-    - comments
-    - common-false-positives
-    - legacy
-    - std-error-handling
-  rules:
-    - linters:
-        - govet
-      text: 'shadow: declaration of "(err|ctx)" shadows declaration at'
+  exclusions:
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+      - _templ\.go$
+      - internal/db/sqlc/
+      - node_modules
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - govet
+        text: 'shadow: declaration of "(err|ctx)" shadows declaration at'
 formatters:
   enable:
     - gci
@@ -314,8 +315,6 @@ output:
   formats:
     text:
       path: stdout
-  print-linter-name: true
-  print-issued-lines: true
   sort-order:
     - linter
     - severity

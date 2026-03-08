@@ -74,7 +74,7 @@ func main() {
 				continue // don't overwrite existing (user-edited) files
 			}
 			src := filepath.Join(roomsSrcDir, entry.Name())
-			data, rdErr := os.ReadFile(src) //nolint:gosec // trusted path
+			data, rdErr := os.ReadFile(src)
 			if rdErr != nil {
 				continue
 			}

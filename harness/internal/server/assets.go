@@ -72,7 +72,7 @@ func (s *Server) handleAssetUpload(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusConflict, "file already exists")
 	}
 
-	out, createErr := os.Create(destPath) //nolint:gosec // path is sanitized above
+	out, createErr := os.Create(destPath)
 	if createErr != nil {
 		return echo.NewHTTPError(
 			http.StatusInternalServerError,

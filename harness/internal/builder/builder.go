@@ -70,7 +70,7 @@ func (b *Builder) Build(cp *sqlc.Checkpoint, isInitial bool, templateType string
 
 	buildLogPath := filepath.Join(logDir, "build.jsonl")
 
-	buildLog, err := os.Create(buildLogPath) //nolint:gosec // G304: internal log path
+	buildLog, err := os.Create(buildLogPath)
 	if err != nil {
 		return fmt.Errorf("creating build log: %w", err)
 	}
@@ -166,7 +166,7 @@ func (b *Builder) PostBuild(cp *sqlc.Checkpoint) {
 
 	var workSummary string
 
-	if summary, readErr := os.ReadFile( //nolint:gosec // G304: internal path
+	if summary, readErr := os.ReadFile(
 		changesPath,
 	); readErr == nil {
 		workSummary = string(summary)
@@ -195,7 +195,7 @@ func (b *Builder) PostBuild(cp *sqlc.Checkpoint) {
 // parseEditedFiles reads claude.jsonl and extracts unique file paths from
 // Edit/Write tool uses. Returns a JSON array string.
 func parseEditedFiles(claudeLogPath string) string {
-	f, openErr := os.Open(claudeLogPath) //nolint:gosec // G304: internal path
+	f, openErr := os.Open(claudeLogPath)
 	if openErr != nil {
 		return ""
 	}

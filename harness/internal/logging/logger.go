@@ -15,7 +15,7 @@ func NewLogger(logDir string) (*slog.Logger, error) {
 		return nil, fmt.Errorf("creating log directory %s: %w", logDir, err)
 	}
 
-	logFile, err := os.OpenFile( //nolint:gosec // G304: internal log path
+	logFile, err := os.OpenFile(
 		filepath.Join(logDir, "harness.jsonl"),
 		os.O_CREATE|os.O_WRONLY|os.O_APPEND,
 		0o600,

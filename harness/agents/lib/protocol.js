@@ -38,3 +38,24 @@ export function sendQuestion(id, text) {
 export function sendResult(data) {
   process.stdout.write(JSON.stringify({ type: 'result', data }) + '\n');
 }
+
+// Periodic heartbeat so the Go orchestrator knows the agent is alive
+// during long LLM generation pauses (no tool calls = no stdout output).
+let heartbeatTimer = null;
+const HEARTBEAT_INTERVAL_MS = 15_000;
+
+export function startHeartbeat() {
+  if (heartbeatTimer) return;
+  heartbeatTimer = setInterval(() => {
+    process.stdout.write(JSON.stringify({ type: 'heartbeat' }) + '\n');
+  }, HEARTBEAT_INTERVAL_MS);
+  // Don't keep the process alive just for heartbeats
+  heartbeatTimer.unref();
+}
+
+export function stopHeartbeat() {
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+  }
+}

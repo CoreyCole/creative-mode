@@ -3,7 +3,8 @@ import { getModel } from '@mariozechner/pi-ai';
 import { createReadOnlyTools } from '@mariozechner/pi-coding-agent';
 import { createAskOrchestratorTool, createSubmitArtifactTool } from './orchestrator-tools.js';
 import { createSearchContextTool } from './search-context.js';
-import { initProtocol, readLine, sendEvent } from './protocol.js';
+import { initProtocol, readLine, sendEvent, startHeartbeat } from './protocol.js';
+import { getCodexAccessToken } from './codex-auth.js';
 import { join } from 'path';
 
 export async function runAgent({
@@ -25,7 +26,7 @@ export async function runAgent({
   const cwd = repoRoot || task.repoRoot;
   const finalSkillsDir = skillsDir || join(cwd, 'harness', 'agents', 'skills');
 
-  const model = getModel('openai', 'gpt-5.3-codex');
+  const model = getModel('openai-codex', 'gpt-5.3-codex');
 
   const tools = [];
   if (withFileTools) {
@@ -37,7 +38,9 @@ export async function runAgent({
   tools.push(createAskOrchestratorTool());
   tools.push(createSubmitArtifactTool(artifactSchema, validate));
 
-  const agent = new Agent();
+  const agent = new Agent({
+    getApiKey: () => getCodexAccessToken(),
+  });
   agent.setModel(model);
   agent.setSystemPrompt(finalSystemPrompt);
   agent.setTools(tools);
@@ -50,6 +53,9 @@ export async function runAgent({
       sendEvent('tool_execution_end', event.toolName, event.result, event.toolCallId);
     }
   });
+
+  // Start periodic heartbeat for Temporal liveness detection
+  startHeartbeat();
 
   // Build user prompt from task data
   const userPrompt = typeof prompt === 'function' ? prompt(task) : prompt;

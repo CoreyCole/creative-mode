@@ -138,6 +138,14 @@ type SwarmTask struct {
 	UpdatedAt     string
 }
 
+type SwarmTaskMessage struct {
+	ID        string
+	TaskID    string
+	Role      string
+	Content   string
+	CreatedAt string
+}
+
 type User struct {
 	ID              string
 	DiscordID       string

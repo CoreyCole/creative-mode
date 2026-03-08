@@ -31,6 +31,7 @@ import (
 	"creative-mode/harness/internal/gemini"
 	"creative-mode/harness/internal/mayor"
 	"creative-mode/harness/internal/president"
+	"creative-mode/harness/internal/swarmorch"
 	"creative-mode/harness/internal/world"
 	"creative-mode/harness/views/admin"
 	"creative-mode/harness/views/lobby"
@@ -56,6 +57,7 @@ type Server struct {
 	GeminiClient     *gemini.Client
 	MayorManager     *mayor.Manager
 	PresidentManager *president.Manager
+	SwarmManager     *swarmorch.SwarmManager
 	DataDir          string
 	dev              *devState // nil when DEV_MODE is not set
 
@@ -159,6 +161,13 @@ func (s *Server) RegisterRoutes(e *echo.Echo) {
 	presidentGroup.POST("/template-update", s.handlePresidentTemplateUpdate)
 	presidentGroup.POST("/deploy", s.handlePresidentDeploy)
 
+	// Swarm API (protected by CM_HOOK_SECRET).
+	swarmAPI := e.Group("/api/swarm", hookSecretMiddleware())
+	swarmAPI.POST("/tasks/research", s.handleSwarmStartResearch)
+	swarmAPI.POST("/tasks/code-change-plan", s.handleSwarmStartCodePlan)
+	swarmAPI.GET("/tasks/:taskID", s.handleSwarmGetTask)
+	swarmAPI.POST("/tasks/:taskID/cancel", s.handleSwarmCancelTask)
+
 	// Root route — soft session check renders login/pending/lobby.
 	e.GET("/", s.handleRoot)
 
@@ -184,6 +193,13 @@ func (s *Server) RegisterRoutes(e *echo.Echo) {
 	approved.GET("/mayor/:worldID/events", s.handleMayorDashboardSSE)
 	approved.GET("/mayor/:worldID/file", s.handleMayorFileRead)
 	approved.PUT("/mayor/:worldID/file", s.handleMayorFileSave)
+
+	// Swarm dashboard (approved users).
+	approved.GET("/swarm", s.handleSwarmDashboard)
+	approved.GET("/swarm/events", s.handleSwarmDashboardSSE)
+	approved.POST("/swarm/start", s.handleSwarmStartTaskDashboard)
+	approved.POST("/swarm/cancel", s.handleSwarmCancelTaskDashboard)
+	approved.POST("/swarm/chat", s.handleSwarmChatMessage)
 
 	// WASM artifact serving (approved users).
 	approved.GET("/wasm/:worldID/:cpID/*", s.handleWASMArtifacts)

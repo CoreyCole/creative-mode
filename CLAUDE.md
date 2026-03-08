@@ -56,6 +56,14 @@ Claude Code (per-build session)
 ├── Guided by templates/*/CLAUDE.md + MEMORY.md
 ├── Hook scripts POST events to /api/claude-event
 └── Pipeline: ForkCheckpoint → edit → BuildCheckpoint → deploy
+
+Swarm (Temporal-based task orchestration)
+├── Dashboard: /swarm — tabbed UI (Chat, Agents, Spans, Artifacts)
+├── Tasks: research or code_change_plan (Temporal workflows)
+├── Spans: hierarchical tracing (workflow → stage → agent → tool_call)
+├── Chat: user messages + span-derived orchestrator messages
+├── DB: swarm_tasks, swarm_task_messages, swarm_spans, swarm_artifacts
+└── Requires: CM_SWARM_TEMPORAL=true + temporal-dev.service
 ```
 
 ### Single Bot Architecture

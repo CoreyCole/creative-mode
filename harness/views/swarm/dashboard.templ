@@ -1,0 +1,718 @@
+package swarm
+
+import (
+	"creative-mode/harness/internal/db/sqlc"
+	"creative-mode/harness/views/layout"
+	"encoding/json"
+	"fmt"
+	"github.com/starfederation/datastar-go/datastar"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+)
+
+type DashboardData struct {
+	Tasks        []sqlc.SwarmTask
+	SelectedTask *sqlc.SwarmTask
+	Spans        []sqlc.GetSwarmSpanTreeRow
+	Artifacts    []sqlc.SwarmArtifact
+	Messages     []sqlc.SwarmTaskMessage
+}
+
+type DashboardSignals struct {
+	SelectedTaskID string `json:"selected_task_id"`
+	ActiveTab      string `json:"active_tab"`
+	NewTaskType    string `json:"new_task_type"`
+	NewTaskText    string `json:"new_task_text"`
+	ShowNewForm    bool   `json:"show_new_form"`
+	ChatInput      string `json:"chat_input"`
+}
+
+func DefaultDashboardSignals(selectedID string) DashboardSignals {
+	return DashboardSignals{
+		SelectedTaskID: selectedID,
+		ActiveTab:      "chat",
+		NewTaskType:    "research",
+	}
+}
+
+templ Page(data DashboardData) {
+	@layout.Base("Swarm") {
+		<div
+			class="flex flex-col h-screen"
+			data-signals={ templ.JSONString(DefaultDashboardSignals(selectedID(data.SelectedTask))) }
+		>
+			<header class="flex justify-between items-center px-6 py-3 border-b border-border bg-[#111] shrink-0">
+				<div class="flex items-center gap-3">
+					<a href="/" class="text-muted-foreground hover:text-primary transition-colors text-sm">Creative Mode</a>
+					<span class="text-muted-foreground">/</span>
+					<h1 class="text-lg font-semibold">Swarm Dashboard</h1>
+				</div>
+				<button
+					class="inline-flex items-center justify-center rounded-md border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground h-8 px-3 text-sm font-medium"
+					data-on:click="$show_new_form = !$show_new_form"
+				>
+					+ New Task
+				</button>
+			</header>
+			<div data-show="$show_new_form" style="display: none;">
+				@NewTaskForm()
+			</div>
+			<div
+				class="flex flex-1 min-h-0"
+				data-init={ datastar.GetSSE("/swarm/events") }
+			>
+				<div id="swarm-sidebar" class="w-64 border-r border-border bg-[#111] overflow-y-auto shrink-0">
+					@Sidebar(data.Tasks, selectedID(data.SelectedTask))
+				</div>
+				<div id="swarm-detail" class="flex-1 flex flex-col min-h-0">
+					if data.SelectedTask != nil {
+						@TaskDetailTabs(*data.SelectedTask, data.Messages, data.Spans, data.Artifacts)
+					} else {
+						<div class="flex items-center justify-center h-full text-muted-foreground">
+							<p>No tasks yet. Create one to get started.</p>
+						</div>
+					}
+				</div>
+			</div>
+		</div>
+	}
+}
+
+func selectedID(task *sqlc.SwarmTask) string {
+	if task == nil {
+		return ""
+	}
+	return task.ID
+}
+
+templ Sidebar(tasks []sqlc.SwarmTask, selectedTaskID string) {
+	<div class="p-2">
+		<div class="text-xs font-semibold text-muted-foreground px-2 py-1 uppercase tracking-wider">Tasks</div>
+		if len(tasks) == 0 {
+			<p class="text-muted-foreground text-xs px-2 py-4">No tasks yet</p>
+		}
+		for _, task := range tasks {
+			@TaskListItem(task, task.ID == selectedTaskID)
+		}
+	</div>
+}
+
+templ TaskListItem(task sqlc.SwarmTask, selected bool) {
+	<button
+		class={ "w-full text-left px-2 py-2 rounded-md text-sm cursor-pointer transition-colors mb-0.5",
+			templ.KV("bg-accent", selected),
+			templ.KV("hover:bg-accent/50", !selected) }
+		data-on:click={ fmt.Sprintf("@get('/swarm?task=%s')", task.ID) }
+	>
+		<div class="flex items-center gap-2 mb-0.5">
+			@statusDot(task.Status)
+			<span class={ "text-xs px-1.5 py-0 rounded", typeClass(task.PrimitiveType) }>
+				{ shortType(task.PrimitiveType) }
+			</span>
+		</div>
+		<div class="truncate text-xs leading-snug">{ truncate(task.RequestText, 60) }</div>
+		<div class="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
+			<span>{ elapsedStr(task.CreatedAt) }</span>
+		</div>
+	</button>
+}
+
+// TaskDetailTabs renders the tabbed detail pane.
+templ TaskDetailTabs(task sqlc.SwarmTask, messages []sqlc.SwarmTaskMessage, spans []sqlc.GetSwarmSpanTreeRow, artifacts []sqlc.SwarmArtifact) {
+	<!-- Task header -->
+	<div class="px-6 pt-4 pb-2 shrink-0 border-b border-border bg-[#111]">
+		<div class="flex items-center gap-3 mb-3">
+			@statusBadge(task.Status)
+			<span class={ "text-xs px-2 py-0.5 rounded", typeClass(task.PrimitiveType) }>
+				{ task.PrimitiveType }
+			</span>
+			<span class="text-sm text-muted-foreground">{ elapsedStr(task.CreatedAt) }</span>
+			if task.Status == "running" || task.Status == "pending" {
+				<button
+					class="inline-flex items-center justify-center rounded-md border border-destructive/50 text-destructive hover:bg-destructive/10 h-7 px-2 text-xs font-medium"
+					data-on:click={ fmt.Sprintf("@post('/swarm/cancel?task=%s')", task.ID) }
+				>
+					Cancel
+				</button>
+			}
+		</div>
+		<!-- Tab bar -->
+		<div class="flex gap-1">
+			@swarmTabButton("chat", "Chat")
+			@swarmTabButton("agents", "Agents")
+			@swarmTabButton("spans", "Spans")
+			@swarmTabButton("artifacts", "Artifacts")
+		</div>
+	</div>
+	<!-- Tab content -->
+	<div class="flex-1 min-h-0 flex flex-col">
+		<div data-show="$active_tab === 'chat'" class="flex-1 min-h-0 flex flex-col">
+			@ChatTab(task, messages, spans)
+		</div>
+		<div id="swarm-agents-tab" data-show="$active_tab === 'agents'" style="display: none;" class="flex-1 overflow-y-auto p-6">
+			@AgentsTab(spans)
+		</div>
+		<div id="swarm-spans-tab" data-show="$active_tab === 'spans'" style="display: none;" class="flex-1 overflow-y-auto p-6">
+			@SpansTab(spans)
+		</div>
+		<div id="swarm-artifacts-tab" data-show="$active_tab === 'artifacts'" style="display: none;" class="flex-1 overflow-y-auto p-6">
+			@ArtifactsTab(artifacts)
+		</div>
+	</div>
+}
+
+templ swarmTabButton(id, label string) {
+	<button
+		class="px-3 py-1.5 text-sm font-medium rounded-t-md transition-colors cursor-pointer"
+		data-on:click={ fmt.Sprintf("$active_tab = '%s'", id) }
+		data-class={ fmt.Sprintf("{'bg-accent text-accent-foreground': $active_tab === '%s', 'text-muted-foreground hover:text-foreground': $active_tab !== '%s'}", id, id) }
+	>
+		{ label }
+	</button>
+}
+
+// ChatTab renders the chat-style view with messages and input.
+templ ChatTab(task sqlc.SwarmTask, messages []sqlc.SwarmTaskMessage, spans []sqlc.GetSwarmSpanTreeRow) {
+	<div id="swarm-chat-log" class="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+		for _, msg := range buildChatMessages(task, messages, spans) {
+			@ChatBubble(msg)
+		}
+	</div>
+	<!-- Chat input -->
+	<div class="shrink-0 border-t border-border px-4 py-3">
+		<div class="flex gap-2 items-end max-w-2xl mx-auto">
+			<textarea
+				data-bind:chat_input
+				data-on:keydown={ `evt.key === 'Enter' && !evt.shiftKey && (evt.preventDefault(), !$_sending_chat && $chat_input.trim() !== '' && ` + string(datastar.PostSSE("/swarm/chat")) + `)` }
+				data-attr:disabled="$_sending_chat"
+				placeholder="Type a message..."
+				rows="1"
+				class="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 resize-none overflow-y-auto max-h-32"
+				autocomplete="off"
+			></textarea>
+			<button
+				data-on:click={ `!$_sending_chat && $chat_input.trim() !== '' && ` + string(datastar.PostSSE("/swarm/chat")) }
+				data-indicator:_sending_chat
+				data-attr:disabled="$_sending_chat"
+				class="self-end inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 disabled:opacity-50"
+			>
+				<span data-show="!$_sending_chat">Send</span>
+				<span data-show="$_sending_chat" class="flex items-center gap-1.5">
+					<span class="inline-block w-1.5 h-1.5 rounded-full bg-primary-foreground/70 animate-pulse"></span>
+					Sending
+				</span>
+			</button>
+		</div>
+	</div>
+}
+
+// ChatBubble renders a single chat message bubble.
+templ ChatBubble(msg ChatMessage) {
+	switch msg.Role {
+		case "user":
+			<div class="flex items-end gap-2 justify-end max-w-2xl mx-auto">
+				<div class="max-w-[85%] rounded-2xl rounded-br-sm bg-primary text-primary-foreground px-4 py-3">
+					<p class="text-sm whitespace-pre-wrap">{ msg.Content }</p>
+				</div>
+				<div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/20 text-primary text-xs font-bold">
+					U
+				</div>
+			</div>
+		case "orchestrator":
+			<div class="flex items-end gap-2 justify-start max-w-2xl mx-auto">
+				<div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-cyan-900/50 text-cyan-300 text-xs font-bold">
+					O
+				</div>
+				<div class="max-w-[85%] rounded-2xl rounded-bl-sm bg-muted px-4 py-3">
+					<div class="text-sm whitespace-pre-wrap">{ msg.Content }</div>
+				</div>
+			</div>
+		default:
+			<div class="flex justify-center max-w-2xl mx-auto">
+				<div class="text-xs text-muted-foreground bg-muted/50 px-3 py-1 rounded-full">
+					{ msg.Content }
+				</div>
+			</div>
+	}
+}
+
+// AgentsTab shows agent-level activity from spans.
+templ AgentsTab(spans []sqlc.GetSwarmSpanTreeRow) {
+	<div class="space-y-3">
+		<h3 class="text-sm font-semibold text-muted-foreground">Agent Activity</h3>
+		if len(filterAgentSpans(spans)) == 0 {
+			<p class="text-muted-foreground text-sm">No agent activity yet</p>
+		}
+		for _, span := range filterAgentSpans(spans) {
+			@AgentSpanCard(span)
+		}
+	</div>
+}
+
+templ AgentSpanCard(span sqlc.GetSwarmSpanTreeRow) {
+	<div class="rounded-lg border border-border bg-card p-3">
+		<div class="flex items-center gap-2 mb-1">
+			@spanIcon(span.SpanType)
+			<span class="text-sm font-medium">{ span.Name }</span>
+			@spanStatusBadge(span.Status)
+			if span.DurationMs.Valid {
+				<span class="text-xs text-muted-foreground">{ formatDuration(span.DurationMs.Int64) }</span>
+			} else if span.Status == "running" {
+				<span class="text-xs text-muted-foreground">{ elapsedStr(span.StartedAt) }</span>
+			}
+		</div>
+		if span.InputJSON.Valid && span.InputJSON.String != "" {
+			<div class="text-xs text-muted-foreground mt-1">
+				<span class="font-mono">input: </span>
+				<span>{ truncate(span.InputJSON.String, 120) }</span>
+			</div>
+		}
+		if span.OutputJSON.Valid && span.OutputJSON.String != "" {
+			<div class="text-xs text-muted-foreground mt-1">
+				<span class="font-mono">output: </span>
+				<span>{ truncate(span.OutputJSON.String, 120) }</span>
+			</div>
+		}
+		if span.ErrorMessage.Valid && span.ErrorMessage.String != "" {
+			<div class="text-xs text-destructive mt-1">{ truncate(span.ErrorMessage.String, 120) }</div>
+		}
+	</div>
+}
+
+// SpansTab shows the full span tree (existing view).
+templ SpansTab(spans []sqlc.GetSwarmSpanTreeRow) {
+	<div>
+		<h3 class="text-sm font-semibold mb-2 text-muted-foreground">Span Tree</h3>
+		<div class="rounded-lg border border-border bg-card p-3 font-mono text-xs">
+			if len(spans) == 0 {
+				<p class="text-muted-foreground">No spans recorded</p>
+			}
+			for _, span := range spans {
+				@SpanRow(span)
+			}
+		</div>
+	</div>
+}
+
+// ArtifactsTab shows output documents.
+templ ArtifactsTab(artifacts []sqlc.SwarmArtifact) {
+	<div>
+		<h3 class="text-sm font-semibold mb-2 text-muted-foreground">Artifacts</h3>
+		if len(artifacts) == 0 {
+			<p class="text-muted-foreground text-sm">No artifacts yet</p>
+		}
+		<div class="space-y-2">
+			for _, artifact := range artifacts {
+				@ArtifactCard(artifact)
+			}
+		</div>
+	</div>
+}
+
+templ SpanRow(span sqlc.GetSwarmSpanTreeRow) {
+	<div
+		class="flex items-center gap-2 py-0.5"
+		style={ fmt.Sprintf("padding-left: %dpx", span.Depth*20) }
+	>
+		@spanIcon(span.SpanType)
+		<span class="text-muted-foreground">{ span.Name }</span>
+		@spanStatusBadge(span.Status)
+		if span.DurationMs.Valid {
+			<span class="text-muted-foreground/60">{ formatDuration(span.DurationMs.Int64) }</span>
+		} else if span.Status == "running" {
+			<span class="text-muted-foreground/60">{ elapsedStr(span.StartedAt) }</span>
+		}
+		if span.ErrorMessage.Valid && span.ErrorMessage.String != "" {
+			<span class="text-destructive truncate max-w-xs" title={ span.ErrorMessage.String }>{ truncate(span.ErrorMessage.String, 40) }</span>
+		}
+	</div>
+}
+
+templ ArtifactCard(artifact sqlc.SwarmArtifact) {
+	<div class="flex items-center gap-2 rounded border border-border bg-card px-3 py-2">
+		<span class="text-muted-foreground">doc</span>
+		<span class="text-sm font-mono">{ filepath.Base(artifact.FilePath) }</span>
+		<span class={ "text-xs px-1.5 py-0 rounded", artifactTypeClass(artifact.ArtifactType) }>{ artifact.ArtifactType }</span>
+	</div>
+}
+
+templ NewTaskForm() {
+	<div class="border-b border-border bg-[#111] px-6 py-3">
+		<div class="flex items-end gap-3 max-w-2xl">
+			<div>
+				<label class="text-xs text-muted-foreground block mb-1">Type</label>
+				<select
+					data-bind:new_task_type
+					class="rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+				>
+					<option value="research">Research</option>
+					<option value="code_change_plan">Code Change Plan</option>
+				</select>
+			</div>
+			<div class="flex-1">
+				<label class="text-xs text-muted-foreground block mb-1">Request</label>
+				<input
+					type="text"
+					data-bind:new_task_text
+					placeholder="What should the agent investigate?"
+					class="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+				/>
+			</div>
+			<button
+				class="inline-flex items-center justify-center rounded-md bg-primary text-primary-foreground shadow-xs hover:bg-primary/90 h-8 px-4 text-sm font-medium"
+				data-on:click="@post('/swarm/start')"
+			>
+				Start
+			</button>
+		</div>
+	</div>
+}
+
+// --- Chat message building ---
+
+// ChatMessage represents a message in the chat view.
+type ChatMessage struct {
+	Role      string // "user", "orchestrator", "system"
+	Content   string
+	Timestamp string
+}
+
+// buildChatMessages merges the initial request, DB messages, and span-derived messages.
+func buildChatMessages(task sqlc.SwarmTask, messages []sqlc.SwarmTaskMessage, spans []sqlc.GetSwarmSpanTreeRow) []ChatMessage {
+	var result []ChatMessage
+
+	// Initial user request as the first message.
+	result = append(result, ChatMessage{
+		Role:      "user",
+		Content:   task.RequestText,
+		Timestamp: task.CreatedAt,
+	})
+
+	// DB messages (user-sent chat messages).
+	for _, m := range messages {
+		result = append(result, ChatMessage{
+			Role:      m.Role,
+			Content:   m.Content,
+			Timestamp: m.CreatedAt,
+		})
+	}
+
+	// Span-derived messages.
+	result = append(result, spansToChatMessages(spans)...)
+
+	// Sort by timestamp (the initial request is always first due to being earliest).
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Timestamp < result[j].Timestamp
+	})
+
+	return result
+}
+
+// spansToChatMessages converts key spans into chat-style messages.
+func spansToChatMessages(spans []sqlc.GetSwarmSpanTreeRow) []ChatMessage {
+	var msgs []ChatMessage
+
+	for _, span := range spans {
+		switch span.SpanType {
+		case "workflow":
+			if span.Status == "running" {
+				msgs = append(msgs, ChatMessage{
+					Role:      "system",
+					Content:   fmt.Sprintf("Starting %s...", span.Name),
+					Timestamp: span.StartedAt,
+				})
+			} else if span.Status == "completed" && span.EndedAt.Valid {
+				msgs = append(msgs, ChatMessage{
+					Role:      "system",
+					Content:   fmt.Sprintf("%s complete.", span.Name),
+					Timestamp: span.EndedAt.String,
+				})
+			} else if span.Status == "failed" {
+				errMsg := "unknown error"
+				if span.ErrorMessage.Valid && span.ErrorMessage.String != "" {
+					errMsg = span.ErrorMessage.String
+				}
+				ts := span.StartedAt
+				if span.EndedAt.Valid {
+					ts = span.EndedAt.String
+				}
+				msgs = append(msgs, ChatMessage{
+					Role:      "system",
+					Content:   fmt.Sprintf("%s failed: %s", span.Name, truncate(errMsg, 80)),
+					Timestamp: ts,
+				})
+			}
+
+		case "agent":
+			if span.Status == "running" {
+				msgs = append(msgs, ChatMessage{
+					Role:      "system",
+					Content:   fmt.Sprintf("Running: %s", span.Name),
+					Timestamp: span.StartedAt,
+				})
+			} else if span.Status == "completed" && span.OutputJSON.Valid && span.OutputJSON.String != "" {
+				// Try to extract a meaningful summary from output.
+				summary := extractOutputSummary(span.Name, span.OutputJSON.String)
+				if summary != "" {
+					ts := span.StartedAt
+					if span.EndedAt.Valid {
+						ts = span.EndedAt.String
+					}
+					msgs = append(msgs, ChatMessage{
+						Role:      "orchestrator",
+						Content:   summary,
+						Timestamp: ts,
+					})
+				}
+			}
+
+		case "question":
+			if span.InputJSON.Valid && span.InputJSON.String != "" {
+				question := extractQuestionText(span.InputJSON.String)
+				if question != "" {
+					content := fmt.Sprintf("Researching: %s", question)
+					if span.Status == "completed" && span.OutputJSON.Valid {
+						answer := extractAnswerText(span.OutputJSON.String)
+						if answer != "" {
+							content = fmt.Sprintf("Q: %s\nA: %s", question, answer)
+						}
+					}
+					ts := span.StartedAt
+					if span.EndedAt.Valid {
+						ts = span.EndedAt.String
+					}
+					msgs = append(msgs, ChatMessage{
+						Role:      "orchestrator",
+						Content:   content,
+						Timestamp: ts,
+					})
+				}
+			}
+		}
+	}
+
+	return msgs
+}
+
+// extractOutputSummary tries to get a readable summary from agent output JSON.
+func extractOutputSummary(agentName, outputJSON string) string {
+	// Try to extract "summary" or "result" field from JSON.
+	var data map[string]any
+	if err := json.Unmarshal([]byte(outputJSON), &data); err != nil {
+		// Not valid JSON, use raw text (truncated).
+		return truncate(outputJSON, 200)
+	}
+
+	// Look for common summary fields.
+	for _, key := range []string{"summary", "result", "answer", "output", "finding"} {
+		if val, ok := data[key]; ok {
+			if s, ok := val.(string); ok && s != "" {
+				return truncate(s, 200)
+			}
+		}
+	}
+
+	// For question-generation agents, extract questions list.
+	if strings.Contains(strings.ToLower(agentName), "question") {
+		if questions, ok := data["questions"]; ok {
+			if arr, ok := questions.([]any); ok {
+				var qs []string
+				for _, q := range arr {
+					if s, ok := q.(string); ok {
+						qs = append(qs, fmt.Sprintf("- %s", s))
+					} else if m, ok := q.(map[string]any); ok {
+						if text, ok := m["text"].(string); ok {
+							qs = append(qs, fmt.Sprintf("- %s", text))
+						}
+					}
+				}
+				if len(qs) > 0 {
+					return fmt.Sprintf("Generated %d questions:\n%s", len(qs), strings.Join(qs, "\n"))
+				}
+			}
+		}
+	}
+
+	return ""
+}
+
+// extractQuestionText extracts question text from input JSON.
+func extractQuestionText(inputJSON string) string {
+	var data map[string]any
+	if err := json.Unmarshal([]byte(inputJSON), &data); err != nil {
+		return truncate(inputJSON, 100)
+	}
+	for _, key := range []string{"question", "text", "query"} {
+		if val, ok := data[key]; ok {
+			if s, ok := val.(string); ok && s != "" {
+				return truncate(s, 100)
+			}
+		}
+	}
+	return truncate(inputJSON, 100)
+}
+
+// extractAnswerText extracts answer text from output JSON.
+func extractAnswerText(outputJSON string) string {
+	var data map[string]any
+	if err := json.Unmarshal([]byte(outputJSON), &data); err != nil {
+		return truncate(outputJSON, 150)
+	}
+	for _, key := range []string{"answer", "result", "summary", "finding"} {
+		if val, ok := data[key]; ok {
+			if s, ok := val.(string); ok && s != "" {
+				return truncate(s, 150)
+			}
+		}
+	}
+	return ""
+}
+
+// filterAgentSpans returns spans that are agents or questions.
+func filterAgentSpans(spans []sqlc.GetSwarmSpanTreeRow) []sqlc.GetSwarmSpanTreeRow {
+	var filtered []sqlc.GetSwarmSpanTreeRow
+	for _, s := range spans {
+		if s.SpanType == "agent" || s.SpanType == "question" {
+			filtered = append(filtered, s)
+		}
+	}
+	return filtered
+}
+
+// --- Helpers ---
+templ statusDot(status string) {
+	switch status {
+		case "running":
+			<span class="inline-block w-2 h-2 rounded-full bg-yellow-400 animate-pulse" title="Running"></span>
+		case "completed":
+			<span class="inline-block w-2 h-2 rounded-full bg-green-400" title="Completed"></span>
+		case "failed":
+			<span class="inline-block w-2 h-2 rounded-full bg-red-400" title="Failed"></span>
+		case "canceled":
+			<span class="inline-block w-2 h-2 rounded-full bg-gray-400" title="Canceled"></span>
+		default:
+			<span class="inline-block w-2 h-2 rounded-full bg-blue-400" title="Pending"></span>
+	}
+}
+
+templ statusBadge(status string) {
+	<span class={ "text-xs px-2 py-0.5 rounded-full", statusClass(status) }>
+		{ status }
+	</span>
+}
+
+templ spanIcon(spanType string) {
+	switch spanType {
+		case "workflow":
+			<span class="text-blue-400">wf</span>
+		case "stage":
+			<span class="text-purple-400">stg</span>
+		case "agent":
+			<span class="text-cyan-400">agt</span>
+		case "tool_call":
+			<span class="text-yellow-400">tool</span>
+		case "llm_call":
+			<span class="text-green-400">llm</span>
+		case "question":
+			<span class="text-orange-400">q</span>
+		default:
+			<span class="text-muted-foreground">?</span>
+	}
+}
+
+templ spanStatusBadge(status string) {
+	switch status {
+		case "running":
+			<span class="text-yellow-300">[running]</span>
+		case "completed":
+			<span class="text-green-300">[done]</span>
+		case "failed":
+			<span class="text-red-300">[failed]</span>
+		default:
+			<span class="text-muted-foreground">[{ status }]</span>
+	}
+}
+
+func statusClass(status string) string {
+	switch status {
+	case "running":
+		return "bg-yellow-900/50 text-yellow-300"
+	case "completed":
+		return "bg-green-900/50 text-green-300"
+	case "failed":
+		return "bg-red-900/50 text-red-300"
+	case "canceled":
+		return "bg-gray-900/50 text-gray-300"
+	default:
+		return "bg-blue-900/50 text-blue-300"
+	}
+}
+
+func typeClass(primitiveType string) string {
+	switch primitiveType {
+	case "research":
+		return "bg-cyan-900/50 text-cyan-300"
+	case "code_change_plan":
+		return "bg-purple-900/50 text-purple-300"
+	default:
+		return "bg-muted text-muted-foreground"
+	}
+}
+
+func shortType(primitiveType string) string {
+	switch primitiveType {
+	case "code_change_plan":
+		return "plan"
+	default:
+		return primitiveType
+	}
+}
+
+func artifactTypeClass(artifactType string) string {
+	switch artifactType {
+	case "research_doc":
+		return "bg-cyan-900/50 text-cyan-300"
+	case "plan_doc":
+		return "bg-purple-900/50 text-purple-300"
+	default:
+		return "bg-muted text-muted-foreground"
+	}
+}
+
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max-2] + ".."
+}
+
+func elapsedStr(createdAt string) string {
+	t, err := time.Parse(time.RFC3339, createdAt)
+	if err != nil {
+		return createdAt
+	}
+	d := time.Since(t)
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%d:%02d", int(d.Minutes()), int(d.Seconds())%60)
+	}
+	if d < 24*time.Hour {
+		return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
+	}
+	return fmt.Sprintf("%dd", int(d.Hours()/24))
+}
+
+func formatDuration(ms int64) string {
+	if ms < 1000 {
+		return fmt.Sprintf("%dms", ms)
+	}
+	s := float64(ms) / 1000
+	if s < 60 {
+		return fmt.Sprintf("%.1fs", s)
+	}
+	return fmt.Sprintf("%d:%02d", int(s)/60, int(s)%60)
+}

@@ -169,6 +169,32 @@ func (q *Queries) CreateSwarmTask(ctx context.Context, arg CreateSwarmTaskParams
 	return err
 }
 
+const createSwarmTaskMessage = `-- name: CreateSwarmTaskMessage :exec
+
+INSERT INTO swarm_task_messages (id, task_id, role, content, created_at)
+VALUES (?, ?, ?, ?, ?)
+`
+
+type CreateSwarmTaskMessageParams struct {
+	ID        string
+	TaskID    string
+	Role      string
+	Content   string
+	CreatedAt string
+}
+
+// Swarm Task Messages
+func (q *Queries) CreateSwarmTaskMessage(ctx context.Context, arg CreateSwarmTaskMessageParams) error {
+	_, err := q.db.ExecContext(ctx, createSwarmTaskMessage,
+		arg.ID,
+		arg.TaskID,
+		arg.Role,
+		arg.Content,
+		arg.CreatedAt,
+	)
+	return err
+}
+
 const failSwarmSpan = `-- name: FailSwarmSpan :exec
 UPDATE swarm_spans
 SET status = 'failed', error_message = ?, ended_at = ?, duration_ms = ?
@@ -428,6 +454,40 @@ func (q *Queries) GetSwarmTask(ctx context.Context, id string) (SwarmTask, error
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const getSwarmTaskMessages = `-- name: GetSwarmTaskMessages :many
+SELECT id, task_id, role, content, created_at
+FROM swarm_task_messages WHERE task_id = ? ORDER BY created_at
+`
+
+func (q *Queries) GetSwarmTaskMessages(ctx context.Context, taskID string) ([]SwarmTaskMessage, error) {
+	rows, err := q.db.QueryContext(ctx, getSwarmTaskMessages, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SwarmTaskMessage{}
+	for rows.Next() {
+		var i SwarmTaskMessage
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.Role,
+			&i.Content,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listSwarmTasks = `-- name: ListSwarmTasks :many

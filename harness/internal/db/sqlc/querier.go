@@ -30,6 +30,8 @@ type Querier interface {
 	CreateSwarmSpan(ctx context.Context, arg CreateSwarmSpanParams) error
 	// Swarm Tasks
 	CreateSwarmTask(ctx context.Context, arg CreateSwarmTaskParams) error
+	// Swarm Task Messages
+	CreateSwarmTaskMessage(ctx context.Context, arg CreateSwarmTaskMessageParams) error
 	CreateWorld(ctx context.Context, arg CreateWorldParams) error
 	CreateWorldInvite(ctx context.Context, arg CreateWorldInviteParams) error
 	DeleteExpiredSessions(ctx context.Context) error
@@ -62,6 +64,7 @@ type Querier interface {
 	GetSwarmSpanTree(ctx context.Context, taskID string) ([]GetSwarmSpanTreeRow, error)
 	GetSwarmSpansByTask(ctx context.Context, taskID string) ([]SwarmSpan, error)
 	GetSwarmTask(ctx context.Context, id string) (SwarmTask, error)
+	GetSwarmTaskMessages(ctx context.Context, taskID string) ([]SwarmTaskMessage, error)
 	GetUserByDiscordID(ctx context.Context, discordID string) (User, error)
 	GetUserByID(ctx context.Context, id string) (User, error)
 	GetUserPosition(ctx context.Context, arg GetUserPositionParams) (string, error)

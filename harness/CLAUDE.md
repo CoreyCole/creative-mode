@@ -87,6 +87,48 @@ Approved-user routes for world observability:
 | `/mayor/:worldID/file` | GET | Read workspace file (allowlist: SOUL.md, MEMORY.md, AGENTS.md, IDENTITY.md, USER.md) |
 | `/mayor/:worldID/file` | PUT | Edit workspace file (allowlist: SOUL.md, MEMORY.md, AGENTS.md) |
 
+### Swarm API (`internal/server/swarm_api.go`)
+
+**Auth**: `hookSecretMiddleware` validates `X-Hook-Secret` header against `CM_HOOK_SECRET` env var.
+
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/api/swarm/tasks/research` | POST | Create research task + start Temporal workflow |
+| `/api/swarm/tasks/code-change-plan` | POST | Create code plan task + start Temporal workflow |
+| `/api/swarm/tasks/:taskID` | GET | Get task with artifacts + span tree (JSON) |
+| `/api/swarm/tasks/:taskID/cancel` | POST | Cancel a running task's workflow |
+
+All endpoints require `SwarmManager` to be configured (returns 503 otherwise). Task creation returns 202 with `{taskID, workflowID}`.
+
+### Swarm Dashboard (`internal/server/swarm_dashboard.go`)
+
+Approved-user routes for the swarm task management UI:
+
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/swarm` | GET | Dashboard page: sidebar + tabbed detail pane |
+| `/swarm/events` | GET | SSE stream for live dashboard updates |
+| `/swarm/start` | POST | Create task from dashboard form (reads Datastar signals) |
+| `/swarm/cancel` | POST | Cancel task from dashboard |
+| `/swarm/chat` | POST | Send user chat message on selected task |
+
+**UI structure**: Left sidebar lists all tasks (sorted by `created_at DESC`). Detail pane has 4 tabs:
+- **Chat** (default) — Chat-style view. Merges the task's initial request (as user bubble), DB messages (`swarm_task_messages`), and span-derived messages (workflow start/complete, agent activity, question Q&A) sorted by timestamp. Text input at bottom for user messages.
+- **Agents** — Filtered view of `agent` and `question` type spans with input/output JSON.
+- **Spans** — Full recursive span tree with depth indentation.
+- **Artifacts** — Output documents (research_doc, plan_doc).
+
+**SSE updates**: Subscribes to EventBus `"swarm"` channel + 30s heartbeat. On event, patches sidebar and detail pane for the first active (running/pending) task. Syncs `selected_task_id` signal.
+
+**Chat message flow**: `POST /swarm/chat` reads `chat_input` + `selected_task_id` signals → inserts into `swarm_task_messages` → SSE response clears input + appends bubble via `WithModeAppend()` → publishes to EventBus for other clients.
+
+**DB tables**:
+- `swarm_tasks` — Top-level task entity (research or code_change_plan)
+- `swarm_task_messages` — User/orchestrator/system chat messages per task
+- `swarm_spans` — Hierarchical tracing spans (workflow → stage → agent → tool_call)
+- `swarm_artifacts` — Output documents
+- `swarm_research_questions` — Decomposed research sub-questions
+
 ### Discord Listener (`internal/discord/listener.go`)
 
 A separate discordgo Gateway session (distinct from the REST-only `worldchannel` client) that mirrors Discord messages to the DB and EventBus.
@@ -518,6 +560,52 @@ just build       # go build -o harness .
 just dev         # go run .
 just lint        # golangci-lint run ./...
 just fmt         # golangci-lint fmt ./...
+```
+
+## Testing with Dev Login
+
+When `DEV_MODE=true` (set in `.env`), the harness exposes a dev login that bypasses Discord OAuth. This is the primary way to test authenticated pages from CLI or scripts.
+
+### Dev Login Endpoint
+
+`POST /dev/auth/login` — form data: `username` (required), `role` (optional: `admin`/`user`/`pending`, default `user`).
+
+Sets a `session` cookie and redirects to `/`.
+
+### Testing from curl
+
+```bash
+# Login and save cookies
+curl -s -c /tmp/cookies.txt -X POST http://localhost:8080/dev/auth/login \
+  -d 'username=test&role=admin' -o /dev/null
+
+# Use the session for authenticated requests
+curl -s -b /tmp/cookies.txt http://localhost:8080/swarm
+```
+
+### Testing Datastar POST endpoints
+
+Datastar signals are sent as flat JSON (no `datastar` wrapper) with `Content-Type: application/json`:
+
+```bash
+curl -s -b /tmp/cookies.txt -X POST http://localhost:8080/swarm/chat \
+  -H "Content-Type: application/json" \
+  -d '{"chat_input":"hello","selected_task_id":"abc12345"}'
+```
+
+The response is SSE events (`event: datastar-patch-signals`, `event: datastar-patch-elements`).
+
+### Testing from playwright-cli
+
+If `playwright-cli` is available with `--persistent` flag, cookies persist across sessions. Navigate to the login page and fill the dev login form:
+
+```bash
+playwright-cli open http://localhost:8080 --headed --persistent
+playwright-cli snapshot  # find dev login form elements
+playwright-cli fill <username-ref> "test"
+playwright-cli click <submit-ref>
+# Now navigate to authenticated pages
+playwright-cli navigate http://localhost:8080/swarm
 ```
 
 ## Reference Examples

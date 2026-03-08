@@ -91,6 +91,16 @@ SELECT id, task_id, parent_span_id, span_type, name, status, input_json, output_
        error_message, started_at, ended_at, duration_ms, metadata_json, depth
 FROM span_tree ORDER BY started_at;
 
+-- Swarm Task Messages
+
+-- name: CreateSwarmTaskMessage :exec
+INSERT INTO swarm_task_messages (id, task_id, role, content, created_at)
+VALUES (?, ?, ?, ?, ?);
+
+-- name: GetSwarmTaskMessages :many
+SELECT id, task_id, role, content, created_at
+FROM swarm_task_messages WHERE task_id = ? ORDER BY created_at;
+
 -- name: CleanupOrphanedSpans :exec
 -- Mark stale running spans as failed (e.g. after crash recovery).
 UPDATE swarm_spans

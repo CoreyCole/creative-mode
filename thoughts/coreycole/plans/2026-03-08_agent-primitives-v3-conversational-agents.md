@@ -102,11 +102,13 @@ The core innovation: agents are **conversational partners**, not fire-and-forget
 
 **Agent → Go (stdout):**
 ```jsonl
-{"type":"event","event":"tool_execution_start","tool":"grep","args":{"pattern":"EventBus"}}
-{"type":"event","event":"tool_execution_end","tool":"grep"}
+{"type":"event","event":"tool_execution_start","tool":"grep","data":{"pattern":"EventBus"},"toolCallId":"tc_1"}
+{"type":"event","event":"tool_execution_end","tool":"grep","data":{"matches":3},"toolCallId":"tc_1"}
 {"type":"question","id":"q1","text":"How are SSE connections established in this codebase?"}
 {"type":"result","data":{"findings":"...","files_referenced":[...],"confidence":"high"}}
 ```
+
+**Note**: `toolCallId` is required on tool events — Go uses it to correlate start/end pairs into `tool_call` spans with accurate duration tracking.
 
 #### Agent Tool Set
 
@@ -675,19 +677,39 @@ CREATE TABLE swarm_artifacts (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE swarm_events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+-- Hierarchical span table (Langfuse-inspired trace/span model)
+-- Replaces flat swarm_events. Each span has an optional parent, enabling
+-- tree views (nested agent → tool calls) and timeline views (Gantt charts).
+CREATE TABLE swarm_spans (
+    id TEXT PRIMARY KEY,
     task_id TEXT NOT NULL REFERENCES swarm_tasks(id) ON DELETE CASCADE,
-    event_type TEXT NOT NULL,
-    detail TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    parent_span_id TEXT REFERENCES swarm_spans(id),
+    span_type TEXT NOT NULL CHECK(span_type IN (
+        'workflow',      -- top-level: ResearchWorkflow or CodeChangePlanWorkflow
+        'stage',         -- pipeline stage: question_generation, parallel_research, synthesis
+        'agent',         -- single agent subprocess run
+        'tool_call',     -- agent tool invocation (grep, read_file, ls, find)
+        'llm_call',      -- LLM generation (if pi-mono exposes it)
+        'question'       -- ask_orchestrator round-trip
+    )),
+    name TEXT NOT NULL,            -- e.g. "research-agent-0", "grep", "ask_orchestrator"
+    status TEXT NOT NULL DEFAULT 'running'
+        CHECK(status IN ('running', 'completed', 'failed')),
+    input_json TEXT,               -- task input / tool args (truncated for large payloads)
+    output_json TEXT,              -- artifact / tool result (truncated)
+    error_message TEXT,            -- set on failure
+    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    ended_at TEXT,
+    duration_ms INTEGER,           -- computed on completion: (ended_at - started_at) in ms
+    metadata_json TEXT             -- extensible: model name, token counts, cost, agent_index, etc.
 );
 
 CREATE INDEX idx_swarm_tasks_status ON swarm_tasks(status);
 CREATE INDEX idx_swarm_research_questions_task ON swarm_research_questions(task_id);
 CREATE INDEX idx_swarm_artifacts_task ON swarm_artifacts(task_id);
-CREATE INDEX idx_swarm_events_task ON swarm_events(task_id);
-CREATE INDEX idx_swarm_events_created ON swarm_events(created_at);
+CREATE INDEX idx_swarm_spans_task ON swarm_spans(task_id);
+CREATE INDEX idx_swarm_spans_parent ON swarm_spans(parent_span_id);
+CREATE INDEX idx_swarm_spans_started ON swarm_spans(started_at);
 ```
 
 ---
@@ -749,8 +771,8 @@ export function readLine() {
   return new Promise((resolve) => rl.once('line', resolve));
 }
 
-export function sendEvent(event, tool, args) {
-  process.stdout.write(JSON.stringify({ type: 'event', event, tool, args }) + '\n');
+export function sendEvent(event, tool, data, toolCallId) {
+  process.stdout.write(JSON.stringify({ type: 'event', event, tool, data, toolCallId }) + '\n');
 }
 
 export function sendQuestion(id, text) {
@@ -840,12 +862,13 @@ export async function runAgent({ artifactSchema, validate, systemPrompt, prompt,
   agent.setSystemPrompt(finalSystemPrompt);
   agent.setTools(tools);
 
-  // Stream tool events to Go for SSE dashboard
+  // Stream tool events to Go for span creation + SSE dashboard
+  // toolCallId is critical: Go uses it to correlate start/end into span lifecycle
   agent.subscribe(event => {
     if (event.type === 'tool_execution_start') {
-      sendEvent('tool_execution_start', event.toolName, event.args);
+      sendEvent('tool_execution_start', event.toolName, event.args, event.toolCallId);
     } else if (event.type === 'tool_execution_end') {
-      sendEvent('tool_execution_end', event.toolName);
+      sendEvent('tool_execution_end', event.toolName, event.result, event.toolCallId);
     }
   });
 
@@ -875,39 +898,336 @@ approved.GET("/swarm/events", s.handleSwarmSSE)
 approved.GET("/swarm/:taskID", s.handleSwarmTaskDetail)
 ```
 
-### SSE Events
+### SSE Events (Span-Based)
 
-The dashboard subscribes to `EventBus("swarm")` and receives:
+The dashboard subscribes to `EventBus("swarm")` and receives span lifecycle events. All events carry a full or partial `swarm_spans` row so the dashboard can build the trace tree incrementally.
 
 | Event | Data | Dashboard Update |
 |-------|------|-----------------|
-| `task.started` | `{task_id, type}` | Add row to task list |
-| `research.questions_generated` | `{task_id, questions}` | Show sub-questions |
-| `agent.tool_call` | `{task_id, agent_index, tool, args}` | Live tool activity indicator |
-| `agent.question_asked` | `{task_id, agent_index, question}` | Show question in agent detail |
-| `agent.completed` | `{task_id, agent_index}` | Mark agent done |
-| `task.completed` | `{task_id, artifact_path}` | Show artifact link |
-| `task.failed` | `{task_id, error}` | Show error |
+| `span.started` | Full span row (id, task_id, parent_span_id, span_type, name, input_json, started_at) | Append span node to tree view. If `span_type=workflow`, add row to task list. |
+| `span.completed` | `{span_id, output_json, duration_ms, ended_at}` | Update span node: show duration badge, output preview, mark green |
+| `span.failed` | `{span_id, error_message, duration_ms, ended_at}` | Update span node: show error, mark red |
+| `task.completed` | `{task_id, artifact_path}` | Show artifact link on task row, update status badge |
+| `task.failed` | `{task_id, error}` | Show error on task row |
+
+**Why span-based instead of domain-specific events**: The old design had separate events for `agent.tool_call`, `agent.question_asked`, `research.questions_generated`, etc. — each requiring custom SSE handler code and templ components. Span-based events use a single `SpanRow` component that renders differently based on `span_type`. Adding new span types (e.g., `llm_call` when pi-mono exposes generation events) requires zero SSE handler changes.
+
+**Event type constants** (added to `harness/internal/events/types.go`):
+```go
+EventSpanStarted   = "span.started"
+EventSpanCompleted = "span.completed"
+EventSpanFailed    = "span.failed"
+EventSwarmTaskCompleted = "swarm.task.completed"
+EventSwarmTaskFailed    = "swarm.task.failed"
+```
 
 ---
 
-## Dashboard
+## Observability Design (Langfuse-Inspired)
+
+### Design Rationale
+
+Langfuse provides hierarchical trace/span observability for LLM agents: Sessions → Traces → Observations (with 10 types: AGENT, TOOL, GENERATION, etc.). Its key insight is that **one polymorphic span table with parent-child nesting** can represent any agent execution topology — from flat tool calls to deeply nested multi-agent workflows.
+
+We adopt this model but with two advantages over Langfuse:
+1. **Real-time SSE streaming** — Langfuse ingests events asynchronously and shows traces after-the-fact. Our dashboard shows agents working *live* (tool calls appearing as they happen, parallel agents progressing simultaneously). This is a debugger, not a log viewer.
+2. **No external infrastructure** — Langfuse requires PostgreSQL + ClickHouse + Redis + S3 (~$3-4k/mo self-hosted). We use SQLite + in-memory EventBus, which is appropriate for our scale (<1000 traces/day, single server).
+
+### What We Skip From Langfuse (Not Worth Building Now)
+
+| Langfuse Feature | Why Skip |
+|---|---|
+| ClickHouse analytics engine | SQLite handles our volume; add OLAP later if needed |
+| Cost/token tracking per span | Pi-mono agents don't expose per-call token usage from subprocesses; revisit when we instrument the model provider |
+| LLM-as-a-Judge evaluation / scoring | Premature — get spans working first, add scoring later |
+| Prompt management / versioning | We have SOUL.md + skill files — better fit for workspace-based agents |
+| Multi-tenant / environments | Single deployment, single user |
+| Agent graph DAG visualization | Tree + timeline views are sufficient for v1; DAG is a stretch goal |
+
+### Span Hierarchy Example
+
+A research workflow produces this span tree:
+
+```
+workflow: ResearchWorkflow (task_id=abc123)              ← 45s total
+├── stage: question_generation                           ← 8s
+│   └── agent: research-questions                        ← 8s
+│       └── tool_call: submit_artifact                   ← <1s
+├── stage: parallel_research                             ← 30s
+│   ├── agent: research-agent-0                          ← 25s
+│   │   ├── tool_call: ls (harness/agents/skills/)       ← <1s
+│   │   ├── tool_call: read_file (skills/project-structure.md) ← <1s
+│   │   ├── tool_call: grep (EventBus, harness/)         ← 1s
+│   │   ├── tool_call: read_file (events/bus.go)         ← <1s
+│   │   ├── question: ask_orchestrator                   ← 3s
+│   │   │   └── "How are SSE connections established?"
+│   │   ├── tool_call: read_file (server/events.go)      ← <1s
+│   │   └── tool_call: submit_artifact                   ← <1s
+│   ├── agent: research-agent-1                          ← 20s
+│   │   └── ... (similar pattern)
+│   └── agent: research-agent-2                          ← 28s
+│       └── ... (similar pattern)
+└── stage: synthesis                                     ← 7s
+    └── agent: research-synthesizer                      ← 7s
+        └── tool_call: submit_artifact                   ← <1s
+```
+
+### Span Creation in `runAgent()`
+
+The Go activity creates and completes spans as it processes JSONL messages from the agent subprocess. Each span is persisted to `swarm_spans` AND published to EventBus for live SSE streaming.
+
+```go
+func (a *SwarmActivities) runAgent(ctx context.Context, taskID, parentSpanID, script string, input any) (json.RawMessage, error) {
+    // Create agent span
+    agentSpanID := uuid.NewString()
+    a.createSpan(ctx, SpanParams{
+        ID: agentSpanID, TaskID: taskID, ParentSpanID: parentSpanID,
+        SpanType: "agent", Name: script, InputJSON: marshal(input),
+    })
+
+    cmd := exec.CommandContext(ctx, "node", filepath.Join(a.agentsDir, script))
+    stdin, _ := cmd.StdinPipe()
+    stdout, _ := cmd.StdoutPipe()
+    cmd.Start()
+
+    // Send start message
+    json.NewEncoder(stdin).Encode(startMsg)
+
+    // Track active tool spans for completion
+    activeToolSpans := map[string]string{} // toolCallId → spanID
+
+    scanner := bufio.NewScanner(stdout)
+    for scanner.Scan() {
+        activity.RecordHeartbeat(ctx, "processing")
+        msg := parseJSONL(scanner.Text())
+
+        switch msg.Type {
+        case "event":
+            if msg.Event == "tool_execution_start" {
+                spanID := uuid.NewString()
+                activeToolSpans[msg.ToolCallID] = spanID
+                a.createSpan(ctx, SpanParams{
+                    ID: spanID, TaskID: taskID, ParentSpanID: agentSpanID,
+                    SpanType: "tool_call", Name: msg.Tool,
+                    InputJSON: truncateJSON(msg.Args, 4000),
+                })
+            } else if msg.Event == "tool_execution_end" {
+                if spanID, ok := activeToolSpans[msg.ToolCallID]; ok {
+                    a.completeSpan(ctx, spanID, truncateJSON(msg.Result, 4000))
+                    delete(activeToolSpans, msg.ToolCallID)
+                }
+            }
+
+        case "question":
+            qSpanID := uuid.NewString()
+            a.createSpan(ctx, SpanParams{
+                ID: qSpanID, TaskID: taskID, ParentSpanID: agentSpanID,
+                SpanType: "question", Name: "ask_orchestrator",
+                InputJSON: marshal(map[string]string{"question": msg.Text}),
+            })
+            answer := a.answerQuestion(ctx, msg.Text, taskContext)
+            json.NewEncoder(stdin).Encode(map[string]any{"type": "answer", "id": msg.ID, "text": answer})
+            a.completeSpan(ctx, qSpanID, marshal(map[string]string{"answer": truncate(answer, 2000)}))
+
+        case "result":
+            a.completeSpan(ctx, agentSpanID, msg.Data)
+            return msg.Data, nil
+        }
+    }
+
+    a.failSpan(ctx, agentSpanID, "agent exited without submitting artifact")
+    return nil, fmt.Errorf("agent exited without submitting artifact")
+}
+```
+
+**Span helper methods** (on `SwarmActivities`):
+```go
+func (a *SwarmActivities) createSpan(ctx context.Context, p SpanParams) {
+    // 1. Insert into swarm_spans table
+    a.db.CreateSwarmSpan(ctx, sqlc.CreateSwarmSpanParams{...})
+    // 2. Publish to EventBus for live SSE
+    a.eventBus.Publish("swarm", map[string]any{
+        "event": events.EventSpanStarted,
+        "span":  p,  // full span data for dashboard rendering
+    })
+}
+
+func (a *SwarmActivities) completeSpan(ctx context.Context, spanID string, outputJSON json.RawMessage) {
+    endedAt := time.Now()
+    // 1. Update swarm_spans row
+    a.db.CompleteSwarmSpan(ctx, sqlc.CompleteSwarmSpanParams{
+        ID: spanID, Status: "completed", OutputJSON: outputJSON,
+        EndedAt: endedAt, DurationMs: computeDuration(spanID, endedAt),
+    })
+    // 2. Publish completion
+    a.eventBus.Publish("swarm", map[string]any{
+        "event":       events.EventSpanCompleted,
+        "span_id":     spanID,
+        "output_json": outputJSON,
+        "duration_ms": computeDuration(spanID, endedAt),
+        "ended_at":    endedAt,
+    })
+}
+
+func (a *SwarmActivities) failSpan(ctx context.Context, spanID, errMsg string) {
+    // Same pattern: update DB row, publish EventSpanFailed
+}
+```
+
+### Workflow-Level Spans
+
+Temporal workflows create the top-level `workflow` and `stage` spans. Agent spans are created by activities.
+
+```go
+func ResearchWorkflow(ctx workflow.Context, task SwarmTask) error {
+    // Create workflow span
+    workflowSpanID := uuid.NewString()
+    workflow.ExecuteActivity(ctx, a.CreateSpan, SpanParams{
+        ID: workflowSpanID, TaskID: task.ID,
+        SpanType: "workflow", Name: "ResearchWorkflow",
+        InputJSON: marshal(task),
+    })
+
+    // Stage 1: Question generation
+    stage1SpanID := uuid.NewString()
+    workflow.ExecuteActivity(ctx, a.CreateSpan, SpanParams{
+        ID: stage1SpanID, TaskID: task.ID, ParentSpanID: workflowSpanID,
+        SpanType: "stage", Name: "question_generation",
+    })
+    var questions QuestionArtifact
+    workflow.ExecuteActivity(ctx, a.RunAgent, taskID, stage1SpanID, "research-questions.js", task).Get(ctx, &questions)
+    workflow.ExecuteActivity(ctx, a.CompleteSpan, stage1SpanID, marshal(questions))
+
+    // Stage 2: Parallel research (fan-out)
+    stage2SpanID := uuid.NewString()
+    // ... create stage span, fan out agents with parentSpanID=stage2SpanID ...
+
+    // Stage 3: Synthesis
+    // ... same pattern ...
+
+    workflow.ExecuteActivity(ctx, a.CompleteSpan, workflowSpanID, marshal(artifact))
+    return nil
+}
+```
+
+---
+
+## Dashboard (Langfuse-Inspired Views)
 
 ### Task List Page (`/swarm`)
 
-- Table: task ID, type (research/code_plan), status badge, created_at, artifact links
+- Table: task ID, type (research/code_plan), status badge, created_at, duration, artifact links
 - "Start Research" button → form with textarea
 - "Start Code Plan" button → form with textarea
 - SSE connection: `data-init={ datastar.GetSSE("/swarm/events") }`
+- Live status: running tasks show a spinner + current stage name
 
 ### Task Detail Page (`/swarm/:taskID`)
 
-- Task metadata (type, status, workflow_id, timestamps)
-- Research questions with per-question status
-- **Live agent activity**: which tool is running, what questions were asked
-- Artifact links (rendered markdown viewer or raw file link)
-- Event timeline
-- Cancel button (if running)
+Three view tabs (inspired by Langfuse's trace detail):
+
+#### Tree View (Default)
+
+Hierarchical nested view of all spans. Each span renders as a row with:
+- **Indent** based on nesting depth (parent_span_id chain)
+- **Icon** by span_type: workflow=🔄, stage=📦, agent=🤖, tool_call=🔧, question=❓
+- **Name** + status badge (running=blue spinner, completed=green ✓, failed=red ✗)
+- **Duration** badge (right-aligned, e.g. "25s", "< 1s")
+- **Expandable** `<details>` for input/output JSON preview (truncated to 500 chars)
+- **Live updates**: new spans append in-place via SSE `PatchElementTempl` with `WithModeAppend()`; completions replace the span row via `PatchElementTempl` targeting `#span-{id}`
+
+```go
+// SSE handler — same pattern as mayor dashboard
+func (s *Server) handleSwarmSSE(c echo.Context) error {
+    sse := datastar.NewSSE(c.Response().Writer, c.Request())
+    ch := s.EventBus.Subscribe("swarm")
+    defer s.EventBus.Unsubscribe("swarm", ch)
+
+    for {
+        select {
+        case event := <-ch:
+            e := event.(map[string]any)
+            switch e["event"] {
+            case events.EventSpanStarted:
+                span := e["span"].(SpanParams)
+                sse.PatchElementTempl(
+                    swarmview.SpanRow(span, 0), // depth computed from parent chain
+                    datastar.WithSelectorID("span-tree-"+span.TaskID),
+                    datastar.WithModeAppend(),
+                )
+            case events.EventSpanCompleted:
+                // Replace the span row with completed version (adds duration, output)
+                sse.PatchElementTempl(
+                    swarmview.SpanRowCompleted(e),
+                    datastar.WithSelectorID("span-"+e["span_id"].(string)),
+                )
+            case events.EventSpanFailed:
+                sse.PatchElementTempl(
+                    swarmview.SpanRowFailed(e),
+                    datastar.WithSelectorID("span-"+e["span_id"].(string)),
+                )
+            }
+        case <-c.Request().Context().Done():
+            return nil
+        }
+    }
+}
+```
+
+templ component sketch:
+```go
+templ SpanRow(span SpanData, depth int) {
+    <div id={ "span-" + span.ID }
+         class="span-row"
+         style={ fmt.Sprintf("padding-left: %dpx", depth * 24) }>
+        <span class="span-icon">{ spanTypeIcon(span.SpanType) }</span>
+        <span class="span-name">{ span.Name }</span>
+        <span class={ "badge", statusClass(span.Status) }>{ span.Status }</span>
+        if span.DurationMs > 0 {
+            <span class="span-duration">{ formatDuration(span.DurationMs) }</span>
+        }
+        if span.InputJSON != "" || span.OutputJSON != "" {
+            <details class="span-details">
+                <summary>I/O</summary>
+                if span.InputJSON != "" {
+                    <pre class="span-input">{ truncate(span.InputJSON, 500) }</pre>
+                }
+                if span.OutputJSON != "" {
+                    <pre class="span-output">{ truncate(span.OutputJSON, 500) }</pre>
+                }
+            </details>
+        }
+    </div>
+}
+```
+
+#### Timeline View
+
+CSS-based Gantt chart showing span durations as horizontal bars. Reveals parallelism (e.g., 3 research agents running simultaneously).
+
+- Each span = a horizontal bar, width = `duration_ms / workflow_total_ms * 100%`
+- X-axis = time elapsed since workflow start
+- Y-axis = spans stacked vertically, grouped by parent
+- Color-coded by span_type
+- Hover shows span name + duration
+- Only renders on completed/failed tasks (needs final durations)
+
+Implementation: pure CSS grid + templ. No JavaScript charting library needed. The server computes bar positions and widths, renders as `style="left: X%; width: Y%"` on `<div>` elements.
+
+#### Event Log View
+
+Flat chronological list of all spans (Langfuse's "Log View"). Keyword-searchable via a `data-bind:search_filter` input that uses `data-show="$search_filter === '' || name.includes($search_filter)"` on each row. Useful for finding specific tool calls across a complex trace.
+
+### Templ Files
+
+```
+harness/views/swarm/
+├── dashboard.templ          — task list page with start forms
+├── task_detail.templ        — detail page with tab switching (tree/timeline/log)
+├── span_row.templ           — single span row component (used by tree + log views)
+├── timeline.templ           — Gantt chart component
+└── components.templ         — shared badges, icons, formatters
+```
 
 ---
 
@@ -1082,14 +1402,15 @@ For initial implementation, use `DirectRunner` (plain `exec.CommandContext("node
 ## Implementation Phases
 
 ### Phase 1: Foundation
-- Migration 006 + register in `db.go`
-- SQLC queries for swarm tables
+- Migration 006 + register in `db.go` (includes `swarm_spans` table with parent-child nesting)
+- SQLC queries for swarm tables including span CRUD: `CreateSwarmSpan`, `CompleteSwarmSpan`, `FailSwarmSpan`, `GetSwarmSpansByTask`, `GetSwarmSpanTree` (recursive CTE for nesting)
 - `go get go.temporal.io/sdk` + go mod tidy
 - Add `temporal-cli` to `flake.nix` (already present on old `feature/agent-swarm` branch)
 - Add `OPENAI_API_KEY` to `harness/.env`
 - `harness/agents/package.json` + `npm install`
 - Shared agent libraries (`lib/protocol.js`, `lib/orchestrator-tools.js`, `lib/agent-factory.js`)
 - Skill files (`harness/agents/skills/*.md`)
+- Add span event types to `harness/internal/events/types.go`: `EventSpanStarted`, `EventSpanCompleted`, `EventSpanFailed`, `EventSwarmTaskCompleted`, `EventSwarmTaskFailed`
 
 ### Phase 2: Agent Scripts
 - `research-questions.js`
@@ -1100,28 +1421,43 @@ For initial implementation, use `DirectRunner` (plain `exec.CommandContext("node
 - `plan-synthesizer.js`
 - Test each script standalone with manual JSON input
 
-### Phase 3: Temporal Workflows + Activities
+### Phase 3: Temporal Workflows + Activities (with Span Instrumentation)
 - `harness/internal/temporal/client.go`
-- `harness/internal/temporal/activities.go` (with `runAgent` JSONL protocol, `DirectRunner`)
-- `harness/internal/temporal/workflows.go` (ResearchWorkflow, CodeChangePlanWorkflow)
+- `harness/internal/temporal/activities.go`:
+  - `runAgent()` with JSONL protocol + `DirectRunner`
+  - `createSpan()`, `completeSpan()`, `failSpan()` helpers — dual-write to SQLite + EventBus
+  - Span creation on every JSONL message type: `tool_execution_start/end` → tool_call spans, `question` → question spans
+  - `truncateJSON()` utility — cap input/output at 4KB to avoid bloating SQLite
+- `harness/internal/temporal/workflows.go`:
+  - `ResearchWorkflow` creates `workflow` + `stage` spans, passes `parentSpanID` to activities
+  - `CodeChangePlanWorkflow` same pattern
 - `harness/internal/temporal/worker.go`
 
 ### Phase 4: HTTP API + SSE
-- `harness/internal/server/swarm_api.go` (start, get, cancel)
-- `harness/internal/server/swarm_sse.go` (EventBus subscription)
-- `harness/internal/events/types.go` (swarm event types)
+- `harness/internal/server/swarm_api.go` (start, get, cancel + span query endpoints)
+- `harness/internal/server/swarm_sse.go` — subscribes to `EventBus("swarm")`, dispatches `span.started/completed/failed` events to Datastar SSE. Follows mayor dashboard pattern: `PatchElementTempl` for span rows, `WithModeAppend` for new spans, ID-targeted replace for completions.
 - Route registration in `server.go`
 - Temporal client in Server struct + main.go initialization
 
-### Phase 5: Dashboard
-- `harness/views/swarm/dashboard.templ` (task list, start forms)
-- `harness/views/swarm/task_detail.templ` (detail with live events)
-- `harness/internal/server/swarm_dashboard.go` (handlers)
+### Phase 5: Dashboard (Langfuse-Inspired Views)
+- `harness/views/swarm/dashboard.templ` — task list with live status, start forms
+- `harness/views/swarm/task_detail.templ` — three-tab detail page:
+  - **Tree view** (default): nested span rows with expand/collapse, live SSE updates
+  - **Timeline view**: CSS Gantt chart showing parallelism and duration
+  - **Event log**: flat chronological list with keyword search
+- `harness/views/swarm/span_row.templ` — polymorphic span component (icon + name + status + duration + expandable I/O)
+- `harness/views/swarm/timeline.templ` — Gantt chart component (server-computed bar positions)
+- `harness/views/swarm/components.templ` — badges, icons, duration formatters
+- `harness/internal/server/swarm_dashboard.go` — page handlers + span tree query
+- CSS for span tree indentation, timeline bars, status colors
 
-### Phase 6 (Future): Hardening
+### Phase 6 (Future): Hardening + Observability Extensions
 - Add `BwrapRunner` with sudoers/AppArmor config
 - Config flag to select runner (`CM_AGENT_SANDBOX=bwrap|direct`)
 - Container-based deployment for Temporal Cloud workers
+- Cost/token tracking: instrument pi-mono model provider to emit `llm_call` spans with usage data
+- Scoring/evaluation: add `swarm_scores` table (numeric/categorical) attachable to any span, with manual annotation UI on span detail
+- Agent graph visualization: DAG view inferred from span parent-child + timing relationships
 
 ---
 
@@ -1149,7 +1485,7 @@ VPS has **31GB total, 29GB available**. 5 Node.js subprocesses (~100-200MB each)
 Subprocess crash → `cmd.Wait()` returns non-zero → scanner loop exits (stdout closes) → Go returns `"agent exited without submitting artifact"` error → Temporal retries.
 
 ### 8. Streaming events
-**Stream individually.** Each `tool_execution_start`/`tool_execution_end` goes to EventBus immediately for dashboard responsiveness.
+**Stream individually as spans.** Each `tool_execution_start` creates a `tool_call` span (persisted to `swarm_spans` + published to EventBus). Each `tool_execution_end` completes the span (updates row + publishes completion). `toolCallId` from the JSONL protocol correlates start/end pairs. Dashboard receives span lifecycle events and updates the tree view in real time.
 
 ### 9. answerQuestion sophistication
 **v1: keyword matching + skill loading + file reading.** Agents already have file tools — `ask_orchestrator` is a fallback for cross-cutting context, not the primary research mechanism. Future: spawn another agent to answer.
@@ -1162,4 +1498,17 @@ Subprocess crash → `cmd.Wait()` returns non-zero → scanner loop exits (stdou
 1. **Exact system prompt text** — currently described conceptually, not written. Need concrete prompts for each of the 6 agent scripts.
 2. **Skill file content** — what goes in `database-conventions.md`, `api-conventions.md`, etc. Need to write these.
 3. **Temporal activity heartbeat pattern** — during long `ask_orchestrator` waits, Go must heartbeat Temporal. Should heartbeat on every JSONL message received from the agent.
-4. **Dashboard templ component design** — live tool activity indicator UX for SSE updates.
+
+## Resolved Questions (Observability)
+
+### 11. Dashboard component design
+**Resolved.** Langfuse-inspired three-view design:
+- **Tree view** (default): nested `SpanRow` components with SSE live updates. New spans append via `PatchElementTempl` + `WithModeAppend`. Completions replace in-place via `PatchElementTempl` targeting `#span-{id}`. Each row shows icon (by span_type), name, status badge, duration, expandable I/O.
+- **Timeline view**: CSS Gantt chart for completed tasks. Server computes bar positions as percentages. Shows parallelism (e.g., 3 research agents running simultaneously).
+- **Event log view**: flat chronological list with `data-bind:search_filter` for keyword search across span names.
+
+### 12. Langfuse vs. custom observability
+**Custom.** Langfuse requires PostgreSQL + ClickHouse + Redis + S3 (~$3-4k/mo self-hosted) and has no Go SDK. Our SSE dashboard has a unique advantage: real-time streaming (Langfuse shows traces after-the-fact). We adopt Langfuse's data model (hierarchical spans with parent-child nesting) but render it live via Datastar SSE. The `swarm_spans` table replaces the flat `swarm_events` table from the original design.
+
+### 13. Span data truncation
+**Truncate input/output JSON at 4KB.** Tool args and results can be large (file contents from `read_file`). `truncateJSON()` caps stored/streamed data to keep SQLite lean and SSE responsive. Full data remains in agent subprocess stdout logs (JSONL files at `{dataDir}/logs/`) for debugging.

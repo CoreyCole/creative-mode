@@ -16,9 +16,9 @@ v2 proposed fire-and-forget agent subprocesses (stdin JSON → stdout JSON). v3 
 
 ### Corrections From v2
 
-- **Model name**: `getModel('openai-codex', 'gpt-5.3-codex')` — not `codex-5.3`. Verified against installed pi-mono v0.54.0 at `/opt/openclaw/`.
-- **Available models**: `gpt-5.3-codex` (standard) and `gpt-5.3-codex-spark` (lighter). Also `gpt-5.2-codex`, `gpt-5.1-codex-max`, etc.
-- **`createReadOnlyTools(cwd)`** returns `[readTool, grepTool, findTool, lsTool]` — all sandboxed to `cwd`, with built-in truncation. No `lib/tools.js` needed.
+- **Model provider**: Use `getModel('openai', 'gpt-5.3-codex')` — NOT `getModel('openai-codex', ...)`. The `openai-codex` provider routes through ChatGPT OAuth (`chatgpt.com/backend-api`), which requires interactive browser login. The `openai` provider routes through the standard API (`api.openai.com/v1`) and reads `OPENAI_API_KEY` from env. Same model, different auth path.
+- **Available models under `openai` provider**: `gpt-5.3-codex`, `gpt-5.3-codex-spark` (lighter), `gpt-5.2-codex`, `gpt-5.1-codex-max`, etc.
+- **`createReadOnlyTools(cwd)`** returns `[readTool, grepTool, findTool, lsTool]` — all resolve paths relative to `cwd`, with built-in truncation (2000 lines / 50KB). No `lib/tools.js` needed. **Note**: does NOT prevent path traversal — absolute paths and `../../` work. See Sandboxing section for mitigation.
 
 ### Lessons From Previous Attempt (`feature/agent-swarm`)
 
@@ -826,7 +826,7 @@ export async function runAgent({ artifactSchema, validate, systemPrompt, prompt,
   const task = startMsg.task;
   const finalSystemPrompt = startMsg.systemPrompt || systemPrompt;
 
-  const model = getModel('openai-codex', 'gpt-5.3-codex');
+  const model = getModel('openai', 'gpt-5.3-codex');
 
   const tools = [];
   if (withFileTools) {
@@ -998,12 +998,95 @@ research_doc: <path to research doc>
 
 ---
 
+## Sandboxing Strategy
+
+### Threat Model
+
+Agent subprocesses run pi-mono tools (`createReadOnlyTools(cwd)`) that have **no path traversal protection** — absolute paths and `../../` work. Verified against pi-mono v0.54.0 source. The agents are our code (not user-submitted), but a prompt injection via tool output could cause an agent to read sensitive files (`.env`, SSH keys, database).
+
+### Approach: Defense in Depth, Not Coupled to Core
+
+Sandboxing is an **optional layer** around `exec.CommandContext`, not baked into the JSONL protocol or Temporal activity logic.
+
+```go
+// The activity calls runAgent() which uses exec.CommandContext.
+// Sandboxing wraps the command construction — everything else is identical.
+type AgentRunner interface {
+    BuildCommand(ctx context.Context, script string, env []string) *exec.Cmd
+}
+
+// v1 (dev): direct exec — trusted agents on our server
+type DirectRunner struct{ NodePath, AgentsDir string }
+func (r *DirectRunner) BuildCommand(ctx context.Context, script string, env []string) *exec.Cmd {
+    cmd := exec.CommandContext(ctx, r.NodePath, filepath.Join(r.AgentsDir, script))
+    cmd.Env = env
+    return cmd
+}
+
+// v2 (VPS hardening): bubblewrap — read-only repo, hidden .env/data
+type BwrapRunner struct{ NodePath, AgentsDir, RepoRoot string }
+func (r *BwrapRunner) BuildCommand(ctx context.Context, script string, env []string) *exec.Cmd {
+    cmd := exec.CommandContext(ctx, "sudo", "bwrap",
+        "--ro-bind", "/usr", "/usr",
+        "--ro-bind", "/lib", "/lib",
+        "--ro-bind", filepath.Dir(r.NodePath), "/nix-profile",
+        "--ro-bind", "/nix", "/nix",
+        "--ro-bind", r.RepoRoot, "/repo",
+        "--ro-bind", "/dev/null", "/repo/harness/.env",
+        "--tmpfs", "/repo/data",
+        "--ro-bind", r.AgentsDir, "/agents",
+        "--proc", "/proc", "--dev", "/dev",
+        "--unshare-pid", "--die-with-parent",
+        "--", "/nix-profile/node", filepath.Join("/agents", script),
+    )
+    cmd.Env = env
+    return cmd
+}
+```
+
+### Bubblewrap (bwrap) — Verified Working
+
+Tested on VPS (Ubuntu 24.04, kernel 6.8.0, aarch64):
+- **Bidirectional JSONL stdin/stdout**: works identically to unsandboxed
+- **Read-only codebase**: `--ro-bind /repo` → writes get `EROFS`
+- **`.env` hidden**: `--ro-bind /dev/null /repo/harness/.env` → reads get `EACCES`
+- **Database hidden**: `--tmpfs /repo/data` → files get `ENOENT`
+- **No home/SSH access**: only explicitly bound paths exist in sandbox
+- **`--die-with-parent`**: child dies when Go activity is cancelled
+- **Startup overhead**: ~5-10ms (negligible vs minutes-long agent runs)
+- **Memory overhead**: zero beyond the child process
+
+**Caveat**: Requires `sudo` or AppArmor profile due to `apparmor_restrict_unprivileged_userns=1` on Ubuntu 24.04. Options: sudoers rule for bwrap, AppArmor profile, or disable the sysctl.
+
+### Production Path: Container Isolation
+
+When moving to Temporal Cloud, the **Temporal server** is managed but **workers still run on our infrastructure**. If workers run in containers (ECS, K8s):
+- The container IS the sandbox — mount repo read-only, exclude `.env`
+- No bwrap needed (and bwrap inside Docker requires `--privileged`)
+- Use `DirectRunner` — container boundaries provide equivalent isolation
+- Network policies at container/pod level replace `--unshare-net`
+
+**Temporal Cloud migration only changes connection config** (mTLS certs, namespace endpoint). Activities, workflows, agent scripts, and the JSONL protocol are all identical.
+
+### v1 Decision: Start with DirectRunner
+
+For initial implementation, use `DirectRunner` (plain `exec.CommandContext("node", ...)`). Reasons:
+1. Agents are our code, not user-submitted
+2. Agents already run with `OPENAI_API_KEY` in env — they have API access by design
+3. The codebase is the thing agents are supposed to read
+4. bwrap adds operational complexity (sudo/AppArmor) for marginal dev-phase benefit
+5. Add `BwrapRunner` later as hardening when agents are stable
+
+---
+
 ## Implementation Phases
 
 ### Phase 1: Foundation
 - Migration 006 + register in `db.go`
 - SQLC queries for swarm tables
 - `go get go.temporal.io/sdk` + go mod tidy
+- Add `temporal-cli` to `flake.nix` (already present on old `feature/agent-swarm` branch)
+- Add `OPENAI_API_KEY` to `harness/.env`
 - `harness/agents/package.json` + `npm install`
 - Shared agent libraries (`lib/protocol.js`, `lib/orchestrator-tools.js`, `lib/agent-factory.js`)
 - Skill files (`harness/agents/skills/*.md`)
@@ -1019,7 +1102,7 @@ research_doc: <path to research doc>
 
 ### Phase 3: Temporal Workflows + Activities
 - `harness/internal/temporal/client.go`
-- `harness/internal/temporal/activities.go` (with `runAgent` JSONL protocol)
+- `harness/internal/temporal/activities.go` (with `runAgent` JSONL protocol, `DirectRunner`)
 - `harness/internal/temporal/workflows.go` (ResearchWorkflow, CodeChangePlanWorkflow)
 - `harness/internal/temporal/worker.go`
 
@@ -1035,24 +1118,48 @@ research_doc: <path to research doc>
 - `harness/views/swarm/task_detail.templ` (detail with live events)
 - `harness/internal/server/swarm_dashboard.go` (handlers)
 
+### Phase 6 (Future): Hardening
+- Add `BwrapRunner` with sudoers/AppArmor config
+- Config flag to select runner (`CM_AGENT_SANDBOX=bwrap|direct`)
+- Container-based deployment for Temporal Cloud workers
+
 ---
 
-## Open Questions (For Continued Refinement)
+## Resolved Questions
 
-1. **`answerQuestion` sophistication** — How smart should Go be at answering agent questions? v1: keyword matching + skill loading + file reading. Future: spawn another agent to answer.
+### 1. Model provider
+**Use `getModel('openai', 'gpt-5.3-codex')`** — routes through standard OpenAI API, reads `OPENAI_API_KEY` from env. The `openai-codex` provider requires ChatGPT OAuth (interactive browser login) and is not suitable for subprocess agents.
 
-2. **Agent subprocess lifecycle** — What if `submit_artifact` never gets called? Need a timeout on the Go side that kills the subprocess and returns an error to Temporal for retry.
+### 2. OPENAI_API_KEY sourcing
+Add `OPENAI_API_KEY` to `harness/.env`. Go passes it to agent subprocesses via `cmd.Env`. The `openai` provider in pi-ai reads it from `process.env.OPENAI_API_KEY`.
 
-3. **OPENAI_API_KEY** — gpt-5.3-codex requires an OpenAI API key. Where does this come from? `.env` as `OPENAI_API_KEY`? Passed to the subprocess as env var?
+### 3. Node.js path
+`/home/deploy/.nix-profile/bin/node` (v22.22.0, Nix-managed). In PATH, so `"node"` works in `exec.CommandContext`.
 
-4. **Node.js path** — Which `node` binary? System node, nix node, or `/opt/openclaw/node_modules/.bin/node`?
+### 4. Parallel agent limits
+VPS has **31GB total, 29GB available**. 5 Node.js subprocesses (~100-200MB each) use ~1GB. No concern.
 
-5. **Agent script hot-reload** — During development, can we edit agent scripts without restarting the harness? Yes — each activity spawns a new subprocess, so changes take effect on next invocation.
+### 5. Agent subprocess timeout
+`exec.CommandContext` with context timeout. If `submit_artifact` never gets called, context cancels after 10 minutes (matching Temporal `StartToCloseTimeout`), subprocess gets killed, Go returns error, Temporal retries up to `MaximumAttempts: 3`.
 
-6. **Parallel agent limits** — With concurrency 4 on the task queue, and research fanning out to 5 sub-questions, we could have 5 agent subprocesses simultaneously. Is this OK for VPS RAM?
+### 6. createReadOnlyTools path traversal
+**NOT prevented** — absolute paths and `../../` work. Verified against pi-mono v0.54.0 source at `/opt/openclaw/`. Mitigated by: agents are our code (not user-submitted), bwrap available as hardening layer, container isolation in production.
 
-7. **createReadOnlyTools cwd sandboxing** — Does `createReadOnlyTools(cwd)` prevent path traversal (e.g., `read_file("../../etc/passwd")`)? Need to verify.
+### 7. Error propagation
+Subprocess crash → `cmd.Wait()` returns non-zero → scanner loop exits (stdout closes) → Go returns `"agent exited without submitting artifact"` error → Temporal retries.
 
-8. **Error propagation** — When an agent subprocess crashes (node error, OOM), how does the Go activity detect this and report it to Temporal? `cmd.Wait()` returns non-zero exit code → return error → Temporal retries.
+### 8. Streaming events
+**Stream individually.** Each `tool_execution_start`/`tool_execution_end` goes to EventBus immediately for dashboard responsiveness.
 
-9. **Streaming events vs batching** — Should agent tool events be streamed to EventBus individually, or batched? Individual streaming = more SSE updates = better dashboard responsiveness.
+### 9. answerQuestion sophistication
+**v1: keyword matching + skill loading + file reading.** Agents already have file tools — `ask_orchestrator` is a fallback for cross-cutting context, not the primary research mechanism. Future: spawn another agent to answer.
+
+### 10. Agent script hot-reload
+**Yes.** Each activity spawns a new subprocess, so edits to agent scripts take effect on next invocation without harness restart.
+
+## Remaining Open Questions
+
+1. **Exact system prompt text** — currently described conceptually, not written. Need concrete prompts for each of the 6 agent scripts.
+2. **Skill file content** — what goes in `database-conventions.md`, `api-conventions.md`, etc. Need to write these.
+3. **Temporal activity heartbeat pattern** — during long `ask_orchestrator` waits, Go must heartbeat Temporal. Should heartbeat on every JSONL message received from the agent.
+4. **Dashboard templ component design** — live tool activity indicator UX for SSE updates.

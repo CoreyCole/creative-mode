@@ -30,6 +30,7 @@ import (
 	"creative-mode/harness/internal/mayor"
 	"creative-mode/harness/internal/president"
 	"creative-mode/harness/internal/server"
+	"creative-mode/harness/internal/swarmorch"
 	"creative-mode/harness/internal/world"
 )
 
@@ -321,6 +322,24 @@ func main() {
 		}
 	}
 
+	// Set up swarm manager (optional — requires CM_SWARM_TEMPORAL=true + Temporal server).
+	var swarmManager *swarmorch.SwarmManager
+	if os.Getenv("CM_SWARM_TEMPORAL") == "true" {
+		repoRoot, repoErr := filepath.Abs("..")
+		if repoErr != nil {
+			logger.Error("failed to resolve repo root for swarm", "error", repoErr)
+		} else {
+			agentsDir := filepath.Join(repoRoot, "harness", "agents")
+			var smErr error
+			swarmManager, smErr = swarmorch.NewSwarmManager(
+				database, eventBus, repoRoot, agentsDir, logger,
+			)
+			if smErr != nil {
+				logger.Error("failed to create swarm manager", "error", smErr)
+			}
+		}
+	}
+
 	// Set up Echo server.
 	e := echo.New()
 	srv := server.New(database, logger)
@@ -332,6 +351,7 @@ func main() {
 	srv.MayorManager = mayorManager
 	srv.PresidentManager = presidentManager
 	srv.DataDir = dataDir
+	srv.SwarmManager = swarmManager
 	srv.CreateConvMgr = createConvMgr
 	srv.CreateClaudeClient = createClaudeClient
 	srv.CreateMDRenderer = mdRenderer
@@ -342,6 +362,10 @@ func main() {
 		<-ctx.Done()
 		logger.Info("Shutting down server...")
 		worldManager.Shutdown()
+
+		if swarmManager != nil {
+			swarmManager.Stop()
+		}
 
 		if discordListener != nil {
 			_ = discordListener.Stop()

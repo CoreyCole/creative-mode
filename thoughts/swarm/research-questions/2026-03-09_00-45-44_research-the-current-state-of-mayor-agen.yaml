@@ -1,0 +1,43 @@
+---
+questions:
+  - question: How is a mayor-initiated build request routed from the API entry point through the harness backend, and which handlers/services are responsible at each step?
+    rationale: Establishes the end-to-end control flow for build triggering so the current implementation boundaries are clear before analyzing any changes.
+    suggestedFiles:
+      - harness/internal/api/mayor.go
+      - harness/internal/mayor/manager.go
+      - harness/internal/builder/service.go
+      - harness/internal/server/router.go
+
+  - question: What request/authorization checks and world-agent ownership validations are applied before accepting POST /api/mayor/build, and how are failures represented?
+    rationale: Documents the current guardrails around who can trigger builds and under what conditions requests are rejected.
+    suggestedFiles:
+      - harness/internal/api/middleware/auth.go
+      - harness/internal/api/mayor.go
+      - harness/internal/mayor/manager.go
+      - harness/internal/db/queries/mayors.sql
+
+  - question: How does the system create, queue, and execute mayor-triggered build sessions (including checkpoint creation, tmux session naming, and template workspace selection)?
+    rationale: Captures the concrete mechanics of build orchestration and execution state transitions for mayor-triggered runs.
+    suggestedFiles:
+      - harness/internal/builder/pipeline.go
+      - harness/internal/builder/claude_session.go
+      - harness/internal/builder/checkpoints.go
+      - harness/internal/mayor/build.go
+
+  - question: Which database tables and query paths persist mayor build triggers, build metadata, and status updates, and how are these records linked to worlds and mayors?
+    rationale: Maps the source of truth for build lifecycle state and relationships needed to understand current behavior over time.
+    suggestedFiles:
+      - harness/internal/db/schema.sql
+      - harness/internal/db/queries/builds.sql
+      - harness/internal/db/queries/mayor_messages.sql
+      - harness/internal/db/gen/
+
+  - question: How are mayor build progress/events propagated to user-facing surfaces (Discord messages, EventBus, SSE streams, and mayor dashboard UI), and what payload shapes are used?
+    rationale: Documents observable behavior of build triggering from backend events to frontend/Discord visibility, clarifying the current feedback loop.
+    suggestedFiles:
+      - harness/internal/events/bus.go
+      - harness/internal/discord/listener.go
+      - harness/internal/api/events.go
+      - harness/internal/ui/pages/mayor.templ
+      - harness/internal/api/claude_event.go
+---

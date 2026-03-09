@@ -1,0 +1,48 @@
+---
+questions:
+  - question: How is a mayor-initiated build request received and authenticated at the harness API (including route, middleware chain, request payload, and secret validation)?
+    rationale: Establishes the exact entry point and trust model for mayor-triggered builds before tracing downstream behavior.
+    suggestedFiles:
+      - harness/internal/server/server.go
+      - harness/internal/server/routes_api.go
+      - harness/internal/server/handlers_mayor.go
+      - harness/agents/skills/api-conventions.md
+
+  - question: What is the end-to-end execution flow after /api/mayor/build is accepted, including checkpoint creation, Claude Code session startup, tmux process orchestration, and event hook wiring?
+    rationale: Documents how a trigger becomes an actual build job and which components coordinate execution lifecycle.
+    suggestedFiles:
+      - harness/internal/mayor/
+      - harness/internal/builder/
+      - harness/internal/claudecode/
+      - harness/internal/checkpoint/
+      - harness/scripts/
+
+  - question: How are build status updates, logs, and completion/failure signals propagated from Claude Code hooks into persisted state and real-time UI streams?
+    rationale: Clarifies observability and state synchronization paths that define how users and mayors see build progress.
+    suggestedFiles:
+      - harness/internal/server/handlers_claude_event.go
+      - harness/internal/events/
+      - harness/internal/db/
+      - harness/internal/server/sse*.go
+      - harness/agents/skills/ui-conventions.md
+
+  - question: What data model and database operations represent mayor-triggered builds (requests, checkpoints, sessions, artifacts, and statuses), and how do queries/migrations encode lifecycle transitions?
+    rationale: Provides the canonical persisted model of build triggering and lifecycle, needed to reason about current behavior boundaries.
+    suggestedFiles:
+      - harness/internal/db/schema.sql
+      - harness/internal/db/migrations/
+      - harness/internal/db/queries/
+      - harness/internal/db/sqlc/
+      - harness/agents/skills/database-conventions.md
+
+  - question: What explicit constraints and coordination rules govern mayor build triggering (per-world serialization, concurrency limits, WASM memory limits, retry/cancel behavior, and interaction with other orchestration systems like Swarm/Temporal)?
+    rationale: Captures the operational rules that shape current triggering behavior and define where future improvements would need to fit.
+    suggestedFiles:
+      - harness/internal/builder/
+      - harness/internal/mayor/
+      - harness/internal/swarm/
+      - harness/internal/temporal/
+      - harness/agents/skills/build-system.md
+      - harness/agents/skills/swarm-conventions.md
+      - harness/agents/skills/temporal-conventions.md
+---

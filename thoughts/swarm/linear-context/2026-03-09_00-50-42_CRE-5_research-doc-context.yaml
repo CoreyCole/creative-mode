@@ -1,0 +1,23 @@
+---
+comment: |
+  ## Context
+  - Mayor build execution is clearly mapped end-to-end: authenticated `POST /api/mayor/build` → checkpoint fork/orchestration → tmux Claude session → hook events via `/api/claude-event` → async checkpoint build completion.
+  - Build lifecycle is checkpoint-centric (`building` → `ready`/`failed`) with status events over SSE and heavier logs served separately from disk-backed JSONL endpoints.
+  - Observability and coordination tensions identified in scope for CRE-5 include: user-scoped active-build limiting vs world-scoped runtime constraints, fragmented status-vs-log correlation UX, and unclear authoritative lifecycle source between checkpoints and mayor-specific tables.
+  - The research found no direct contradictions; findings are high-confidence, with remaining uncertainty focused on traceability coverage (especially whether `mayor_builds`/`mayor_sessions` are written in the hot mayor trigger path).
+
+  ## Out of Scope
+  - Determining and implementing an authoritative data model for mayor build tracking (checkpoints vs `mayor_builds`/`mayor_sessions`) is beyond this research artifact and should be handled as follow-up implementation/research planning.
+  - Defining/implementing explicit world-level build serialization or queueing semantics for mayor-triggered builds is beyond this artifact’s audit scope.
+  - Defining retry/cancel policy parity between mayor-triggered builds and Swarm/Temporal workflows is beyond this artifact’s scope.
+followups:
+  - title: 'Research: Authoritative mayor build lifecycle model'
+    description: During work on CRE-5, a traceability gap was identified between checkpoint-driven lifecycle tracking and mayor-specific tables (`mayor_builds`/`mayor_sessions`). Research and define the authoritative model and write-path expectations for mayor build observability.
+    relation: relates-to
+  - title: 'Research: World-scoped build coordination policy for mayor triggers'
+    description: During work on CRE-5, user-scoped active-build limiting was identified alongside world-scoped runtime constraints (including WASM/memory serialization pressure). Research whether mayor-triggered builds require explicit per-world queueing/serialization semantics.
+    relation: relates-to
+  - title: 'Research: Mayor build retry/cancel policy'
+    description: During work on CRE-5, retry/cancel behavior appeared explicit in Swarm/Temporal flows but not clearly defined for mayor-triggered checkpoint builds. Research and document expected failure-recovery policy for mayor path observability and operator UX.
+    relation: relates-to
+---

@@ -482,7 +482,7 @@ func (s *Server) handleSwarmArtifactView(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to resolve path")
 	}
 	absRoot, _ := filepath.Abs(repoRoot)
-	if !strings.HasPrefix(absPath, absRoot) {
+	if !strings.HasPrefix(absPath, absRoot+string(filepath.Separator)) {
 		return echo.NewHTTPError(http.StatusForbidden, "path traversal")
 	}
 

@@ -530,6 +530,29 @@ func (a *SwarmActivities) CreateLinearFollowup(
 	return identifier, nil
 }
 
+// RunLinearContextProcessor runs the linear-context-processor.js agent
+// to produce structured comments and follow-up recommendations.
+func (a *SwarmActivities) RunLinearContextProcessor(
+	ctx context.Context,
+	taskID string,
+	parentSpanID string,
+	input LinearContextInput,
+) (LinearContextOutput, error) {
+	return runAgentActivity[LinearContextOutput](
+		ctx,
+		a,
+		agentActivityInput[LinearContextOutput]{
+			script:       "linear-context-processor.js",
+			taskID:       taskID,
+			parentSpanID: parentSpanID,
+			input:        input,
+			outputPath:   input.OutputPath,
+			bodyField:    "",
+			validate:     validateLinearContextOutput,
+		},
+	)
+}
+
 // SearchLinearIssues checks if a similar ticket already exists.
 func (a *SwarmActivities) SearchLinearIssues(
 	ctx context.Context,

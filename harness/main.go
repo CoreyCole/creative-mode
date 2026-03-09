@@ -7,6 +7,7 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -526,11 +527,18 @@ func initSwarmManager(
 
 	// Initialize Linear client if linear-cli is available.
 	var linearClient *linear.Client
-	linearBin := "/home/deploy/.cargo/bin/linear-cli"
+	linearBin := os.Getenv("LINEAR_CLI")
+	if linearBin == "" {
+		var lookErr error
+		linearBin, lookErr = exec.LookPath("linear-cli")
+		if lookErr != nil {
+			logger.Warn("linear-cli not found in PATH, Linear integration disabled")
+		}
+	}
 	linearTeam := os.Getenv("LINEAR_TEAM_KEY")
-	if linearTeam != "" {
+	if linearBin != "" && linearTeam != "" {
 		linearClient = linear.NewClient(linearBin, linearTeam)
-		logger.Info("linear client initialized", "team", linearTeam)
+		logger.Info("linear client initialized", "team", linearTeam, "bin", linearBin)
 	}
 
 	harnessURL := os.Getenv("HARNESS_URL")

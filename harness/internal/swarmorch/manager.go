@@ -32,6 +32,7 @@ type SwarmManager struct {
 	worker     worker.Worker
 	activities *SwarmActivities
 	repoRoot   string
+	harnessURL string
 	logger     *slog.Logger
 }
 
@@ -85,6 +86,7 @@ func NewSwarmManager(
 		worker:     w,
 		activities: activities,
 		repoRoot:   repoRoot,
+		harnessURL: config.HarnessURL,
 		logger:     logger,
 	}, nil
 }
@@ -109,6 +111,7 @@ func (m *SwarmManager) StartResearch(
 			RequestText:   requestText,
 			RepoRoot:      m.repoRoot,
 			LinearIssueID: ticketID,
+			HarnessURL:    m.harnessURL,
 		},
 	)
 	if err != nil {
@@ -143,6 +146,7 @@ func (m *SwarmManager) StartCodePlan(
 			RequestText:   requestText,
 			RepoRoot:      m.repoRoot,
 			LinearIssueID: ticketID,
+			HarnessURL:    m.harnessURL,
 		},
 	)
 	if err != nil {

@@ -53,19 +53,21 @@ type AgentMessage struct {
 // --- Agent Input Types ---
 
 type GenerateQuestionsInput struct {
-	TaskID       string `json:"taskID"`
-	RequestText  string `json:"requestText"`
-	RepoRoot     string `json:"repoRoot"`
-	MaxQuestions int    `json:"maxQuestions"`
-	OutputPath   string `json:"outputPath"`
+	TaskID        string `json:"taskID"`
+	RequestText   string `json:"requestText"`
+	RepoRoot      string `json:"repoRoot"`
+	MaxQuestions  int    `json:"maxQuestions"`
+	OutputPath    string `json:"outputPath"`
+	TicketContext string `json:"ticketContext,omitempty"`
 }
 
 type ResearchAgentInput struct {
-	TaskID     string `json:"taskID"`
-	Question   string `json:"question"`
-	RepoRoot   string `json:"repoRoot"`
-	AgentIndex int    `json:"agentIndex"`
-	OutputPath string `json:"outputPath"`
+	TaskID        string `json:"taskID"`
+	Question      string `json:"question"`
+	RepoRoot      string `json:"repoRoot"`
+	AgentIndex    int    `json:"agentIndex"`
+	OutputPath    string `json:"outputPath"`
+	TicketContext string `json:"ticketContext,omitempty"`
 }
 
 type SynthesizeInput struct {
@@ -81,16 +83,18 @@ type ClassifyInput struct {
 	ResearchDocPath string `json:"researchDocPath"`
 	RepoRoot        string `json:"repoRoot"`
 	OutputPath      string `json:"outputPath"`
+	TicketContext   string `json:"ticketContext,omitempty"`
 }
 
 type SpecialistInput struct {
-	TaskID      string `json:"taskID"`
-	Domain      string `json:"domain"`
-	Focus       string `json:"focus"`
-	RequestText string `json:"requestText"`
-	ResearchDoc string `json:"researchDoc"`
-	RepoRoot    string `json:"repoRoot"`
-	OutputPath  string `json:"outputPath"`
+	TaskID        string `json:"taskID"`
+	Domain        string `json:"domain"`
+	Focus         string `json:"focus"`
+	RequestText   string `json:"requestText"`
+	ResearchDoc   string `json:"researchDoc"`
+	RepoRoot      string `json:"repoRoot"`
+	OutputPath    string `json:"outputPath"`
+	TicketContext string `json:"ticketContext,omitempty"`
 }
 
 type PlanSynthesizeInput struct {
@@ -99,6 +103,29 @@ type PlanSynthesizeInput struct {
 	ResearchDocSummary string          `json:"researchDocSummary"`
 	PlannerOutputs     []PlannerOutput `json:"plannerOutputs"`
 	OutputPath         string          `json:"outputPath"`
+}
+
+// --- Linear Context Processing Types ---
+
+type LinearContextInput struct {
+	TaskID          string `json:"taskID"`
+	TicketID        string `json:"ticketID"`
+	TicketData      string `json:"ticketData"`      // JSON from linear-cli
+	ArtifactType    string `json:"artifactType"`    // "research_doc" or "plan_doc"
+	ArtifactContent string `json:"artifactContent"` // the full artifact text
+	OutputPath      string `json:"outputPath"`
+	RepoRoot        string `json:"repoRoot"`
+}
+
+type LinearContextOutput struct {
+	Comment   string           `json:"comment"`
+	Followups []FollowupTicket `json:"followups"`
+}
+
+type FollowupTicket struct {
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Relation    string `json:"relation"` // "blocked-by" or "relates-to"
 }
 
 // --- Artifact Output Types ---

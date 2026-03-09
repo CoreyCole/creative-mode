@@ -22,9 +22,6 @@ When done, use the write tool to write your output to the path specified in the 
 \`\`\`
 ---
 domain: "the specialist domain"
-tags:
-  - "relevant-tag-1"
-  - "relevant-tag-2"
 filesAffected:
   - "path/to/file1.go"
   - "path/to/file2.go"
@@ -46,9 +43,7 @@ Your detailed plan section in markdown here.
 Must be at least 100 characters of substantive content.
 \`\`\`
 
-The markdown body after the front matter becomes the planSection field.
-
-Choose 2-5 tags from: database, api, temporal, ui, bevy, wasm, discord, auth, migration, config, build, testing, or other relevant terms.`,
+The markdown body after the front matter becomes the planSection field.`,
   prompt: (task) => `Create a detailed implementation plan for the **${task.domain}** domain.
 
 Focus: ${task.focus}

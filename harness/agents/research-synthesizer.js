@@ -20,9 +20,6 @@ When done, use the write tool to write your output to the path specified in the 
 \`\`\`
 ---
 summary: "A 2-3 sentence summary of key findings"
-tags:
-  - "relevant-tag-1"
-  - "relevant-tag-2"
 ---
 
 # Research Document
@@ -31,9 +28,7 @@ Your full research document in markdown here.
 Must be at least 200 characters of substantive content.
 \`\`\`
 
-The markdown body after the front matter becomes the document field.
-
-Choose 2-5 tags from: database, api, temporal, ui, bevy, wasm, discord, auth, migration, config, build, testing, or other relevant terms.`,
+The markdown body after the front matter becomes the document field.`,
   prompt: (task) => `Synthesize these research findings into a unified document.
 
 Original request: ${task.requestText}

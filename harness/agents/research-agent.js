@@ -29,9 +29,6 @@ When done, use the write tool to write your output to the path specified in the 
 ---
 question: "The question that was investigated"
 confidence: high  # high, medium, or low
-tags:
-  - "relevant-tag-1"
-  - "relevant-tag-2"
 filesReferenced:
   - "path/to/file1.go"
   - "path/to/file2.go"

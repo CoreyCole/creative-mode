@@ -21,9 +21,6 @@ When done, use the write tool to write your output to the path specified in the 
 \`\`\`
 ---
 summary: "A 2-3 sentence summary of the plan"
-tags:
-  - "relevant-tag-1"
-  - "relevant-tag-2"
 phaseOrder:
   - "Phase 1: Database migrations"
   - "Phase 2: API routes"
@@ -35,9 +32,7 @@ Your full implementation plan in markdown here.
 Must be at least 300 characters of substantive content.
 \`\`\`
 
-The markdown body after the front matter becomes the document field.
-
-Choose 2-5 tags from: database, api, temporal, ui, bevy, wasm, discord, auth, migration, config, build, testing, or other relevant terms.`,
+The markdown body after the front matter becomes the document field.`,
   prompt: (task) => `Merge these specialist plans into a unified implementation plan.
 
 Original request: ${task.requestText}

@@ -26,7 +26,8 @@ var yamlMultiKeyRe = regexp.MustCompile(
 		`type|focus|` +
 		`domain|filesAffected|automatedVerification|manualVerification|risks|dependencies|` +
 		`confidence|filesReferenced|` +
-		`summary|phaseOrder|document` +
+		`summary|phaseOrder|document|` +
+		`comment|followups|title|description|relation` +
 		`):[ ]?`,
 )
 
@@ -289,6 +290,22 @@ func validatePlannerOutput(a PlannerOutput) error {
 		return errors.New(
 			"must include at least one verification check (automated or manual)",
 		)
+	}
+	return nil
+}
+
+func validateLinearContextOutput(a LinearContextOutput) error {
+	if a.Comment == "" {
+		return errors.New("must produce a comment")
+	}
+	validRelations := map[string]bool{"blocked-by": true, "relates-to": true}
+	for i, f := range a.Followups {
+		if f.Title == "" {
+			return fmt.Errorf("followup[%d] missing title", i)
+		}
+		if !validRelations[f.Relation] {
+			return fmt.Errorf("followup[%d] invalid relation %q", i, f.Relation)
+		}
 	}
 	return nil
 }

@@ -1,6 +1,7 @@
 package swarmorch
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"go.temporal.io/sdk/workflow"
 
 	"creative-mode/harness/internal/db/sqlc"
+	"creative-mode/harness/internal/linear"
 )
 
 // Workflow timeout and retry configuration.
@@ -33,6 +35,8 @@ type ResearchWorkflowInput struct {
 	RepoRoot      string `json:"repoRoot"`
 	ParentSpanID  string `json:"parentSpanID,omitempty"`  // set when called as child workflow
 	LinearIssueID string `json:"linearIssueID,omitempty"` // ticket ID for filename prefix
+	HarnessURL    string `json:"harnessURL,omitempty"`
+	TicketContext string `json:"ticketContext,omitempty"` // formatted ticket data for agent context
 }
 
 // CodeChangePlanWorkflowInput is the input for the code change plan workflow.
@@ -41,6 +45,7 @@ type CodeChangePlanWorkflowInput struct {
 	RequestText   string `json:"requestText"`
 	RepoRoot      string `json:"repoRoot"`
 	LinearIssueID string `json:"linearIssueID,omitempty"` // ticket ID for filename prefix
+	HarnessURL    string `json:"harnessURL,omitempty"`
 }
 
 // agentActivityOpts returns activity options for long-running agent activities.
@@ -218,14 +223,11 @@ func completeStageSpan(
 }
 
 // artifactURL builds the harness URL for an artifact, suitable for Linear attachment links.
-func artifactURL(a *SwarmActivities, artifactID string) string {
-	if a.config.HarnessURL == "" {
+func artifactURL(harnessURL, artifactID string) string {
+	if harnessURL == "" {
 		return "/swarm/artifacts/" + artifactID + "/view"
 	}
-	return strings.TrimRight(
-		a.config.HarnessURL,
-		"/",
-	) + "/swarm/artifacts/" + artifactID + "/view"
+	return strings.TrimRight(harnessURL, "/") + "/swarm/artifacts/" + artifactID + "/view"
 }
 
 // runLinearActivity is a fire-and-forget helper for Linear integration activities.
@@ -241,6 +243,166 @@ func runLinearActivity(
 		Get(ctx, nil); err != nil {
 		workflow.GetLogger(ctx).Warn("linear activity failed (non-fatal)", "error", err)
 	}
+}
+
+// fetchTicketContext fetches the Linear ticket and returns formatted context
+// for injection into agent prompts. Returns empty string if ticketID is empty
+// or fetch fails.
+func fetchTicketContext(
+	ctx workflow.Context,
+	a *SwarmActivities,
+	ticketID string,
+) (string, linear.Issue) {
+	if ticketID == "" {
+		return "", linear.Issue{}
+	}
+	infraCtx := workflow.WithActivityOptions(ctx, infraActivityOpts())
+	var issue linear.Issue
+	if err := workflow.ExecuteActivity(
+		infraCtx, a.FetchLinearTicket, ticketID,
+	).Get(ctx, &issue); err != nil {
+		workflow.GetLogger(ctx).
+			Warn("failed to fetch ticket context", "ticketID", ticketID, "error", err)
+		return "", linear.Issue{}
+	}
+	if issue.Title == "" {
+		return "", issue
+	}
+	return formatTicketContext(issue), issue
+}
+
+// formatTicketContext formats a Linear issue into a markdown context string
+// suitable for injection into agent system prompts.
+func formatTicketContext(issue linear.Issue) string {
+	var b strings.Builder
+	b.WriteString("## Linear Ticket Context\n\n")
+	b.WriteString("**" + issue.Identifier + "**: " + issue.Title + "\n")
+	b.WriteString("**Status**: " + issue.State.Name + "\n")
+	if len(issue.Labels.Nodes) > 0 {
+		names := make([]string, 0, len(issue.Labels.Nodes))
+		for _, l := range issue.Labels.Nodes {
+			names = append(names, l.Name)
+		}
+		b.WriteString("**Labels**: " + strings.Join(names, ", ") + "\n")
+	}
+	if issue.Description != "" {
+		b.WriteString("\n### Description\n\n" + issue.Description + "\n")
+	}
+	return b.String()
+}
+
+// runPostProcessor runs the linear-context-processor agent after a stage
+// completion, posts its comment to Linear, and creates follow-up tickets.
+// No-ops if ticketID is empty. Non-fatal — logs warnings but does not fail the workflow.
+func runPostProcessor(
+	ctx workflow.Context,
+	a *SwarmActivities,
+	input postProcessorInput,
+) {
+	if input.ticketID == "" {
+		return
+	}
+	logger := workflow.GetLogger(ctx)
+	startTime := workflow.Now(ctx).UTC()
+
+	// Re-fetch ticket for latest comments.
+	_, freshIssue := fetchTicketContext(ctx, a, input.ticketID)
+	ticketJSON, jsonErr := json.Marshal(freshIssue)
+	if jsonErr != nil {
+		ticketJSON = []byte("{}")
+	}
+
+	// Run post-processor agent.
+	outputPath := swarmOutputPath(
+		"linear-context", input.artifactType+"-context", ".yaml",
+		startTime, input.ticketID,
+	)
+
+	agentCtx := workflow.WithActivityOptions(ctx, agentActivityOpts())
+	var result LinearContextOutput
+	if err := workflow.ExecuteActivity(
+		agentCtx, a.RunLinearContextProcessor,
+		input.taskID, input.parentSpanID,
+		LinearContextInput{
+			TaskID:          input.taskID,
+			TicketID:        input.ticketID,
+			TicketData:      string(ticketJSON),
+			ArtifactType:    input.artifactType,
+			ArtifactContent: input.artifactContent,
+			OutputPath:      outputPath,
+			RepoRoot:        input.repoRoot,
+		},
+	).Get(ctx, &result); err != nil {
+		logger.Warn("post-processor failed, using fallback comment", "error", err)
+		// Fallback to the simple comment.
+		runLinearActivity(ctx, a.AddLinearComment, input.ticketID, input.fallbackComment)
+		return
+	}
+
+	// Post the structured comment.
+	runLinearActivity(ctx, a.AddLinearComment, input.ticketID, result.Comment)
+
+	// Create follow-up tickets (with dedup).
+	for _, followup := range result.Followups {
+		// Search for duplicates first.
+		infraCtx := workflow.WithActivityOptions(ctx, infraActivityOpts())
+		var existing []linear.SearchResult
+		if err := workflow.ExecuteActivity(
+			infraCtx, a.SearchLinearIssues, followup.Title,
+		).Get(ctx, &existing); err != nil {
+			logger.Warn(
+				"failed to search for duplicate tickets",
+				"title",
+				followup.Title,
+				"error",
+				err,
+			)
+			continue
+		}
+		if len(existing) > 0 {
+			logger.Info(
+				"skipping duplicate follow-up",
+				"title",
+				followup.Title,
+				"existing",
+				existing[0].Identifier,
+			)
+			continue
+		}
+
+		var newID string
+		if err := workflow.ExecuteActivity(
+			infraCtx, a.CreateLinearFollowup,
+			input.ticketID, followup.Title, followup.Description, followup.Relation,
+		).Get(ctx, &newID); err != nil {
+			logger.Warn(
+				"failed to create follow-up ticket",
+				"title",
+				followup.Title,
+				"error",
+				err,
+			)
+		} else if newID != "" {
+			logger.Info(
+				"created follow-up ticket",
+				"identifier",
+				newID,
+				"relation",
+				followup.Relation,
+			)
+		}
+	}
+}
+
+// postProcessorInput bundles parameters for the runPostProcessor helper.
+type postProcessorInput struct {
+	taskID          string
+	ticketID        string
+	parentSpanID    string
+	artifactType    string // "research_doc" or "plan_doc"
+	artifactContent string
+	repoRoot        string
+	fallbackComment string // used if post-processor fails
 }
 
 // ResearchStepsResult holds outputs from the shared research pipeline.
@@ -273,10 +435,11 @@ func runResearchSteps(
 		qgenCtx, a.GenerateResearchQuestions,
 		input.TaskID, qgenStageID,
 		GenerateQuestionsInput{
-			TaskID:       input.TaskID,
-			RequestText:  input.RequestText,
-			RepoRoot:     input.RepoRoot,
-			MaxQuestions: maxResearchQuestions,
+			TaskID:        input.TaskID,
+			RequestText:   input.RequestText,
+			RepoRoot:      input.RepoRoot,
+			MaxQuestions:  maxResearchQuestions,
+			TicketContext: input.TicketContext,
 			OutputPath: swarmOutputPath(
 				"research-questions", input.RequestText, ".yaml",
 				startTime, input.LinearIssueID,
@@ -319,10 +482,11 @@ func runResearchSteps(
 				agentCtx, a.RunResearchAgent,
 				input.TaskID, researchStageID,
 				ResearchAgentInput{
-					TaskID:     input.TaskID,
-					Question:   qText,
-					RepoRoot:   input.RepoRoot,
-					AgentIndex: qIdx,
+					TaskID:        input.TaskID,
+					Question:      qText,
+					RepoRoot:      input.RepoRoot,
+					AgentIndex:    qIdx,
+					TicketContext: input.TicketContext,
 					OutputPath: swarmOutputPath(
 						"research-findings",
 						fmt.Sprintf("q%d-%s", qIdx, qText),
@@ -455,6 +619,12 @@ func ResearchWorkflow(
 				Warn("failed to emit event", "taskID", input.TaskID, "event", "research.started", "error", err)
 		}
 
+		// Fetch ticket context for agent injection (standalone only).
+		if input.TicketContext == "" && input.LinearIssueID != "" {
+			ticketCtx, _ := fetchTicketContext(ctx, a, input.LinearIssueID)
+			input.TicketContext = ticketCtx
+		}
+
 		// Linear: set status and labels at start (standalone only).
 		runLinearActivity(ctx, a.UpdateLinearStatus, input.LinearIssueID, "In Progress")
 		runLinearActivity(
@@ -513,16 +683,19 @@ func ResearchWorkflow(
 
 	// Only manage task status if standalone (not child).
 	if !isChild {
-		// Linear: post comment, link artifact, remove swarm label, mark done.
-		runLinearActivity(
-			ctx,
-			a.AddLinearComment,
-			input.LinearIssueID,
-			"## Research Complete\n\nDocument: `"+result.OutputPath+"`\n\nSummary: "+result.Synthesize.Summary,
-		)
+		// Linear: run post-processor, link artifact, remove swarm label, mark done.
+		runPostProcessor(ctx, a, postProcessorInput{
+			taskID:          input.TaskID,
+			ticketID:        input.LinearIssueID,
+			parentSpanID:    spanID,
+			artifactType:    "research_doc",
+			artifactContent: result.Synthesize.Document,
+			repoRoot:        input.RepoRoot,
+			fallbackComment: "## Research Complete\n\nDocument: `" + result.OutputPath + "`\n\nSummary: " + result.Synthesize.Summary,
+		})
 		if researchArtifactID != "" {
 			runLinearActivity(ctx, a.LinkArtifactToLinear, input.LinearIssueID,
-				"Research Doc", artifactURL(a, researchArtifactID))
+				"Research Doc", artifactURL(input.HarnessURL, researchArtifactID))
 		}
 		runLinearActivity(
 			ctx,
@@ -598,6 +771,12 @@ func CodeChangePlanWorkflow(
 			Warn("failed to emit event", "taskID", input.TaskID, "event", "code_plan.started", "error", err)
 	}
 
+	// Fetch ticket context for agent injection.
+	var ticketContext string
+	if input.LinearIssueID != "" {
+		ticketContext, _ = fetchTicketContext(ctx, a, input.LinearIssueID)
+	}
+
 	// Linear: set status and labels at start.
 	runLinearActivity(ctx, a.UpdateLinearStatus, input.LinearIssueID, "In Progress")
 	runLinearActivity(
@@ -621,19 +800,24 @@ func CodeChangePlanWorkflow(
 		RepoRoot:      input.RepoRoot,
 		ParentSpanID:  spanID,
 		LinearIssueID: input.LinearIssueID,
+		HarnessURL:    input.HarnessURL,
+		TicketContext: ticketContext,
 	}).
 		Get(ctx, &research); err != nil {
 		workflowErr = fmt.Errorf("research child workflow: %w", err)
 		return workflowErr
 	}
 
-	// Linear: research done, transition to planning.
-	runLinearActivity(
-		ctx,
-		a.AddLinearComment,
-		input.LinearIssueID,
-		"## Research Complete\n\nDocument: `"+research.OutputPath+"`\n\nSummary: "+research.Synthesize.Summary,
-	)
+	// Linear: research done — run post-processor, transition to planning.
+	runPostProcessor(ctx, a, postProcessorInput{
+		taskID:          input.TaskID,
+		ticketID:        input.LinearIssueID,
+		parentSpanID:    spanID,
+		artifactType:    "research_doc",
+		artifactContent: research.Synthesize.Document,
+		repoRoot:        input.RepoRoot,
+		fallbackComment: "## Research Complete\n\nDocument: `" + research.OutputPath + "`\n\nSummary: " + research.Synthesize.Summary,
+	})
 	runLinearActivity(
 		ctx,
 		a.UpdateLinearLabels,
@@ -657,6 +841,7 @@ func CodeChangePlanWorkflow(
 			RequestText:     input.RequestText,
 			ResearchDocPath: research.OutputPath,
 			RepoRoot:        input.RepoRoot,
+			TicketContext:   ticketContext,
 			OutputPath: swarmOutputPath(
 				"plan-classifications", input.RequestText, ".yaml",
 				startTime, input.LinearIssueID,
@@ -698,12 +883,13 @@ func CodeChangePlanWorkflow(
 				agentCtx, a.RunSpecialistPlanner,
 				input.TaskID, planStageID,
 				SpecialistInput{
-					TaskID:      input.TaskID,
-					Domain:      domain,
-					Focus:       focus,
-					RequestText: input.RequestText,
-					ResearchDoc: research.Synthesize.Document,
-					RepoRoot:    input.RepoRoot,
+					TaskID:        input.TaskID,
+					Domain:        domain,
+					Focus:         focus,
+					RequestText:   input.RequestText,
+					ResearchDoc:   research.Synthesize.Document,
+					RepoRoot:      input.RepoRoot,
+					TicketContext: ticketContext,
 					OutputPath: swarmOutputPath(
 						"specialist-plans", domain, ".md",
 						startTime, input.LinearIssueID,
@@ -772,16 +958,19 @@ func CodeChangePlanWorkflow(
 		return workflowErr
 	}
 
-	// Linear: plan complete, post comment, link artifact, remove swarm label, set to In Review.
-	runLinearActivity(
-		ctx,
-		a.AddLinearComment,
-		input.LinearIssueID,
-		"## Plan Complete\n\nDocument: `"+planOutputPath+"`\n\nSummary: "+planResult.Summary,
-	)
+	// Linear: plan complete — run post-processor, link artifact, remove swarm label, set to In Review.
+	runPostProcessor(ctx, a, postProcessorInput{
+		taskID:          input.TaskID,
+		ticketID:        input.LinearIssueID,
+		parentSpanID:    spanID,
+		artifactType:    "plan_doc",
+		artifactContent: planResult.Document,
+		repoRoot:        input.RepoRoot,
+		fallbackComment: "## Plan Complete\n\nDocument: `" + planOutputPath + "`\n\nSummary: " + planResult.Summary,
+	})
 	if planArtifactID != "" {
 		runLinearActivity(ctx, a.LinkArtifactToLinear, input.LinearIssueID,
-			"Implementation Plan", artifactURL(a, planArtifactID))
+			"Implementation Plan", artifactURL(input.HarnessURL, planArtifactID))
 	}
 	runLinearActivity(
 		ctx,

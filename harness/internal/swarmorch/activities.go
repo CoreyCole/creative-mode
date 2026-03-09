@@ -3,7 +3,6 @@ package swarmorch
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -16,6 +15,7 @@ import (
 	"creative-mode/harness/internal/db"
 	"creative-mode/harness/internal/db/sqlc"
 	"creative-mode/harness/internal/events"
+	"creative-mode/harness/internal/linear"
 )
 
 // DBActivities is intended to expose sqlc query methods as Temporal activities.
@@ -27,14 +27,24 @@ type DBActivities struct {
 	Queries *sqlc.Queries
 }
 
+// SwarmConfig holds runtime configuration for swarm agents.
+type SwarmConfig struct {
+	ToolCallLimit int    // default 100
+	Model         string // default "openai-codex:gpt-5.3-codex" (format: provider:model)
+	HarnessURL    string // base URL for artifact links (e.g. "https://harness.ts.net")
+}
+
 // SwarmActivities groups all Temporal activity implementations.
 type SwarmActivities struct {
-	db        *db.DB
-	eventBus  *events.EventBus
-	repoRoot  string
-	agentsDir string
-	runner    AgentRunner
-	logger    *slog.Logger
+	db             *db.DB
+	eventBus       *events.EventBus
+	repoRoot       string
+	agentsDir      string
+	runner         AgentRunner
+	config         SwarmConfig
+	logger         *slog.Logger
+	projectContext string // cached result of loadProjectContext
+	LinearClient   *linear.Client
 }
 
 // NewSwarmActivities creates a new SwarmActivities instance.
@@ -44,15 +54,18 @@ func NewSwarmActivities(
 	repoRoot string,
 	agentsDir string,
 	runner AgentRunner,
+	config SwarmConfig,
 	logger *slog.Logger,
 ) *SwarmActivities {
 	return &SwarmActivities{
-		db:        database,
-		eventBus:  eventBus,
-		repoRoot:  repoRoot,
-		agentsDir: agentsDir,
-		runner:    runner,
-		logger:    logger,
+		db:             database,
+		eventBus:       eventBus,
+		repoRoot:       repoRoot,
+		agentsDir:      agentsDir,
+		runner:         runner,
+		config:         config,
+		logger:         logger,
+		projectContext: loadProjectContext(repoRoot),
 	}
 }
 
@@ -65,12 +78,19 @@ func (a *SwarmActivities) GenerateResearchQuestions(
 	parentSpanID string,
 	input GenerateQuestionsInput,
 ) (QuestionArtifact, error) {
-	return runAgentActivity[QuestionArtifact](ctx, a, agentActivityInput{
-		script:       "research-questions.js",
-		taskID:       taskID,
-		parentSpanID: parentSpanID,
-		input:        input,
-	})
+	return runAgentActivity[QuestionArtifact](
+		ctx,
+		a,
+		agentActivityInput[QuestionArtifact]{
+			script:       "research-questions.js",
+			taskID:       taskID,
+			parentSpanID: parentSpanID,
+			input:        input,
+			outputPath:   input.OutputPath,
+			bodyField:    "",
+			validate:     validateResearchQuestions,
+		},
+	)
 }
 
 // RunResearchAgent runs research-agent.js for a single research question.
@@ -80,11 +100,14 @@ func (a *SwarmActivities) RunResearchAgent(
 	parentSpanID string,
 	input ResearchAgentInput,
 ) (ResearchFinding, error) {
-	return runAgentActivity[ResearchFinding](ctx, a, agentActivityInput{
+	return runAgentActivity[ResearchFinding](ctx, a, agentActivityInput[ResearchFinding]{
 		script:       "research-agent.js",
 		taskID:       taskID,
 		parentSpanID: parentSpanID,
 		input:        input,
+		outputPath:   input.OutputPath,
+		bodyField:    "findings",
+		validate:     validateResearchFinding,
 	})
 }
 
@@ -95,12 +118,19 @@ func (a *SwarmActivities) SynthesizeResearchDoc(
 	parentSpanID string,
 	input SynthesizeInput,
 ) (SynthesizeResult, error) {
-	return runAgentActivity[SynthesizeResult](ctx, a, agentActivityInput{
-		script:       "research-synthesizer.js",
-		taskID:       taskID,
-		parentSpanID: parentSpanID,
-		input:        input,
-	})
+	return runAgentActivity[SynthesizeResult](
+		ctx,
+		a,
+		agentActivityInput[SynthesizeResult]{
+			script:       "research-synthesizer.js",
+			taskID:       taskID,
+			parentSpanID: parentSpanID,
+			input:        input,
+			outputPath:   input.OutputPath,
+			bodyField:    "document",
+			validate:     validateSynthesizeResult,
+		},
+	)
 }
 
 // ClassifyPlanDomains runs plan-orchestrator.js to classify domains.
@@ -110,11 +140,14 @@ func (a *SwarmActivities) ClassifyPlanDomains(
 	parentSpanID string,
 	input ClassifyInput,
 ) (ClassifyResult, error) {
-	return runAgentActivity[ClassifyResult](ctx, a, agentActivityInput{
+	return runAgentActivity[ClassifyResult](ctx, a, agentActivityInput[ClassifyResult]{
 		script:       "plan-orchestrator.js",
 		taskID:       taskID,
 		parentSpanID: parentSpanID,
 		input:        input,
+		outputPath:   input.OutputPath,
+		bodyField:    "",
+		validate:     validateClassifyResult,
 	})
 }
 
@@ -125,11 +158,14 @@ func (a *SwarmActivities) RunSpecialistPlanner(
 	parentSpanID string,
 	input SpecialistInput,
 ) (PlannerOutput, error) {
-	return runAgentActivity[PlannerOutput](ctx, a, agentActivityInput{
+	return runAgentActivity[PlannerOutput](ctx, a, agentActivityInput[PlannerOutput]{
 		script:       "specialist-planner.js",
 		taskID:       taskID,
 		parentSpanID: parentSpanID,
 		input:        input,
+		outputPath:   input.OutputPath,
+		bodyField:    "planSection",
+		validate:     validatePlannerOutput,
 	})
 }
 
@@ -140,41 +176,73 @@ func (a *SwarmActivities) SynthesizePlanDoc(
 	parentSpanID string,
 	input PlanSynthesizeInput,
 ) (PlanSynthesizeResult, error) {
-	return runAgentActivity[PlanSynthesizeResult](ctx, a, agentActivityInput{
-		script:       "plan-synthesizer.js",
-		taskID:       taskID,
-		parentSpanID: parentSpanID,
-		input:        input,
-	})
+	return runAgentActivity[PlanSynthesizeResult](
+		ctx,
+		a,
+		agentActivityInput[PlanSynthesizeResult]{
+			script:       "plan-synthesizer.js",
+			taskID:       taskID,
+			parentSpanID: parentSpanID,
+			input:        input,
+			outputPath:   input.OutputPath,
+			bodyField:    "document",
+			validate:     validatePlanSynthesizeResult,
+		},
+	)
 }
 
 // agentActivityInput bundles the parameters common to all agent activities.
-type agentActivityInput struct {
+type agentActivityInput[T any] struct {
 	script       string
 	taskID       string
 	parentSpanID string
 	input        any
+	outputPath   string
+	bodyField    string
+	validate     func(T) error
 }
 
-// runAgentActivity is a generic helper that runs an agent and unmarshals
-// the artifact into the target type T.
+// runAgentActivity is a generic helper that runs an agent, reads its output
+// file, unmarshals the artifact, and validates it.
 func runAgentActivity[T any](
 	ctx context.Context,
 	a *SwarmActivities,
-	p agentActivityInput,
+	p agentActivityInput[T],
 ) (T, error) {
 	var zero T
 
-	result, err := runAgent(ctx, runAgentParams{
-		script:       p.script,
-		taskID:       p.taskID,
-		parentSpanID: p.parentSpanID,
-		input:        p.input,
-		repoRoot:     a.repoRoot,
-		runner:       a.runner,
-		database:     a.db,
-		eventBus:     a.eventBus,
-		logger:       a.logger,
+	// Resolve outputPath relative to repoRoot so Go reads from the same
+	// absolute path that the JS agent writes to (its cwd is repoRoot).
+	absOutputPath := p.outputPath
+	if !filepath.IsAbs(absOutputPath) {
+		absOutputPath = filepath.Join(a.repoRoot, absOutputPath)
+	}
+
+	// Ensure output directory exists.
+	if err := os.MkdirAll(filepath.Dir(absOutputPath), 0o750); err != nil {
+		return zero, fmt.Errorf("create output dir: %w", err)
+	}
+
+	// Build optional agent config from SwarmConfig.
+	var agentCfg *AgentConfig
+	if a.config.Model != "" {
+		agentCfg = &AgentConfig{Model: a.config.Model}
+	}
+
+	_, err := runAgent(ctx, runAgentParams{
+		script:         p.script,
+		taskID:         p.taskID,
+		parentSpanID:   p.parentSpanID,
+		input:          p.input,
+		projectContext: a.projectContext,
+		repoRoot:       a.repoRoot,
+		outputPath:     absOutputPath,
+		runner:         a.runner,
+		database:       a.db,
+		eventBus:       a.eventBus,
+		logger:         a.logger,
+		toolCallLimit:  a.config.ToolCallLimit,
+		agentConfig:    agentCfg,
 		heartbeat: func(details any) {
 			activity.RecordHeartbeat(ctx, details)
 		},
@@ -183,12 +251,23 @@ func runAgentActivity[T any](
 		return zero, fmt.Errorf("%s: %w", p.script, err)
 	}
 
-	var artifact T
-	if unmarshalErr := json.Unmarshal(
-		result.ArtifactJSON,
-		&artifact,
-	); unmarshalErr != nil {
-		return zero, fmt.Errorf("unmarshal %s artifact: %w", p.script, unmarshalErr)
+	// Format output file (normalize YAML front matter + markdown).
+	if fmtErr := formatArtifact(absOutputPath); fmtErr != nil {
+		a.logger.Warn("mdformat failed, proceeding with raw file",
+			"error", fmtErr, "path", absOutputPath)
+	}
+
+	// Parse output file.
+	artifact, unmarshalErr := unmarshalArtifact[T](absOutputPath, p.bodyField)
+	if unmarshalErr != nil {
+		return zero, fmt.Errorf("%s: %w", p.script, unmarshalErr)
+	}
+
+	// Validate.
+	if p.validate != nil {
+		if valErr := p.validate(artifact); valErr != nil {
+			return zero, fmt.Errorf("%s validation: %w", p.script, valErr)
+		}
 	}
 
 	return artifact, nil
@@ -200,7 +279,7 @@ func runAgentActivity[T any](
 func (a *SwarmActivities) UpdateTaskStatus(
 	ctx context.Context,
 	taskID string,
-	status string,
+	status sqlc.TaskStatus,
 ) error {
 	return a.db.UpdateSwarmTaskStatus(ctx, sqlc.UpdateSwarmTaskStatusParams{
 		Status:    status,
@@ -209,15 +288,16 @@ func (a *SwarmActivities) UpdateTaskStatus(
 	})
 }
 
-// PersistArtifact records an artifact reference in the DB.
+// PersistArtifact records an artifact reference in the DB and returns its ID.
 func (a *SwarmActivities) PersistArtifact(
 	ctx context.Context,
 	taskID string,
-	artifactType string,
+	artifactType sqlc.ArtifactType,
 	filePath string,
-) error {
-	return a.db.CreateSwarmArtifact(ctx, sqlc.CreateSwarmArtifactParams{
-		ID:           uuid.NewString()[:8],
+) (string, error) {
+	id := uuid.NewString()[:8]
+	return id, a.db.CreateSwarmArtifact(ctx, sqlc.CreateSwarmArtifactParams{
+		ID:           id,
 		TaskID:       taskID,
 		ArtifactType: artifactType,
 		FilePath:     filePath,
@@ -254,7 +334,7 @@ func (a *SwarmActivities) CreateSpanActivity(
 		ParentSpanID: toNullString(p.ParentSpanID),
 		SpanType:     p.SpanType,
 		Name:         p.Name,
-		Status:       "running",
+		Status:       sqlc.SpanStatusRunning,
 		InputJSON:    sqlNullJSON(p.InputJSON),
 		StartedAt:    p.StartedAt,
 	})
@@ -297,6 +377,46 @@ func (a *SwarmActivities) FailSpanActivity(
 	})
 }
 
+// PostNarrativeMessage inserts an orchestrator message into swarm_task_messages.
+func (a *SwarmActivities) PostNarrativeMessage(
+	ctx context.Context,
+	taskID string,
+	content string,
+) error {
+	msgID := uuid.NewString()[:8]
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	if err := a.db.CreateSwarmTaskMessage(ctx, sqlc.CreateSwarmTaskMessageParams{
+		ID:        msgID,
+		TaskID:    taskID,
+		Role:      sqlc.MessageRoleOrchestrator,
+		Content:   content,
+		CreatedAt: now,
+	}); err != nil {
+		return fmt.Errorf("post narrative: %w", err)
+	}
+
+	if a.eventBus != nil {
+		a.eventBus.Publish("swarm", map[string]any{
+			"event":  "narrative",
+			"taskID": taskID,
+		})
+	}
+	return nil
+}
+
+// FailRunningSpansByTask closes all running spans for a task as failed.
+func (a *SwarmActivities) FailRunningSpansByTask(
+	ctx context.Context,
+	taskID string,
+	errMsg string,
+) error {
+	return a.db.FailRunningSpansByTask(ctx, sqlc.FailRunningSpansByTaskParams{
+		ErrorMessage: sql.NullString{String: errMsg, Valid: errMsg != ""},
+		TaskID:       taskID,
+	})
+}
+
 // WriteDocument writes content to a file on disk, creating parent dirs.
 func (a *SwarmActivities) WriteDocument(
 	ctx context.Context,
@@ -311,4 +431,112 @@ func (a *SwarmActivities) WriteDocument(
 		return fmt.Errorf("write document: %w", writeErr)
 	}
 	return nil
+}
+
+// --- Linear integration activities ---
+// All Linear activities no-op when LinearClient is nil or ticketID is empty.
+
+// FetchLinearTicket fetches the full ticket from Linear.
+func (a *SwarmActivities) FetchLinearTicket(
+	ctx context.Context,
+	ticketID string,
+) (linear.Issue, error) {
+	if a.LinearClient == nil || ticketID == "" {
+		return linear.Issue{}, nil
+	}
+	issue, err := a.LinearClient.GetIssue(ctx, ticketID)
+	if err != nil {
+		return linear.Issue{}, fmt.Errorf("fetch linear ticket %s: %w", ticketID, err)
+	}
+	return *issue, nil
+}
+
+// UpdateLinearStatus changes the workflow state on the Linear ticket.
+func (a *SwarmActivities) UpdateLinearStatus(
+	ctx context.Context,
+	ticketID string,
+	status string,
+) error {
+	if a.LinearClient == nil || ticketID == "" {
+		return nil
+	}
+	return a.LinearClient.UpdateStatus(ctx, ticketID, status)
+}
+
+// UpdateLinearLabels sets labels on the Linear ticket.
+func (a *SwarmActivities) UpdateLinearLabels(
+	ctx context.Context,
+	ticketID string,
+	labels []string,
+) error {
+	if a.LinearClient == nil || ticketID == "" {
+		return nil
+	}
+	return a.LinearClient.UpdateLabels(ctx, ticketID, labels)
+}
+
+// AddLinearComment posts a structured comment to the Linear ticket.
+func (a *SwarmActivities) AddLinearComment(
+	ctx context.Context,
+	ticketID string,
+	body string,
+) error {
+	if a.LinearClient == nil || ticketID == "" {
+		return nil
+	}
+	return a.LinearClient.AddComment(ctx, ticketID, body)
+}
+
+// LinkArtifactToLinear attaches an artifact URL to the Linear ticket.
+func (a *SwarmActivities) LinkArtifactToLinear(
+	ctx context.Context,
+	ticketID string,
+	title string,
+	url string,
+) error {
+	if a.LinearClient == nil || ticketID == "" {
+		return nil
+	}
+	return a.LinearClient.CreateAttachment(ctx, ticketID, title, url)
+}
+
+// CreateLinearFollowup creates a new research ticket and links it to the parent.
+func (a *SwarmActivities) CreateLinearFollowup(
+	ctx context.Context,
+	parentID string,
+	title string,
+	description string,
+	relationType string,
+) (string, error) {
+	if a.LinearClient == nil || parentID == "" {
+		return "", nil
+	}
+	identifier, err := a.LinearClient.CreateIssue(ctx, title, linear.CreateOpts{
+		Labels:      []string{"type:research"},
+		Description: description,
+	})
+	if err != nil {
+		return "", fmt.Errorf("create follow-up issue: %w", err)
+	}
+	if relErr := a.LinearClient.AddRelation(
+		ctx,
+		parentID,
+		relationType,
+		identifier,
+	); relErr != nil {
+		a.logger.Warn("failed to add relation to follow-up",
+			"parent", parentID, "followup", identifier, "error", relErr)
+	}
+	return identifier, nil
+}
+
+// SearchLinearIssues checks if a similar ticket already exists.
+func (a *SwarmActivities) SearchLinearIssues(
+	ctx context.Context,
+	query string,
+) ([]linear.SearchResult, error) {
+	if a.LinearClient == nil {
+		return []linear.SearchResult{}, nil
+	}
+	return a.LinearClient.SearchIssues(ctx, query)
 }

@@ -32,9 +32,9 @@ const (
 	sessionMaxAgeSec = sessionTTLDays * 24 * 3600
 	sessionTTLHours  = sessionTTLDays * 24
 
-	RoleAdmin   = "admin"
-	RoleUser    = "user"
-	RolePending = "pending"
+	RoleAdmin   = sqlc.UserRoleAdmin
+	RoleUser    = sqlc.UserRoleUser
+	RolePending = sqlc.UserRolePending
 )
 
 // Config holds Discord OAuth configuration.
@@ -437,7 +437,7 @@ func (h *Handler) HandleDevLogin(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "username is required")
 	}
 
-	role := c.FormValue("role")
+	role := sqlc.UserRole(c.FormValue("role"))
 	if role == "" {
 		role = RoleUser
 	}

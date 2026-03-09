@@ -61,7 +61,7 @@ func CheckpointTree(checkpoints []sqlc.Checkpoint, currentCPID string, worldID s
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = StatusDot(cp.Status).Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Err = StatusDot(string(cp.Status)).Render(ctx, templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -107,7 +107,7 @@ func CheckpointTree(checkpoints []sqlc.Checkpoint, currentCPID string, worldID s
 					return templ_7745c5c3_Err
 				}
 			}
-			if cp.ID != currentCPID && cp.Status == "ready" {
+			if cp.ID != currentCPID && cp.Status == sqlc.CheckpointStatusReady {
 				templ_7745c5c3_Err = shared.LoadCheckpointButton(worldID, cp.ID, "Load").Render(ctx, templ_7745c5c3_Buffer)
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err

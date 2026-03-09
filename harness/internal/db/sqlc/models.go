@@ -15,7 +15,7 @@ type Checkpoint struct {
 	ParentCheckpointID sql.NullString
 	Name               sql.NullString
 	Prompt             sql.NullString
-	Status             string
+	Status             CheckpointStatus
 	BuildLog           sql.NullString
 	WorkSummary        sql.NullString
 	FilesChanged       sql.NullString
@@ -40,7 +40,7 @@ type MayorBuild struct {
 	WorldID         string
 	CheckpointID    sql.NullString
 	Prompt          string
-	Status          string
+	Status          CheckpointStatus
 	StartedAt       time.Time
 	CompletedAt     sql.NullTime
 	DurationSeconds sql.NullInt64
@@ -51,7 +51,7 @@ type MayorMessage struct {
 	ID               string
 	WorldID          string
 	DiscordMessageID sql.NullString
-	AuthorType       string
+	AuthorType       AuthorType
 	AuthorName       string
 	Content          string
 	CreatedAt        time.Time
@@ -95,7 +95,7 @@ type Session struct {
 type SwarmArtifact struct {
 	ID           string
 	TaskID       string
-	ArtifactType string
+	ArtifactType ArtifactType
 	FilePath     string
 	CreatedAt    string
 }
@@ -105,7 +105,7 @@ type SwarmResearchQuestion struct {
 	TaskID        string
 	QuestionText  string
 	AgentIndex    int64
-	Status        string
+	Status        QuestionStatus
 	ResultSummary sql.NullString
 	CreatedAt     string
 	UpdatedAt     string
@@ -115,9 +115,9 @@ type SwarmSpan struct {
 	ID           string
 	TaskID       string
 	ParentSpanID sql.NullString
-	SpanType     string
+	SpanType     SpanType
 	Name         string
-	Status       string
+	Status       SpanStatus
 	InputJSON    sql.NullString
 	OutputJSON   sql.NullString
 	ErrorMessage sql.NullString
@@ -129,9 +129,9 @@ type SwarmSpan struct {
 
 type SwarmTask struct {
 	ID            string
-	PrimitiveType string
+	PrimitiveType PrimitiveType
 	RequestText   string
-	Status        string
+	Status        TaskStatus
 	WorkflowID    sql.NullString
 	LinearIssueID sql.NullString
 	CreatedAt     string
@@ -141,7 +141,7 @@ type SwarmTask struct {
 type SwarmTaskMessage struct {
 	ID        string
 	TaskID    string
-	Role      string
+	Role      MessageRole
 	Content   string
 	CreatedAt string
 }
@@ -153,7 +153,7 @@ type User struct {
 	GitHubID        sql.NullInt64
 	GitHubUsername  sql.NullString
 	AvatarURL       sql.NullString
-	Role            string
+	Role            UserRole
 	CreatedAt       time.Time
 	LastSeenAt      time.Time
 }
@@ -171,7 +171,7 @@ type World struct {
 	Description      sql.NullString
 	CreatedBy        sql.NullString
 	CreatedAt        time.Time
-	TemplateType     string
+	TemplateType     TemplateType
 	MayorName        sql.NullString
 	MayorPersonality sql.NullString
 	MayorSecret      sql.NullString

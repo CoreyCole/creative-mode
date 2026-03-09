@@ -163,9 +163,12 @@ func (s *Server) RegisterRoutes(e *echo.Echo) {
 
 	// Swarm API (protected by CM_HOOK_SECRET).
 	swarmAPI := e.Group("/api/swarm", hookSecretMiddleware())
+	swarmAPI.GET("/tasks", s.handleSwarmListTasks)
 	swarmAPI.POST("/tasks/research", s.handleSwarmStartResearch)
 	swarmAPI.POST("/tasks/code-change-plan", s.handleSwarmStartCodePlan)
 	swarmAPI.GET("/tasks/:taskID", s.handleSwarmGetTask)
+	swarmAPI.GET("/tasks/:taskID/spans", s.handleSwarmGetTaskSpans)
+	swarmAPI.GET("/tasks/:taskID/metrics", s.handleSwarmGetTaskMetrics)
 	swarmAPI.POST("/tasks/:taskID/cancel", s.handleSwarmCancelTask)
 
 	// Root route — soft session check renders login/pending/lobby.
@@ -200,6 +203,7 @@ func (s *Server) RegisterRoutes(e *echo.Echo) {
 	approved.POST("/swarm/start", s.handleSwarmStartTaskDashboard)
 	approved.POST("/swarm/cancel", s.handleSwarmCancelTaskDashboard)
 	approved.POST("/swarm/chat", s.handleSwarmChatMessage)
+	approved.GET("/swarm/artifacts/:id/view", s.handleSwarmArtifactView)
 
 	// WASM artifact serving (approved users).
 	approved.GET("/wasm/:worldID/:cpID/*", s.handleWASMArtifacts)
@@ -336,10 +340,11 @@ func (s *Server) handleCreateWorld(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "name is required")
 	}
 	if req.TemplateType == "" {
-		req.TemplateType = "3d"
+		req.TemplateType = string(sqlc.TemplateType3D)
 	}
-	if req.TemplateType != "3d" && req.TemplateType != "2d" &&
-		req.TemplateType != "boardgame" {
+	if req.TemplateType != string(sqlc.TemplateType3D) &&
+		req.TemplateType != string(sqlc.TemplateType2D) &&
+		req.TemplateType != string(sqlc.TemplateTypeBoardgame) {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid template type")
 	}
 

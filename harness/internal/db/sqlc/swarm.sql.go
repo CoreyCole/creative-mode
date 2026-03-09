@@ -47,6 +47,31 @@ func (q *Queries) CompleteSwarmSpan(ctx context.Context, arg CompleteSwarmSpanPa
 	return err
 }
 
+const completeSwarmSpanWithMetadata = `-- name: CompleteSwarmSpanWithMetadata :exec
+UPDATE swarm_spans
+SET status = 'completed', output_json = ?, ended_at = ?, duration_ms = ?, metadata_json = ?
+WHERE id = ?
+`
+
+type CompleteSwarmSpanWithMetadataParams struct {
+	OutputJSON   sql.NullString
+	EndedAt      sql.NullString
+	DurationMs   sql.NullInt64
+	MetadataJSON sql.NullString
+	ID           string
+}
+
+func (q *Queries) CompleteSwarmSpanWithMetadata(ctx context.Context, arg CompleteSwarmSpanWithMetadataParams) error {
+	_, err := q.db.ExecContext(ctx, completeSwarmSpanWithMetadata,
+		arg.OutputJSON,
+		arg.EndedAt,
+		arg.DurationMs,
+		arg.MetadataJSON,
+		arg.ID,
+	)
+	return err
+}
+
 const createSwarmArtifact = `-- name: CreateSwarmArtifact :exec
 
 INSERT INTO swarm_artifacts (id, task_id, artifact_type, file_path, created_at)
@@ -56,7 +81,7 @@ VALUES (?, ?, ?, ?, ?)
 type CreateSwarmArtifactParams struct {
 	ID           string
 	TaskID       string
-	ArtifactType string
+	ArtifactType ArtifactType
 	FilePath     string
 	CreatedAt    string
 }
@@ -84,7 +109,7 @@ type CreateSwarmResearchQuestionParams struct {
 	TaskID       string
 	QuestionText string
 	AgentIndex   int64
-	Status       string
+	Status       QuestionStatus
 	CreatedAt    string
 	UpdatedAt    string
 }
@@ -113,9 +138,9 @@ type CreateSwarmSpanParams struct {
 	ID           string
 	TaskID       string
 	ParentSpanID sql.NullString
-	SpanType     string
+	SpanType     SpanType
 	Name         string
-	Status       string
+	Status       SpanStatus
 	InputJSON    sql.NullString
 	StartedAt    string
 	MetadataJSON sql.NullString
@@ -145,9 +170,9 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 
 type CreateSwarmTaskParams struct {
 	ID            string
-	PrimitiveType string
+	PrimitiveType PrimitiveType
 	RequestText   string
-	Status        string
+	Status        TaskStatus
 	WorkflowID    sql.NullString
 	LinearIssueID sql.NullString
 	CreatedAt     string
@@ -178,7 +203,7 @@ VALUES (?, ?, ?, ?, ?)
 type CreateSwarmTaskMessageParams struct {
 	ID        string
 	TaskID    string
-	Role      string
+	Role      MessageRole
 	Content   string
 	CreatedAt string
 }
@@ -192,6 +217,22 @@ func (q *Queries) CreateSwarmTaskMessage(ctx context.Context, arg CreateSwarmTas
 		arg.Content,
 		arg.CreatedAt,
 	)
+	return err
+}
+
+const failRunningSpansByTask = `-- name: FailRunningSpansByTask :exec
+UPDATE swarm_spans
+SET status = 'failed', error_message = ?, ended_at = datetime('now'), duration_ms = 0
+WHERE task_id = ? AND status = 'running'
+`
+
+type FailRunningSpansByTaskParams struct {
+	ErrorMessage sql.NullString
+	TaskID       string
+}
+
+func (q *Queries) FailRunningSpansByTask(ctx context.Context, arg FailRunningSpansByTaskParams) error {
+	_, err := q.db.ExecContext(ctx, failRunningSpansByTask, arg.ErrorMessage, arg.TaskID)
 	return err
 }
 
@@ -216,6 +257,49 @@ func (q *Queries) FailSwarmSpan(ctx context.Context, arg FailSwarmSpanParams) er
 		arg.ID,
 	)
 	return err
+}
+
+const failSwarmSpanWithMetadata = `-- name: FailSwarmSpanWithMetadata :exec
+UPDATE swarm_spans
+SET status = 'failed', error_message = ?, ended_at = ?, duration_ms = ?, metadata_json = ?
+WHERE id = ?
+`
+
+type FailSwarmSpanWithMetadataParams struct {
+	ErrorMessage sql.NullString
+	EndedAt      sql.NullString
+	DurationMs   sql.NullInt64
+	MetadataJSON sql.NullString
+	ID           string
+}
+
+func (q *Queries) FailSwarmSpanWithMetadata(ctx context.Context, arg FailSwarmSpanWithMetadataParams) error {
+	_, err := q.db.ExecContext(ctx, failSwarmSpanWithMetadata,
+		arg.ErrorMessage,
+		arg.EndedAt,
+		arg.DurationMs,
+		arg.MetadataJSON,
+		arg.ID,
+	)
+	return err
+}
+
+const getSwarmArtifact = `-- name: GetSwarmArtifact :one
+SELECT id, task_id, artifact_type, file_path, created_at
+FROM swarm_artifacts WHERE id = ?
+`
+
+func (q *Queries) GetSwarmArtifact(ctx context.Context, id string) (SwarmArtifact, error) {
+	row := q.db.QueryRowContext(ctx, getSwarmArtifact, id)
+	var i SwarmArtifact
+	err := row.Scan(
+		&i.ID,
+		&i.TaskID,
+		&i.ArtifactType,
+		&i.FilePath,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const getSwarmArtifactsByTask = `-- name: GetSwarmArtifactsByTask :many
@@ -533,7 +617,7 @@ FROM swarm_tasks WHERE status = ? ORDER BY created_at DESC LIMIT ?
 `
 
 type ListSwarmTasksByStatusParams struct {
-	Status string
+	Status TaskStatus
 	Limit  int64
 }
 
@@ -574,7 +658,7 @@ UPDATE swarm_research_questions SET status = ?, result_summary = ?, updated_at =
 `
 
 type UpdateSwarmResearchQuestionParams struct {
-	Status        string
+	Status        QuestionStatus
 	ResultSummary sql.NullString
 	UpdatedAt     string
 	ID            string
@@ -595,7 +679,7 @@ UPDATE swarm_tasks SET status = ?, updated_at = ? WHERE id = ?
 `
 
 type UpdateSwarmTaskStatusParams struct {
-	Status    string
+	Status    TaskStatus
 	UpdatedAt string
 	ID        string
 }

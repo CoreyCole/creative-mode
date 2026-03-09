@@ -13,6 +13,7 @@ type Querier interface {
 	// Mark stale running spans as failed (e.g. after crash recovery).
 	CleanupOrphanedSpans(ctx context.Context) error
 	CompleteSwarmSpan(ctx context.Context, arg CompleteSwarmSpanParams) error
+	CompleteSwarmSpanWithMetadata(ctx context.Context, arg CompleteSwarmSpanWithMetadataParams) error
 	CountActiveBuilds(ctx context.Context, createdBy sql.NullString) (int64, error)
 	CountUsers(ctx context.Context) (int64, error)
 	CreateCheckpoint(ctx context.Context, arg CreateCheckpointParams) error
@@ -42,7 +43,9 @@ type Querier interface {
 	DeleteUser(ctx context.Context, id string) error
 	DeleteUserPositionsByUserID(ctx context.Context, userID string) error
 	DeleteWorldInvite(ctx context.Context, arg DeleteWorldInviteParams) error
+	FailRunningSpansByTask(ctx context.Context, arg FailRunningSpansByTaskParams) error
 	FailSwarmSpan(ctx context.Context, arg FailSwarmSpanParams) error
+	FailSwarmSpanWithMetadata(ctx context.Context, arg FailSwarmSpanWithMetadataParams) error
 	GetCheckpoint(ctx context.Context, id string) (Checkpoint, error)
 	GetCheckpointTree(ctx context.Context, worldID string) ([]Checkpoint, error)
 	GetMayorActivity(ctx context.Context, arg GetMayorActivityParams) ([]MayorActivity, error)
@@ -56,6 +59,7 @@ type Querier interface {
 	GetRecentMessagesByWorld(ctx context.Context, arg GetRecentMessagesByWorldParams) ([]Message, error)
 	GetRecentMessagesWithUser(ctx context.Context, limit int64) ([]GetRecentMessagesWithUserRow, error)
 	GetSession(ctx context.Context, id string) (Session, error)
+	GetSwarmArtifact(ctx context.Context, id string) (SwarmArtifact, error)
 	GetSwarmArtifactsByTask(ctx context.Context, taskID string) ([]SwarmArtifact, error)
 	GetSwarmResearchQuestionsByTask(ctx context.Context, taskID string) ([]SwarmResearchQuestion, error)
 	GetSwarmSpan(ctx context.Context, id string) (SwarmSpan, error)

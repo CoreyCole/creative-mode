@@ -2,7 +2,9 @@ package swarm
 
 import (
 	"creative-mode/harness/internal/db/sqlc"
+	"creative-mode/harness/internal/swarmorch"
 	"creative-mode/harness/views/layout"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"github.com/starfederation/datastar-go/datastar"
@@ -11,6 +13,69 @@ import (
 	"strings"
 	"time"
 )
+
+// TaskMetrics holds aggregate metrics across all spans for a task.
+type TaskMetrics struct {
+	AgentCount  int
+	ToolCalls   int
+	LLMCalls    int
+	TotalTokens int
+	TotalCost   float64
+	DurationMs  int64
+}
+
+// computeTaskMetrics aggregates metrics from span metadata.
+func computeTaskMetrics(spans []sqlc.GetSwarmSpanTreeRow) TaskMetrics {
+	var m TaskMetrics
+	for _, s := range spans {
+		switch s.SpanType {
+		case "agent":
+			m.AgentCount++
+			if meta := parseSpanMetadata(s.MetadataJSON); meta != nil {
+				m.TotalTokens += meta.TotalInputTokens + meta.TotalOutputTokens
+				m.TotalCost += meta.TotalCost
+				m.ToolCalls += meta.ToolCallCount
+				m.LLMCalls += meta.LLMCallCount
+			}
+		case "workflow":
+			if s.DurationMs.Valid && s.DurationMs.Int64 > m.DurationMs {
+				m.DurationMs = s.DurationMs.Int64
+			}
+		}
+	}
+	return m
+}
+
+// parseSpanMetadata parses metadata_json into SpanMetadata.
+func parseSpanMetadata(raw sql.NullString) *swarmorch.SpanMetadata {
+	if !raw.Valid || raw.String == "" {
+		return nil
+	}
+	var meta swarmorch.SpanMetadata
+	if err := json.Unmarshal([]byte(raw.String), &meta); err != nil {
+		return nil
+	}
+	return &meta
+}
+
+// formatTokens formats a token count with comma separators.
+func formatTokens(n int) string {
+	if n < 1000 {
+		return fmt.Sprintf("%d", n)
+	}
+	if n < 1000000 {
+		return fmt.Sprintf("%.1fk", float64(n)/1000)
+	}
+	return fmt.Sprintf("%.1fM", float64(n)/1000000)
+}
+
+// formatCost formats a dollar cost.
+func formatCost(cost float64) string {
+	if cost < 0.01 {
+		return fmt.Sprintf("$%.4f", cost)
+	}
+	return fmt.Sprintf("$%.2f", cost)
+}
 
 type DashboardData struct {
 	Tasks        []sqlc.SwarmTask
@@ -25,6 +90,7 @@ type DashboardSignals struct {
 	ActiveTab      string `json:"active_tab"`
 	NewTaskType    string `json:"new_task_type"`
 	NewTaskText    string `json:"new_task_text"`
+	NewTaskTicket  string `json:"new_task_ticket"`
 	ShowNewForm    bool   `json:"show_new_form"`
 	ChatInput      string `json:"chat_input"`
 }
@@ -107,9 +173,9 @@ templ TaskListItem(task sqlc.SwarmTask, selected bool) {
 		data-on:click={ fmt.Sprintf("@get('/swarm?task=%s')", task.ID) }
 	>
 		<div class="flex items-center gap-2 mb-0.5">
-			@statusDot(task.Status)
-			<span class={ "text-xs px-1.5 py-0 rounded", typeClass(task.PrimitiveType) }>
-				{ shortType(task.PrimitiveType) }
+			@statusDot(string(task.Status))
+			<span class={ "text-xs px-1.5 py-0 rounded", typeClass(string(task.PrimitiveType)) }>
+				{ shortType(string(task.PrimitiveType)) }
 			</span>
 		</div>
 		<div class="truncate text-xs leading-snug">{ truncate(task.RequestText, 60) }</div>
@@ -123,13 +189,13 @@ templ TaskListItem(task sqlc.SwarmTask, selected bool) {
 templ TaskDetailTabs(task sqlc.SwarmTask, messages []sqlc.SwarmTaskMessage, spans []sqlc.GetSwarmSpanTreeRow, artifacts []sqlc.SwarmArtifact) {
 	<!-- Task header -->
 	<div class="px-6 pt-4 pb-2 shrink-0 border-b border-border bg-[#111]">
-		<div class="flex items-center gap-3 mb-3">
-			@statusBadge(task.Status)
-			<span class={ "text-xs px-2 py-0.5 rounded", typeClass(task.PrimitiveType) }>
-				{ task.PrimitiveType }
+		<div class="flex items-center gap-3 mb-1">
+			@statusBadge(string(task.Status))
+			<span class={ "text-xs px-2 py-0.5 rounded", typeClass(string(task.PrimitiveType)) }>
+				{ string(task.PrimitiveType) }
 			</span>
 			<span class="text-sm text-muted-foreground">{ elapsedStr(task.CreatedAt) }</span>
-			if task.Status == "running" || task.Status == "pending" {
+			if task.Status == sqlc.TaskStatusRunning || task.Status == sqlc.TaskStatusPending {
 				<button
 					class="inline-flex items-center justify-center rounded-md border border-destructive/50 text-destructive hover:bg-destructive/10 h-7 px-2 text-xs font-medium"
 					data-on:click={ fmt.Sprintf("@post('/swarm/cancel?task=%s')", task.ID) }
@@ -138,6 +204,7 @@ templ TaskDetailTabs(task sqlc.SwarmTask, messages []sqlc.SwarmTaskMessage, span
 				</button>
 			}
 		</div>
+		@taskMetricsBar(spans)
 		<!-- Tab bar -->
 		<div class="flex gap-1">
 			@swarmTabButton("chat", "Chat")
@@ -161,6 +228,37 @@ templ TaskDetailTabs(task sqlc.SwarmTask, messages []sqlc.SwarmTaskMessage, span
 			@ArtifactsTab(artifacts)
 		</div>
 	</div>
+}
+
+templ taskMetricsBar(spans []sqlc.GetSwarmSpanTreeRow) {
+	{{ m := computeTaskMetrics(spans) }}
+	if m.AgentCount > 0 || m.LLMCalls > 0 {
+		<div class="flex items-center gap-3 text-xs text-muted-foreground mb-2">
+			if m.AgentCount > 0 {
+				<span>{ fmt.Sprintf("%d agents", m.AgentCount) }</span>
+				<span class="text-muted-foreground/30">|</span>
+			}
+			if m.ToolCalls > 0 {
+				<span>{ fmt.Sprintf("%d tools", m.ToolCalls) }</span>
+				<span class="text-muted-foreground/30">|</span>
+			}
+			if m.LLMCalls > 0 {
+				<span>{ fmt.Sprintf("%d LLM calls", m.LLMCalls) }</span>
+				<span class="text-muted-foreground/30">|</span>
+			}
+			if m.TotalTokens > 0 {
+				<span>{ formatTokens(m.TotalTokens) } tok</span>
+				<span class="text-muted-foreground/30">|</span>
+			}
+			if m.TotalCost > 0 {
+				<span>{ formatCost(m.TotalCost) }</span>
+				<span class="text-muted-foreground/30">|</span>
+			}
+			if m.DurationMs > 0 {
+				<span>{ formatDuration(m.DurationMs) }</span>
+			}
+		</div>
+	}
 }
 
 templ swarmTabButton(id, label string) {
@@ -262,6 +360,15 @@ templ AgentSpanCard(span sqlc.GetSwarmSpanTreeRow) {
 			} else if span.Status == "running" {
 				<span class="text-xs text-muted-foreground">{ elapsedStr(span.StartedAt) }</span>
 			}
+			if meta := parseSpanMetadata(span.MetadataJSON); meta != nil && meta.TotalInputTokens+meta.TotalOutputTokens > 0 {
+				<span class="text-xs text-cyan-400/70">{ fmt.Sprintf("%s tok", formatTokens(meta.TotalInputTokens+meta.TotalOutputTokens)) }</span>
+				if meta.TotalCost > 0 {
+					<span class="text-xs text-yellow-400/70">{ formatCost(meta.TotalCost) }</span>
+				}
+				if meta.LLMCallCount > 0 {
+					<span class="text-xs text-muted-foreground">{ fmt.Sprintf("%d calls", meta.LLMCallCount) }</span>
+				}
+			}
 		</div>
 		if span.InputJSON.Valid && span.InputJSON.String != "" {
 			<div class="text-xs text-muted-foreground mt-1">
@@ -324,6 +431,20 @@ templ SpanRow(span sqlc.GetSwarmSpanTreeRow) {
 		} else if span.Status == "running" {
 			<span class="text-muted-foreground/60">{ elapsedStr(span.StartedAt) }</span>
 		}
+		if meta := parseSpanMetadata(span.MetadataJSON); meta != nil {
+			if span.SpanType == "llm_call" && meta.Usage != nil {
+				<span class="text-green-400/70">{ fmt.Sprintf("%s tok", formatTokens(meta.Usage.TotalTokens)) }</span>
+				if meta.Usage.Cost.Total > 0 {
+					<span class="text-yellow-400/70">{ fmt.Sprintf("(%s)", formatCost(meta.Usage.Cost.Total)) }</span>
+				}
+			}
+			if span.SpanType == "agent" && meta.TotalInputTokens+meta.TotalOutputTokens > 0 {
+				<span class="text-cyan-400/70">{ fmt.Sprintf("%s tok", formatTokens(meta.TotalInputTokens+meta.TotalOutputTokens)) }</span>
+				if meta.TotalCost > 0 {
+					<span class="text-yellow-400/70">{ fmt.Sprintf("(%s)", formatCost(meta.TotalCost)) }</span>
+				}
+			}
+		}
 		if span.ErrorMessage.Valid && span.ErrorMessage.String != "" {
 			<span class="text-destructive truncate max-w-xs" title={ span.ErrorMessage.String }>{ truncate(span.ErrorMessage.String, 40) }</span>
 		}
@@ -334,7 +455,7 @@ templ ArtifactCard(artifact sqlc.SwarmArtifact) {
 	<div class="flex items-center gap-2 rounded border border-border bg-card px-3 py-2">
 		<span class="text-muted-foreground">doc</span>
 		<span class="text-sm font-mono">{ filepath.Base(artifact.FilePath) }</span>
-		<span class={ "text-xs px-1.5 py-0 rounded", artifactTypeClass(artifact.ArtifactType) }>{ artifact.ArtifactType }</span>
+		<span class={ "text-xs px-1.5 py-0 rounded", artifactTypeClass(string(artifact.ArtifactType)) }>{ string(artifact.ArtifactType) }</span>
 	</div>
 }
 
@@ -357,6 +478,15 @@ templ NewTaskForm() {
 					type="text"
 					data-bind:new_task_text
 					placeholder="What should the agent investigate?"
+					class="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+				/>
+			</div>
+			<div class="w-28">
+				<label class="text-xs text-muted-foreground block mb-1">Ticket</label>
+				<input
+					type="text"
+					data-bind:new_task_ticket
+					placeholder="CRE-15"
 					class="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
 				/>
 			</div>
@@ -393,7 +523,7 @@ func buildChatMessages(task sqlc.SwarmTask, messages []sqlc.SwarmTaskMessage, sp
 	// DB messages (user-sent chat messages).
 	for _, m := range messages {
 		result = append(result, ChatMessage{
-			Role:      m.Role,
+			Role:      string(m.Role),
 			Content:   m.Content,
 			Timestamp: m.CreatedAt,
 		})
@@ -489,6 +619,36 @@ func spansToChatMessages(spans []sqlc.GetSwarmSpanTreeRow) []ChatMessage {
 						Timestamp: ts,
 					})
 				}
+			}
+
+		case "llm_call":
+			if span.Status == "running" {
+				msgs = append(msgs, ChatMessage{
+					Role:      "system",
+					Content:   "Thinking...",
+					Timestamp: span.StartedAt,
+				})
+			} else if span.Status == "completed" {
+				ts := span.StartedAt
+				if span.EndedAt.Valid {
+					ts = span.EndedAt.String
+				}
+				parts := []string{"Thought complete"}
+				if span.DurationMs.Valid {
+					parts = append(parts, formatDuration(span.DurationMs.Int64))
+				}
+				if meta := parseSpanMetadata(span.MetadataJSON); meta != nil && meta.Usage != nil && meta.Usage.TotalTokens > 0 {
+					parts = append(parts, fmt.Sprintf("%s tok", formatTokens(meta.Usage.TotalTokens)))
+				}
+				content := parts[0]
+				if len(parts) > 1 {
+					content = fmt.Sprintf("%s (%s)", parts[0], strings.Join(parts[1:], ", "))
+				}
+				msgs = append(msgs, ChatMessage{
+					Role:      "system",
+					Content:   content,
+					Timestamp: ts,
+				})
 			}
 		}
 	}

@@ -14,7 +14,7 @@ templ CheckpointTree(checkpoints []sqlc.Checkpoint, currentCPID string, worldID 
 		<h3 class="mb-3 text-sm font-semibold">Checkpoints</h3>
 		for _, cp := range checkpoints {
 			<div class={ "flex items-center gap-1.5 px-2 py-1.5 rounded text-[13px]", templ.KV("bg-blue-950/60", cp.ID == currentCPID) }>
-				@StatusDot(cp.Status)
+				@StatusDot(string(cp.Status))
 				if cp.Name.Valid {
 					<span class="font-medium">{ cp.Name.String }</span>
 				} else if cp.Prompt.Valid {
@@ -22,7 +22,7 @@ templ CheckpointTree(checkpoints []sqlc.Checkpoint, currentCPID string, worldID 
 				} else {
 					<span class="font-medium">Root</span>
 				}
-				if cp.ID != currentCPID && cp.Status == "ready" {
+				if cp.ID != currentCPID && cp.Status == sqlc.CheckpointStatusReady {
 					@shared.LoadCheckpointButton(worldID, cp.ID, "Load")
 				}
 			</div>

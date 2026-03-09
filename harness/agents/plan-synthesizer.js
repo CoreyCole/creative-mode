@@ -1,41 +1,50 @@
 import { runAgent } from './lib/agent-factory.js';
-import { Type } from '@mariozechner/pi-ai';
 
 await runAgent({
   withFileTools: false,
   withSearchContext: false,
-  artifactSchema: Type.Object({
-    document: Type.String({ description: 'The full implementation plan in markdown' }),
-    summary: Type.String({ description: 'A 2-3 sentence summary of the plan' }),
-    phaseOrder: Type.Array(Type.String(), { description: 'Ordered list of implementation phases' }),
-    outputPath: Type.String({ description: 'Path where the plan should be written' }),
-  }),
-  validate: (artifact) => {
-    const errors = [];
-    if (!artifact.document || artifact.document.length < 300) errors.push('Plan document must be substantive (300+ chars)');
-    if (!artifact.summary || artifact.summary.length < 50) errors.push('Summary must be at least 50 chars');
-    if (!artifact.phaseOrder || artifact.phaseOrder.length === 0) errors.push('Must define phase ordering');
-    if (!artifact.outputPath) errors.push('Must specify outputPath');
-    return errors;
-  },
   systemPrompt: `You are a plan synthesizer. Your job is to merge specialist domain plans into a unified implementation plan.
 
 Guidelines:
 - Resolve cross-domain dependencies (e.g., database migration must precede API routes)
 - Order phases based on the dependency graph
-- Preserve verification checks from each specialist
+- Preserve the automated vs manual verification distinction from each specialist
 - Combine risks and flag cross-domain concerns
 - Include a summary with phase ordering at the top
 - Each phase should be independently committable
+- Include a "What We're NOT Doing" section listing explicit out-of-scope items to prevent scope creep
 
-When done, call submit_artifact with the document, summary, phase_order, and output_path.`,
+## Output Format
+
+When done, use the write tool to write your output to the path specified in the task's outputPath field. The file must use YAML front matter followed by the markdown plan:
+
+\`\`\`
+---
+summary: "A 2-3 sentence summary of the plan"
+tags:
+  - "relevant-tag-1"
+  - "relevant-tag-2"
+phaseOrder:
+  - "Phase 1: Database migrations"
+  - "Phase 2: API routes"
+---
+
+# Implementation Plan
+
+Your full implementation plan in markdown here.
+Must be at least 300 characters of substantive content.
+\`\`\`
+
+The markdown body after the front matter becomes the document field.
+
+Choose 2-5 tags from: database, api, temporal, ui, bevy, wasm, discord, auth, migration, config, build, testing, or other relevant terms.`,
   prompt: (task) => `Merge these specialist plans into a unified implementation plan.
 
 Original request: ${task.requestText}
 
 Research summary: ${task.researchDocSummary}
 
-Output path: ${task.outputPath}
+Write your output to: ${task.outputPath}
 
 Specialist plans:
 ${JSON.stringify(task.plannerOutputs, null, 2)}`,

@@ -3,17 +3,20 @@ package swarmorch
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
+
+	"creative-mode/harness/internal/db/sqlc"
 )
 
 // Workflow timeout and retry configuration.
 const (
 	agentStartToCloseTimeout = 20 * time.Minute
-	agentHeartbeatTimeout    = 20 * time.Minute
+	agentHeartbeatTimeout    = 60 * time.Second
 	agentMaxRetries          = 3
 	agentRetryInterval       = 5 * time.Second
 
@@ -25,16 +28,19 @@ const (
 
 // ResearchWorkflowInput is the input for the research workflow.
 type ResearchWorkflowInput struct {
-	TaskID      string `json:"taskID"`
-	RequestText string `json:"requestText"`
-	RepoRoot    string `json:"repoRoot"`
+	TaskID        string `json:"taskID"`
+	RequestText   string `json:"requestText"`
+	RepoRoot      string `json:"repoRoot"`
+	ParentSpanID  string `json:"parentSpanID,omitempty"`  // set when called as child workflow
+	LinearIssueID string `json:"linearIssueID,omitempty"` // ticket ID for filename prefix
 }
 
 // CodeChangePlanWorkflowInput is the input for the code change plan workflow.
 type CodeChangePlanWorkflowInput struct {
-	TaskID      string `json:"taskID"`
-	RequestText string `json:"requestText"`
-	RepoRoot    string `json:"repoRoot"`
+	TaskID        string `json:"taskID"`
+	RequestText   string `json:"requestText"`
+	RepoRoot      string `json:"repoRoot"`
+	LinearIssueID string `json:"linearIssueID,omitempty"` // ticket ID for filename prefix
 }
 
 // agentActivityOpts returns activity options for long-running agent activities.
@@ -65,17 +71,22 @@ func newSpanID(ctx workflow.Context) string {
 	encoded := workflow.SideEffect(ctx, func(_ workflow.Context) any {
 		return uuid.NewString()
 	})
-	_ = encoded.Get(&id)
+	if err := encoded.Get(&id); err != nil {
+		workflow.GetLogger(ctx).Warn("failed to generate span ID", "error", err)
+	}
 	return id
 }
 
 // deferredCleanup runs cleanup activities when a workflow fails or is canceled.
 // Must be called from a deferred closure that reads workflowErr at execution time.
+// When isChild is true, task-level status updates and events are skipped
+// (the parent workflow manages those).
 func deferredCleanup(
 	ctx workflow.Context,
 	a *SwarmActivities,
 	spanID string,
 	taskID string,
+	isChild bool,
 	workflowErr error,
 ) {
 	if workflowErr == nil {
@@ -83,62 +94,220 @@ func deferredCleanup(
 	}
 	cleanupCtx, _ := workflow.NewDisconnectedContext(ctx)
 	cleanupInfra := workflow.WithActivityOptions(cleanupCtx, infraActivityOpts())
+	logger := workflow.GetLogger(ctx)
 
-	status := "failed"
-	event := "task.failed"
-	if ctx.Err() != nil {
-		status = "canceled"
-		event = "task.canceled"
-	}
-
-	_ = workflow.ExecuteActivity(
+	if err := workflow.ExecuteActivity(
 		cleanupInfra, a.FailSpanActivity,
 		spanID, workflowErr.Error(),
-	).Get(cleanupCtx, nil)
-	_ = workflow.ExecuteActivity(
+	).Get(cleanupCtx, nil); err != nil {
+		logger.Warn("cleanup: failed to fail span", "spanID", spanID, "error", err)
+	}
+	// Close all orphaned running spans for this task.
+	if err := workflow.ExecuteActivity(
+		cleanupInfra, a.FailRunningSpansByTask,
+		taskID, workflowErr.Error(),
+	).Get(cleanupCtx, nil); err != nil {
+		logger.Warn(
+			"cleanup: failed to fail running spans",
+			"taskID",
+			taskID,
+			"error",
+			err,
+		)
+	}
+
+	if isChild {
+		return
+	}
+
+	status := sqlc.TaskStatusFailed
+	event := "task.failed"
+	if ctx.Err() != nil {
+		status = sqlc.TaskStatusCanceled
+		event = "task.canceled"
+	}
+	if err := workflow.ExecuteActivity(
 		cleanupInfra, a.UpdateTaskStatus,
 		taskID, status,
-	).Get(cleanupCtx, nil)
-	_ = workflow.ExecuteActivity(
+	).Get(cleanupCtx, nil); err != nil {
+		logger.Warn(
+			"cleanup: failed to update task status",
+			"taskID",
+			taskID,
+			"error",
+			err,
+		)
+	}
+	if err := workflow.ExecuteActivity(
 		cleanupInfra, a.EmitEvent,
 		taskID, event, workflowErr.Error(),
-	).Get(cleanupCtx, nil)
+	).Get(cleanupCtx, nil); err != nil {
+		logger.Warn(
+			"cleanup: failed to emit event",
+			"taskID",
+			taskID,
+			"event",
+			event,
+			"error",
+			err,
+		)
+	}
 }
 
-// researchStepsResult holds outputs from the shared research pipeline.
-type researchStepsResult struct {
-	findings   []ResearchFinding
-	synthesize SynthesizeResult
-	outputPath string
+// pst is the America/Los_Angeles timezone used for output file prefixes.
+var pst = func() *time.Location {
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		return time.FixedZone("PST", -8*60*60) //nolint:mnd // UTC-8 fallback
+	}
+	return loc
+}()
+
+// swarmOutputPath builds a path under thoughts/swarm/ for a given artifact category.
+// The datetime prefix uses PST for human-readable filenames.
+func swarmOutputPath(
+	category, slug, ext string,
+	startTime time.Time,
+	ticketID string,
+) string {
+	prefix := startTime.In(pst).Format("2006-01-02_15-04-05")
+	if ticketID != "" {
+		prefix += "_" + ticketID
+	}
+	prefix += "_" + sanitizeSlug(slug)
+	return filepath.Join("thoughts", "swarm", category, prefix+ext)
+}
+
+// createStageSpan creates a stage span and returns its ID and startedAt timestamp.
+func createStageSpan(
+	ctx workflow.Context,
+	a *SwarmActivities,
+	taskID, parentSpanID, name string,
+) (string, string) {
+	infraCtx := workflow.WithActivityOptions(ctx, infraActivityOpts())
+	stageID := newSpanID(ctx)
+	startedAt := workflow.Now(ctx).UTC().Format(time.RFC3339)
+	if err := workflow.ExecuteActivity(infraCtx, a.CreateSpanActivity, SpanParams{
+		ID:           stageID,
+		TaskID:       taskID,
+		ParentSpanID: parentSpanID,
+		SpanType:     sqlc.SpanTypeStage,
+		Name:         name,
+		StartedAt:    startedAt,
+	}).Get(ctx, nil); err != nil {
+		workflow.GetLogger(ctx).
+			Warn("failed to create stage span", "name", name, "error", err)
+	}
+	return stageID, startedAt
+}
+
+// completeStageSpan marks a stage span as completed.
+func completeStageSpan(
+	ctx workflow.Context,
+	a *SwarmActivities,
+	spanID, startedAt string,
+) {
+	infraCtx := workflow.WithActivityOptions(ctx, infraActivityOpts())
+	if err := workflow.ExecuteActivity(
+		infraCtx, a.CompleteSpanActivity,
+		spanID, startedAt, "",
+	).Get(ctx, nil); err != nil {
+		workflow.GetLogger(ctx).
+			Warn("failed to complete stage span", "spanID", spanID, "error", err)
+	}
+}
+
+// artifactURL builds the harness URL for an artifact, suitable for Linear attachment links.
+func artifactURL(a *SwarmActivities, artifactID string) string {
+	if a.config.HarnessURL == "" {
+		return "/swarm/artifacts/" + artifactID + "/view"
+	}
+	return strings.TrimRight(
+		a.config.HarnessURL,
+		"/",
+	) + "/swarm/artifacts/" + artifactID + "/view"
+}
+
+// runLinearActivity is a fire-and-forget helper for Linear integration activities.
+// It logs warnings on failure but does not fail the workflow. The activity itself
+// no-ops when ticketID is empty or LinearClient is nil.
+func runLinearActivity(
+	ctx workflow.Context,
+	activityFn any,
+	args ...any,
+) {
+	infraCtx := workflow.WithActivityOptions(ctx, infraActivityOpts())
+	if err := workflow.ExecuteActivity(infraCtx, activityFn, args...).
+		Get(ctx, nil); err != nil {
+		workflow.GetLogger(ctx).Warn("linear activity failed (non-fatal)", "error", err)
+	}
+}
+
+// ResearchStepsResult holds outputs from the shared research pipeline.
+// Fields are exported for Temporal serialization across child workflow boundaries.
+type ResearchStepsResult struct {
+	Findings   []ResearchFinding `json:"findings"`
+	Synthesize SynthesizeResult  `json:"synthesize"`
+	OutputPath string            `json:"outputPath"`
 }
 
 // runResearchSteps executes the question-generation, parallel-research, and
-// synthesis pipeline shared by both workflows.
+// synthesis pipeline. Each phase is wrapped in a stage span for hierarchy visibility.
 func runResearchSteps(
 	ctx workflow.Context,
 	input ResearchWorkflowInput,
 	parentSpanID string,
-) (researchStepsResult, error) {
+) (ResearchStepsResult, error) {
 	var a *SwarmActivities
-	var zero researchStepsResult
+	var zero ResearchStepsResult
+	startTime := workflow.Now(ctx).UTC()
 
-	// Stage: question_generation
+	// ── Stage: question_generation ──
+	qgenStageID, qgenStartedAt := createStageSpan(
+		ctx, a, input.TaskID, parentSpanID, "question_generation",
+	)
+
 	qgenCtx := workflow.WithActivityOptions(ctx, agentActivityOpts())
 	var questions QuestionArtifact
 	if err := workflow.ExecuteActivity(
 		qgenCtx, a.GenerateResearchQuestions,
-		input.TaskID, parentSpanID,
+		input.TaskID, qgenStageID,
 		GenerateQuestionsInput{
 			TaskID:       input.TaskID,
 			RequestText:  input.RequestText,
 			RepoRoot:     input.RepoRoot,
 			MaxQuestions: maxResearchQuestions,
+			OutputPath: swarmOutputPath(
+				"research-questions", input.RequestText, ".yaml",
+				startTime, input.LinearIssueID,
+			),
 		},
 	).Get(ctx, &questions); err != nil {
 		return zero, fmt.Errorf("generate research questions: %w", err)
 	}
 
-	// Stage: parallel_research — fan-out one agent per question.
+	completeStageSpan(ctx, a, qgenStageID, qgenStartedAt)
+
+	// Narrative: questions generated.
+	narrativeInfra := workflow.WithActivityOptions(ctx, infraActivityOpts())
+	if err := workflow.ExecuteActivity(
+		narrativeInfra,
+		a.PostNarrativeMessage,
+		input.TaskID,
+		fmt.Sprintf(
+			"Decomposed into %d research questions. Starting parallel research...",
+			len(questions.Questions),
+		),
+	).Get(ctx, nil); err != nil {
+		workflow.GetLogger(ctx).
+			Warn("failed to post narrative message", "taskID", input.TaskID, "error", err)
+	}
+
+	// ── Stage: parallel_research ──
+	researchStageID, researchStartedAt := createStageSpan(
+		ctx, a, input.TaskID, parentSpanID, "parallel_research",
+	)
+
 	resultCh := workflow.NewChannel(ctx)
 	for i, q := range questions.Questions {
 		qIdx := i
@@ -148,12 +317,18 @@ func runResearchSteps(
 			var finding ResearchFinding
 			err := workflow.ExecuteActivity(
 				agentCtx, a.RunResearchAgent,
-				input.TaskID, parentSpanID,
+				input.TaskID, researchStageID,
 				ResearchAgentInput{
 					TaskID:     input.TaskID,
 					Question:   qText,
 					RepoRoot:   input.RepoRoot,
 					AgentIndex: qIdx,
+					OutputPath: swarmOutputPath(
+						"research-findings",
+						fmt.Sprintf("q%d-%s", qIdx, qText),
+						".md",
+						startTime, input.LinearIssueID,
+					),
 				},
 			).Get(gCtx, &finding)
 			if err != nil {
@@ -175,17 +350,37 @@ func runResearchSteps(
 		findings = append(findings, finding)
 	}
 
-	// Stage: synthesis
-	slug := sanitizeSlug(input.RequestText)
-	outputPath := filepath.Join(
-		"thoughts", "swarm", "research", slug+".md",
+	completeStageSpan(ctx, a, researchStageID, researchStartedAt)
+
+	// Narrative: research complete.
+	if err := workflow.ExecuteActivity(
+		narrativeInfra,
+		a.PostNarrativeMessage,
+		input.TaskID,
+		fmt.Sprintf(
+			"All %d research agents finished. Synthesizing findings...",
+			len(findings),
+		),
+	).Get(ctx, nil); err != nil {
+		workflow.GetLogger(ctx).
+			Warn("failed to post narrative message", "taskID", input.TaskID, "error", err)
+	}
+
+	// ── Stage: synthesis ──
+	synthStageID, synthStartedAt := createStageSpan(
+		ctx, a, input.TaskID, parentSpanID, "synthesis",
+	)
+
+	outputPath := swarmOutputPath(
+		"research", input.RequestText, ".md",
+		startTime, input.LinearIssueID,
 	)
 
 	synthCtx := workflow.WithActivityOptions(ctx, agentActivityOpts())
 	var synthesize SynthesizeResult
 	if err := workflow.ExecuteActivity(
 		synthCtx, a.SynthesizeResearchDoc,
-		input.TaskID, parentSpanID,
+		input.TaskID, synthStageID,
 		SynthesizeInput{
 			TaskID:      input.TaskID,
 			RequestText: input.RequestText,
@@ -196,115 +391,186 @@ func runResearchSteps(
 		return zero, fmt.Errorf("synthesize research doc: %w", err)
 	}
 
-	return researchStepsResult{
-		findings:   findings,
-		synthesize: synthesize,
-		outputPath: outputPath,
+	completeStageSpan(ctx, a, synthStageID, synthStartedAt)
+
+	return ResearchStepsResult{
+		Findings:   findings,
+		Synthesize: synthesize,
+		OutputPath: outputPath,
 	}, nil
 }
 
 // ResearchWorkflow orchestrates a research task: question generation,
 // parallel research agents, and synthesis into a document.
-func ResearchWorkflow(ctx workflow.Context, input ResearchWorkflowInput) error {
+// When called as a child workflow (ParentSpanID is set), it skips task-level
+// status management and nests its span tree under the parent.
+func ResearchWorkflow(
+	ctx workflow.Context,
+	input ResearchWorkflowInput,
+) (ResearchStepsResult, error) {
 	var a *SwarmActivities
+	var zero ResearchStepsResult
+	isChild := input.ParentSpanID != ""
 	infraCtx := workflow.WithActivityOptions(ctx, infraActivityOpts())
 
-	// Create workflow span.
+	// Create workflow span — with parent if child workflow.
 	spanID := newSpanID(ctx)
 	startedAt := workflow.Now(ctx).UTC().Format(time.RFC3339)
 
+	spanParams := SpanParams{
+		ID:        spanID,
+		TaskID:    input.TaskID,
+		SpanType:  sqlc.SpanTypeWorkflow,
+		Name:      "research",
+		InputJSON: marshal(input),
+		StartedAt: startedAt,
+	}
+	if isChild {
+		spanParams.ParentSpanID = input.ParentSpanID
+	}
+
 	if err := workflow.ExecuteActivity(
-		infraCtx, a.CreateSpanActivity,
-		SpanParams{
-			ID:        spanID,
-			TaskID:    input.TaskID,
-			SpanType:  "workflow",
-			Name:      "research",
-			InputJSON: marshal(input),
-			StartedAt: startedAt,
-		},
+		infraCtx, a.CreateSpanActivity, spanParams,
 	).Get(ctx, nil); err != nil {
-		return fmt.Errorf("create workflow span: %w", err)
+		return zero, fmt.Errorf("create workflow span: %w", err)
 	}
 
 	var workflowErr error
-	defer func() { deferredCleanup(ctx, a, spanID, input.TaskID, workflowErr) }()
+	defer func() { deferredCleanup(ctx, a, spanID, input.TaskID, isChild, workflowErr) }()
 
-	// Mark task running.
-	if err := workflow.ExecuteActivity(
-		infraCtx, a.UpdateTaskStatus,
-		input.TaskID, "running",
-	).Get(ctx, nil); err != nil {
-		workflowErr = fmt.Errorf("update task status: %w", err)
-		return workflowErr
+	// Only manage task status if standalone (not child).
+	if !isChild {
+		if err := workflow.ExecuteActivity(
+			infraCtx, a.UpdateTaskStatus,
+			input.TaskID, sqlc.TaskStatusRunning,
+		).Get(ctx, nil); err != nil {
+			workflowErr = fmt.Errorf("update task status: %w", err)
+			return zero, workflowErr
+		}
+		if err := workflow.ExecuteActivity(
+			infraCtx, a.EmitEvent,
+			input.TaskID, "research.started", "",
+		).Get(ctx, nil); err != nil {
+			workflow.GetLogger(ctx).
+				Warn("failed to emit event", "taskID", input.TaskID, "event", "research.started", "error", err)
+		}
+
+		// Linear: set status and labels at start (standalone only).
+		runLinearActivity(ctx, a.UpdateLinearStatus, input.LinearIssueID, "In Progress")
+		runLinearActivity(
+			ctx,
+			a.UpdateLinearLabels,
+			input.LinearIssueID,
+			[]string{"type:research", "swarm:research"},
+		)
 	}
-	_ = workflow.ExecuteActivity(
-		infraCtx, a.EmitEvent,
-		input.TaskID, "research.started", "",
-	).Get(ctx, nil)
 
 	// Run research pipeline.
 	result, err := runResearchSteps(ctx, input, spanID)
 	if err != nil {
 		workflowErr = err
-		return workflowErr
+		return zero, workflowErr
 	}
 
 	// Write document to disk.
 	writeCtx := workflow.WithActivityOptions(ctx, infraActivityOpts())
 	if err := workflow.ExecuteActivity(
 		writeCtx, a.WriteDocument,
-		result.outputPath, result.synthesize.Document,
+		result.OutputPath, result.Synthesize.Document,
 	).Get(ctx, nil); err != nil {
 		workflowErr = fmt.Errorf("write research document: %w", err)
-		return workflowErr
+		return zero, workflowErr
 	}
 
 	// Persist artifact reference.
+	var researchArtifactID string
 	if err := workflow.ExecuteActivity(
 		infraCtx, a.PersistArtifact,
-		input.TaskID, "research_doc", result.outputPath,
-	).Get(ctx, nil); err != nil {
+		input.TaskID, sqlc.ArtifactTypeResearchDoc, result.OutputPath,
+	).Get(ctx, &researchArtifactID); err != nil {
 		workflowErr = fmt.Errorf("persist artifact: %w", err)
-		return workflowErr
+		return zero, workflowErr
 	}
 
-	// Complete workflow.
-	_ = workflow.ExecuteActivity(
-		infraCtx, a.UpdateTaskStatus,
-		input.TaskID, "completed",
-	).Get(ctx, nil)
-	_ = workflow.ExecuteActivity(
-		infraCtx, a.EmitEvent,
-		input.TaskID, "task.completed", "",
-	).Get(ctx, nil)
-	_ = workflow.ExecuteActivity(
-		infraCtx, a.CompleteSpanActivity,
-		spanID, startedAt, truncateJSON(result.synthesize),
-	).Get(ctx, nil)
+	// Narrative: complete.
+	if err := workflow.ExecuteActivity(
+		infraCtx, a.PostNarrativeMessage,
+		input.TaskID,
+		"Research complete. Document written to "+result.OutputPath,
+	).Get(ctx, nil); err != nil {
+		workflow.GetLogger(ctx).
+			Warn("failed to post narrative message", "taskID", input.TaskID, "error", err)
+	}
 
-	return nil
+	// Complete workflow span.
+	if err := workflow.ExecuteActivity(
+		infraCtx, a.CompleteSpanActivity,
+		spanID, startedAt, truncateJSON(result.Synthesize),
+	).Get(ctx, nil); err != nil {
+		workflow.GetLogger(ctx).
+			Warn("failed to complete workflow span", "spanID", spanID, "error", err)
+	}
+
+	// Only manage task status if standalone (not child).
+	if !isChild {
+		// Linear: post comment, link artifact, remove swarm label, mark done.
+		runLinearActivity(
+			ctx,
+			a.AddLinearComment,
+			input.LinearIssueID,
+			"## Research Complete\n\nDocument: `"+result.OutputPath+"`\n\nSummary: "+result.Synthesize.Summary,
+		)
+		if researchArtifactID != "" {
+			runLinearActivity(ctx, a.LinkArtifactToLinear, input.LinearIssueID,
+				"Research Doc", artifactURL(a, researchArtifactID))
+		}
+		runLinearActivity(
+			ctx,
+			a.UpdateLinearLabels,
+			input.LinearIssueID,
+			[]string{"type:research"},
+		)
+		runLinearActivity(ctx, a.UpdateLinearStatus, input.LinearIssueID, "Done")
+
+		if err := workflow.ExecuteActivity(
+			infraCtx, a.UpdateTaskStatus,
+			input.TaskID, sqlc.TaskStatusCompleted,
+		).Get(ctx, nil); err != nil {
+			workflow.GetLogger(ctx).
+				Warn("failed to update task status to completed", "taskID", input.TaskID, "error", err)
+		}
+		if err := workflow.ExecuteActivity(
+			infraCtx, a.EmitEvent,
+			input.TaskID, "task.completed", "",
+		).Get(ctx, nil); err != nil {
+			workflow.GetLogger(ctx).
+				Warn("failed to emit task.completed event", "taskID", input.TaskID, "error", err)
+		}
+	}
+
+	return result, nil
 }
 
-// CodeChangePlanWorkflow orchestrates a code change plan: research, domain
-// classification, specialist planning, and synthesis.
+// CodeChangePlanWorkflow orchestrates a code change plan: research (as child
+// workflow), domain classification, specialist planning, and synthesis.
 func CodeChangePlanWorkflow(
 	ctx workflow.Context,
 	input CodeChangePlanWorkflowInput,
 ) error {
 	var a *SwarmActivities
 	infraCtx := workflow.WithActivityOptions(ctx, infraActivityOpts())
+	startTime := workflow.Now(ctx).UTC()
 
 	// Create workflow span.
 	spanID := newSpanID(ctx)
-	startedAt := workflow.Now(ctx).UTC().Format(time.RFC3339)
+	startedAt := startTime.Format(time.RFC3339)
 
 	if err := workflow.ExecuteActivity(
 		infraCtx, a.CreateSpanActivity,
 		SpanParams{
 			ID:        spanID,
 			TaskID:    input.TaskID,
-			SpanType:  "workflow",
+			SpanType:  sqlc.SpanTypeWorkflow,
 			Name:      "code_change_plan",
 			InputJSON: marshal(input),
 			StartedAt: startedAt,
@@ -314,43 +580,110 @@ func CodeChangePlanWorkflow(
 	}
 
 	var workflowErr error
-	defer func() { deferredCleanup(ctx, a, spanID, input.TaskID, workflowErr) }()
+	defer func() { deferredCleanup(ctx, a, spanID, input.TaskID, false, workflowErr) }()
 
 	// Mark task running.
 	if err := workflow.ExecuteActivity(
 		infraCtx, a.UpdateTaskStatus,
-		input.TaskID, "running",
+		input.TaskID, sqlc.TaskStatusRunning,
 	).Get(ctx, nil); err != nil {
 		workflowErr = fmt.Errorf("update task status: %w", err)
 		return workflowErr
 	}
-	_ = workflow.ExecuteActivity(
+	if err := workflow.ExecuteActivity(
 		infraCtx, a.EmitEvent,
 		input.TaskID, "code_plan.started", "",
-	).Get(ctx, nil)
+	).Get(ctx, nil); err != nil {
+		workflow.GetLogger(ctx).
+			Warn("failed to emit event", "taskID", input.TaskID, "event", "code_plan.started", "error", err)
+	}
 
-	// Inline research steps (reuse shared pipeline, NOT child workflow).
-	research, err := runResearchSteps(ctx, ResearchWorkflowInput(input), spanID)
-	if err != nil {
-		workflowErr = err
+	// Linear: set status and labels at start.
+	runLinearActivity(ctx, a.UpdateLinearStatus, input.LinearIssueID, "In Progress")
+	runLinearActivity(
+		ctx,
+		a.UpdateLinearLabels,
+		input.LinearIssueID,
+		[]string{"type:code-change", "swarm:research"},
+	)
+
+	// ── Research phase (child workflow) ──
+	childOpts := workflow.ChildWorkflowOptions{
+		WorkflowID:               "swarm-research-child-" + input.TaskID,
+		WorkflowExecutionTimeout: researchWorkflowTimeout,
+	}
+	childCtx := workflow.WithChildOptions(ctx, childOpts)
+
+	var research ResearchStepsResult
+	if err := workflow.ExecuteChildWorkflow(childCtx, ResearchWorkflow, ResearchWorkflowInput{
+		TaskID:        input.TaskID,
+		RequestText:   input.RequestText,
+		RepoRoot:      input.RepoRoot,
+		ParentSpanID:  spanID,
+		LinearIssueID: input.LinearIssueID,
+	}).
+		Get(ctx, &research); err != nil {
+		workflowErr = fmt.Errorf("research child workflow: %w", err)
 		return workflowErr
 	}
+
+	// Linear: research done, transition to planning.
+	runLinearActivity(
+		ctx,
+		a.AddLinearComment,
+		input.LinearIssueID,
+		"## Research Complete\n\nDocument: `"+research.OutputPath+"`\n\nSummary: "+research.Synthesize.Summary,
+	)
+	runLinearActivity(
+		ctx,
+		a.UpdateLinearLabels,
+		input.LinearIssueID,
+		[]string{"type:code-change", "swarm:planning"},
+	)
+
+	// ── Planning phase (stage span) ──
+	planStageID, planStageStartedAt := createStageSpan(
+		ctx, a, input.TaskID, spanID, "planning",
+	)
 
 	// Classify domains.
 	classifyCtx := workflow.WithActivityOptions(ctx, agentActivityOpts())
 	var classifyResult ClassifyResult
 	if err := workflow.ExecuteActivity(
 		classifyCtx, a.ClassifyPlanDomains,
-		input.TaskID, spanID,
+		input.TaskID, planStageID,
 		ClassifyInput{
 			TaskID:          input.TaskID,
 			RequestText:     input.RequestText,
-			ResearchDocPath: research.outputPath,
+			ResearchDocPath: research.OutputPath,
 			RepoRoot:        input.RepoRoot,
+			OutputPath: swarmOutputPath(
+				"plan-classifications", input.RequestText, ".yaml",
+				startTime, input.LinearIssueID,
+			),
 		},
 	).Get(ctx, &classifyResult); err != nil {
 		workflowErr = fmt.Errorf("classify plan domains: %w", err)
 		return workflowErr
+	}
+
+	// Narrative: domains classified.
+	var domainNames []string
+	for _, p := range classifyResult.Planners {
+		domainNames = append(domainNames, p.Type)
+	}
+	if err := workflow.ExecuteActivity(
+		infraCtx,
+		a.PostNarrativeMessage,
+		input.TaskID,
+		fmt.Sprintf(
+			"Identified %d specialist domains: %s. Running planners...",
+			len(classifyResult.Planners),
+			strings.Join(domainNames, ", "),
+		),
+	).Get(ctx, nil); err != nil {
+		workflow.GetLogger(ctx).
+			Warn("failed to post narrative message", "taskID", input.TaskID, "error", err)
 	}
 
 	// Fan-out specialist planners.
@@ -363,14 +696,18 @@ func CodeChangePlanWorkflow(
 			var output PlannerOutput
 			planErr := workflow.ExecuteActivity(
 				agentCtx, a.RunSpecialistPlanner,
-				input.TaskID, spanID,
+				input.TaskID, planStageID,
 				SpecialistInput{
 					TaskID:      input.TaskID,
 					Domain:      domain,
 					Focus:       focus,
 					RequestText: input.RequestText,
-					ResearchDoc: research.synthesize.Summary,
+					ResearchDoc: research.Synthesize.Document,
 					RepoRoot:    input.RepoRoot,
+					OutputPath: swarmOutputPath(
+						"specialist-plans", domain, ".md",
+						startTime, input.LinearIssueID,
+					),
 				},
 			).Get(gCtx, &output)
 			if planErr != nil {
@@ -391,20 +728,20 @@ func CodeChangePlanWorkflow(
 	}
 
 	// Synthesize plan document.
-	slug := sanitizeSlug(input.RequestText)
-	planOutputPath := filepath.Join(
-		"thoughts", "swarm", "project-plans", slug+".md",
+	planOutputPath := swarmOutputPath(
+		"project-plans", input.RequestText, ".md",
+		startTime, input.LinearIssueID,
 	)
 
 	synthCtx := workflow.WithActivityOptions(ctx, agentActivityOpts())
 	var planResult PlanSynthesizeResult
 	if err := workflow.ExecuteActivity(
 		synthCtx, a.SynthesizePlanDoc,
-		input.TaskID, spanID,
+		input.TaskID, planStageID,
 		PlanSynthesizeInput{
 			TaskID:             input.TaskID,
 			RequestText:        input.RequestText,
-			ResearchDocSummary: research.synthesize.Summary,
+			ResearchDocSummary: research.Synthesize.Summary,
 			PlannerOutputs:     plannerOutputs,
 			OutputPath:         planOutputPath,
 		},
@@ -412,6 +749,8 @@ func CodeChangePlanWorkflow(
 		workflowErr = fmt.Errorf("synthesize plan doc: %w", err)
 		return workflowErr
 	}
+
+	completeStageSpan(ctx, a, planStageID, planStageStartedAt)
 
 	// Write document to disk.
 	writeCtx := workflow.WithActivityOptions(ctx, infraActivityOpts())
@@ -424,27 +763,81 @@ func CodeChangePlanWorkflow(
 	}
 
 	// Persist artifact reference.
+	var planArtifactID string
 	if err := workflow.ExecuteActivity(
 		infraCtx, a.PersistArtifact,
-		input.TaskID, "code_change_plan", planOutputPath,
-	).Get(ctx, nil); err != nil {
+		input.TaskID, sqlc.ArtifactTypePlanDoc, planOutputPath,
+	).Get(ctx, &planArtifactID); err != nil {
 		workflowErr = fmt.Errorf("persist artifact: %w", err)
 		return workflowErr
 	}
 
+	// Linear: plan complete, post comment, link artifact, remove swarm label, set to In Review.
+	runLinearActivity(
+		ctx,
+		a.AddLinearComment,
+		input.LinearIssueID,
+		"## Plan Complete\n\nDocument: `"+planOutputPath+"`\n\nSummary: "+planResult.Summary,
+	)
+	if planArtifactID != "" {
+		runLinearActivity(ctx, a.LinkArtifactToLinear, input.LinearIssueID,
+			"Implementation Plan", artifactURL(a, planArtifactID))
+	}
+	runLinearActivity(
+		ctx,
+		a.UpdateLinearLabels,
+		input.LinearIssueID,
+		[]string{"type:code-change"},
+	)
+	runLinearActivity(ctx, a.UpdateLinearStatus, input.LinearIssueID, "In Review")
+
+	// Narrative: complete.
+	logger := workflow.GetLogger(ctx)
+	if err := workflow.ExecuteActivity(
+		infraCtx, a.PostNarrativeMessage,
+		input.TaskID,
+		"Code change plan complete. Document written to "+planOutputPath,
+	).Get(ctx, nil); err != nil {
+		logger.Warn(
+			"failed to post narrative message",
+			"taskID",
+			input.TaskID,
+			"error",
+			err,
+		)
+	}
+
 	// Complete workflow.
-	_ = workflow.ExecuteActivity(
+	if err := workflow.ExecuteActivity(
 		infraCtx, a.UpdateTaskStatus,
-		input.TaskID, "completed",
-	).Get(ctx, nil)
-	_ = workflow.ExecuteActivity(
+		input.TaskID, sqlc.TaskStatusCompleted,
+	).Get(ctx, nil); err != nil {
+		logger.Warn(
+			"failed to update task status to completed",
+			"taskID",
+			input.TaskID,
+			"error",
+			err,
+		)
+	}
+	if err := workflow.ExecuteActivity(
 		infraCtx, a.EmitEvent,
 		input.TaskID, "task.completed", "",
-	).Get(ctx, nil)
-	_ = workflow.ExecuteActivity(
+	).Get(ctx, nil); err != nil {
+		logger.Warn(
+			"failed to emit task.completed event",
+			"taskID",
+			input.TaskID,
+			"error",
+			err,
+		)
+	}
+	if err := workflow.ExecuteActivity(
 		infraCtx, a.CompleteSpanActivity,
 		spanID, startedAt, truncateJSON(planResult),
-	).Get(ctx, nil)
+	).Get(ctx, nil); err != nil {
+		logger.Warn("failed to complete workflow span", "spanID", spanID, "error", err)
+	}
 
 	return nil
 }

@@ -1,9 +1,11 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -15,19 +17,42 @@ import (
 	swarmview "creative-mode/harness/views/swarm"
 )
 
-const (
-	swarmHeartbeatInterval = 30 * time.Second
-	swarmTypeResearch      = "research"
-	swarmTypeCodePlan      = "code_change_plan"
-	swarmStatusRunning     = "running"
-	swarmStatusPending     = "pending"
-)
+const swarmHeartbeatInterval = 30 * time.Second
+
+// swarmTaskDetail holds the data needed to render the detail pane.
+type swarmTaskDetail struct {
+	Spans     []sqlc.GetSwarmSpanTreeRow
+	Artifacts []sqlc.SwarmArtifact
+	Messages  []sqlc.SwarmTaskMessage
+}
+
+// loadTaskDetail fetches spans, artifacts, and messages for a task, logging any failures.
+func (s *Server) loadTaskDetail(
+	ctx context.Context,
+	taskID, label string,
+) swarmTaskDetail {
+	var d swarmTaskDetail
+	var err error
+	if d.Spans, err = s.DB.GetSwarmSpanTree(ctx, taskID); err != nil {
+		s.Logger.Warn(label+": failed to load spans", "taskID", taskID, "error", err)
+	}
+	if d.Artifacts, err = s.DB.GetSwarmArtifactsByTask(ctx, taskID); err != nil {
+		s.Logger.Warn(label+": failed to load artifacts", "taskID", taskID, "error", err)
+	}
+	if d.Messages, err = s.DB.GetSwarmTaskMessages(ctx, taskID); err != nil {
+		s.Logger.Warn(label+": failed to load messages", "taskID", taskID, "error", err)
+	}
+	return d
+}
 
 // handleSwarmDashboard renders the swarm agent dashboard.
 func (s *Server) handleSwarmDashboard(c echo.Context) error {
 	ctx := c.Request().Context()
 
-	tasks, _ := s.DB.ListSwarmTasks(ctx, defaultQueryLimit)
+	tasks, err := s.DB.ListSwarmTasks(ctx, defaultQueryLimit)
+	if err != nil {
+		s.Logger.Warn("failed to list swarm tasks", "error", err)
+	}
 
 	data := swarmview.DashboardData{
 		Tasks: tasks,
@@ -43,9 +68,10 @@ func (s *Server) handleSwarmDashboard(c echo.Context) error {
 		task, err := s.DB.GetSwarmTask(ctx, taskID)
 		if err == nil {
 			data.SelectedTask = &task
-			data.Spans, _ = s.DB.GetSwarmSpanTree(ctx, taskID)
-			data.Artifacts, _ = s.DB.GetSwarmArtifactsByTask(ctx, taskID)
-			data.Messages, _ = s.DB.GetSwarmTaskMessages(ctx, taskID)
+			d := s.loadTaskDetail(ctx, taskID, "dashboard")
+			data.Spans = d.Spans
+			data.Artifacts = d.Artifacts
+			data.Messages = d.Messages
 		}
 	}
 
@@ -55,7 +81,7 @@ func (s *Server) handleSwarmDashboard(c echo.Context) error {
 // firstActiveTaskID returns the ID of the first running/pending task, or the first task.
 func firstActiveTaskID(tasks []sqlc.SwarmTask) string {
 	for _, t := range tasks {
-		if t.Status == swarmStatusRunning || t.Status == swarmStatusPending {
+		if t.Status == sqlc.TaskStatusRunning || t.Status == sqlc.TaskStatusPending {
 			return t.ID
 		}
 	}
@@ -106,7 +132,10 @@ func (s *Server) handleSwarmDashboardSSE(c echo.Context) error {
 		select {
 		case <-swarmCh:
 			ctx := r.Context()
-			tasks, _ := s.DB.ListSwarmTasks(ctx, defaultQueryLimit)
+			tasks, err := s.DB.ListSwarmTasks(ctx, defaultQueryLimit)
+			if err != nil {
+				s.Logger.Warn("SSE: failed to list tasks", "error", err)
+			}
 
 			detailTaskID := firstActiveTaskID(tasks)
 
@@ -117,15 +146,13 @@ func (s *Server) handleSwarmDashboardSSE(c echo.Context) error {
 			if detailTaskID != "" {
 				task, err := s.DB.GetSwarmTask(ctx, detailTaskID)
 				if err == nil {
-					spans, _ := s.DB.GetSwarmSpanTree(ctx, detailTaskID)
-					artifacts, _ := s.DB.GetSwarmArtifactsByTask(ctx, detailTaskID)
-					messages, _ := s.DB.GetSwarmTaskMessages(ctx, detailTaskID)
+					d := s.loadTaskDetail(ctx, detailTaskID, "SSE")
 					if err := patchSwarmDetail(
 						sse,
 						task,
-						messages,
-						spans,
-						artifacts,
+						d.Messages,
+						d.Spans,
+						d.Artifacts,
 					); err != nil {
 						return nil // client disconnected
 					}
@@ -139,7 +166,10 @@ func (s *Server) handleSwarmDashboardSSE(c echo.Context) error {
 
 		case <-heartbeat.C:
 			ctx := r.Context()
-			tasks, _ := s.DB.ListSwarmTasks(ctx, defaultQueryLimit)
+			tasks, err := s.DB.ListSwarmTasks(ctx, defaultQueryLimit)
+			if err != nil {
+				s.Logger.Warn("SSE heartbeat: failed to list tasks", "error", err)
+			}
 
 			selectedID := firstActiveTaskID(tasks)
 
@@ -150,16 +180,14 @@ func (s *Server) handleSwarmDashboardSSE(c echo.Context) error {
 			if selectedID != "" {
 				task, err := s.DB.GetSwarmTask(ctx, selectedID)
 				if err == nil &&
-					(task.Status == swarmStatusRunning || task.Status == swarmStatusPending) {
-					spans, _ := s.DB.GetSwarmSpanTree(ctx, selectedID)
-					artifacts, _ := s.DB.GetSwarmArtifactsByTask(ctx, selectedID)
-					messages, _ := s.DB.GetSwarmTaskMessages(ctx, selectedID)
+					(task.Status == sqlc.TaskStatusRunning || task.Status == sqlc.TaskStatusPending) {
+					d := s.loadTaskDetail(ctx, selectedID, "SSE heartbeat")
 					if err := patchSwarmDetail(
 						sse,
 						task,
-						messages,
-						spans,
-						artifacts,
+						d.Messages,
+						d.Spans,
+						d.Artifacts,
 					); err != nil {
 						return nil // client disconnected
 					}
@@ -184,8 +212,9 @@ func (s *Server) handleSwarmStartTaskDashboard(c echo.Context) error {
 	}
 
 	var signals struct {
-		NewTaskType string `json:"new_task_type"` //nolint:tagliatelle // Datastar signal name
-		NewTaskText string `json:"new_task_text"` //nolint:tagliatelle // Datastar signal name
+		NewTaskType   string `json:"new_task_type"`   //nolint:tagliatelle // Datastar signal name
+		NewTaskText   string `json:"new_task_text"`   //nolint:tagliatelle // Datastar signal name
+		NewTaskTicket string `json:"new_task_ticket"` //nolint:tagliatelle // Datastar signal name
 	}
 	if err := datastar.ReadSignals(c.Request(), &signals); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid signals")
@@ -194,20 +223,24 @@ func (s *Server) handleSwarmStartTaskDashboard(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "request text is required")
 	}
 
-	primitiveType := signals.NewTaskType
-	if primitiveType != swarmTypeResearch && primitiveType != swarmTypeCodePlan {
-		primitiveType = swarmTypeResearch
+	primitiveType := sqlc.PrimitiveType(signals.NewTaskType)
+	if primitiveType != sqlc.PrimitiveTypeResearch &&
+		primitiveType != sqlc.PrimitiveTypeCodeChangePlan {
+		primitiveType = sqlc.PrimitiveTypeResearch
 	}
 
 	// Create task.
 	taskID := uuid.NewString()[:8]
 	now := time.Now().UTC().Format(time.RFC3339)
 
+	ticketID := strings.TrimSpace(signals.NewTaskTicket)
+
 	if err := s.DB.CreateSwarmTask(ctx, sqlc.CreateSwarmTaskParams{
 		ID:            taskID,
 		PrimitiveType: primitiveType,
 		RequestText:   signals.NewTaskText,
-		Status:        swarmStatusPending,
+		Status:        sqlc.TaskStatusPending,
+		LinearIssueID: sql.NullString{String: ticketID, Valid: ticketID != ""},
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}); err != nil {
@@ -220,50 +253,114 @@ func (s *Server) handleSwarmStartTaskDashboard(c echo.Context) error {
 		workflowID string
 		wfErr      error
 	)
-	if primitiveType == swarmTypeResearch {
-		workflowID, wfErr = s.SwarmManager.StartResearch(ctx, taskID, signals.NewTaskText)
+	if primitiveType == sqlc.PrimitiveTypeResearch {
+		workflowID, wfErr = s.SwarmManager.StartResearch(
+			ctx,
+			taskID,
+			signals.NewTaskText,
+			ticketID,
+		)
 	} else {
-		workflowID, wfErr = s.SwarmManager.StartCodePlan(ctx, taskID, signals.NewTaskText)
+		workflowID, wfErr = s.SwarmManager.StartCodePlan(
+			ctx,
+			taskID,
+			signals.NewTaskText,
+			ticketID,
+		)
 	}
 	if wfErr != nil {
 		s.Logger.Error("failed to start workflow",
 			"type", primitiveType, "taskID", taskID, "error", wfErr)
-		_ = s.DB.UpdateSwarmTaskStatus(ctx, sqlc.UpdateSwarmTaskStatusParams{
-			Status:    "failed",
+		if statusErr := s.DB.UpdateSwarmTaskStatus(ctx, sqlc.UpdateSwarmTaskStatusParams{
+			Status:    sqlc.TaskStatusFailed,
 			UpdatedAt: time.Now().UTC().Format(time.RFC3339),
 			ID:        taskID,
-		})
+		}); statusErr != nil {
+			s.Logger.Error(
+				"failed to mark task as failed",
+				"taskID",
+				taskID,
+				"error",
+				statusErr,
+			)
+		}
 		return echo.NewHTTPError(
 			http.StatusInternalServerError,
 			"failed to start workflow",
 		)
 	}
 
-	_ = s.DB.UpdateSwarmTaskWorkflowID(ctx, sqlc.UpdateSwarmTaskWorkflowIDParams{
+	if err := s.DB.UpdateSwarmTaskWorkflowID(ctx, sqlc.UpdateSwarmTaskWorkflowIDParams{
 		WorkflowID: sql.NullString{String: workflowID, Valid: true},
 		UpdatedAt:  time.Now().UTC().Format(time.RFC3339),
 		ID:         taskID,
-	})
+	}); err != nil {
+		s.Logger.Error("failed to persist workflow ID", "taskID", taskID, "error", err)
+		return echo.NewHTTPError(
+			http.StatusInternalServerError,
+			"failed to persist workflow",
+		)
+	}
 
 	// SSE response: clear form and select new task.
 	sse := datastar.NewSSE(c.Response().Writer, c.Request())
 
 	_ = sse.MarshalAndPatchSignals(map[string]any{
 		"new_task_text":    "",
+		"new_task_ticket":  "",
 		"show_new_form":    false,
 		"selected_task_id": taskID,
 		"active_tab":       "chat",
 	})
 
 	// Patch sidebar + detail.
-	tasks, _ := s.DB.ListSwarmTasks(ctx, defaultQueryLimit)
-	_ = patchSwarmSidebar(sse, tasks, taskID)
+	tasks, tasksErr := s.DB.ListSwarmTasks(ctx, defaultQueryLimit)
+	if tasksErr != nil {
+		s.Logger.Warn("failed to list tasks after creation", "error", tasksErr)
+	}
+	_ = patchSwarmSidebar(sse, tasks, taskID) // SSE — fine to ignore
 
-	task, _ := s.DB.GetSwarmTask(ctx, taskID)
-	spans, _ := s.DB.GetSwarmSpanTree(ctx, taskID)
-	artifacts, _ := s.DB.GetSwarmArtifactsByTask(ctx, taskID)
-	messages, _ := s.DB.GetSwarmTaskMessages(ctx, taskID)
-	_ = patchSwarmDetail(sse, task, messages, spans, artifacts)
+	task, taskErr := s.DB.GetSwarmTask(ctx, taskID)
+	if taskErr != nil {
+		s.Logger.Warn(
+			"failed to get task after creation",
+			"taskID",
+			taskID,
+			"error",
+			taskErr,
+		)
+	}
+	spans, spansErr := s.DB.GetSwarmSpanTree(ctx, taskID)
+	if spansErr != nil {
+		s.Logger.Warn(
+			"failed to load spans after creation",
+			"taskID",
+			taskID,
+			"error",
+			spansErr,
+		)
+	}
+	artifacts, artifactsErr := s.DB.GetSwarmArtifactsByTask(ctx, taskID)
+	if artifactsErr != nil {
+		s.Logger.Warn(
+			"failed to load artifacts after creation",
+			"taskID",
+			taskID,
+			"error",
+			artifactsErr,
+		)
+	}
+	messages, msgsErr := s.DB.GetSwarmTaskMessages(ctx, taskID)
+	if msgsErr != nil {
+		s.Logger.Warn(
+			"failed to load messages after creation",
+			"taskID",
+			taskID,
+			"error",
+			msgsErr,
+		)
+	}
+	_ = patchSwarmDetail(sse, task, messages, spans, artifacts) // SSE — fine to ignore
 
 	return nil
 }
@@ -305,16 +402,91 @@ func (s *Server) handleSwarmCancelTaskDashboard(c echo.Context) error {
 	sse := datastar.NewSSE(c.Response().Writer, c.Request())
 
 	// Re-fetch and patch.
-	tasks, _ := s.DB.ListSwarmTasks(ctx, defaultQueryLimit)
-	_ = patchSwarmSidebar(sse, tasks, taskID)
+	tasks, tasksErr := s.DB.ListSwarmTasks(ctx, defaultQueryLimit)
+	if tasksErr != nil {
+		s.Logger.Warn("failed to list tasks after cancel", "error", tasksErr)
+	}
+	_ = patchSwarmSidebar(sse, tasks, taskID) // SSE — fine to ignore
 
-	updatedTask, _ := s.DB.GetSwarmTask(ctx, taskID)
-	spans, _ := s.DB.GetSwarmSpanTree(ctx, taskID)
-	artifacts, _ := s.DB.GetSwarmArtifactsByTask(ctx, taskID)
-	messages, _ := s.DB.GetSwarmTaskMessages(ctx, taskID)
-	_ = patchSwarmDetail(sse, updatedTask, messages, spans, artifacts)
+	updatedTask, taskErr := s.DB.GetSwarmTask(ctx, taskID)
+	if taskErr != nil {
+		s.Logger.Warn(
+			"failed to get task after cancel",
+			"taskID",
+			taskID,
+			"error",
+			taskErr,
+		)
+	}
+	spans, spansErr := s.DB.GetSwarmSpanTree(ctx, taskID)
+	if spansErr != nil {
+		s.Logger.Warn(
+			"failed to load spans after cancel",
+			"taskID",
+			taskID,
+			"error",
+			spansErr,
+		)
+	}
+	artifacts, artifactsErr := s.DB.GetSwarmArtifactsByTask(ctx, taskID)
+	if artifactsErr != nil {
+		s.Logger.Warn(
+			"failed to load artifacts after cancel",
+			"taskID",
+			taskID,
+			"error",
+			artifactsErr,
+		)
+	}
+	messages, msgsErr := s.DB.GetSwarmTaskMessages(ctx, taskID)
+	if msgsErr != nil {
+		s.Logger.Warn(
+			"failed to load messages after cancel",
+			"taskID",
+			taskID,
+			"error",
+			msgsErr,
+		)
+	}
+	_ = patchSwarmDetail(
+		sse,
+		updatedTask,
+		messages,
+		spans,
+		artifacts,
+	) // SSE — fine to ignore
 
 	return nil
+}
+
+// handleSwarmArtifactView serves an artifact file by ID.
+func (s *Server) handleSwarmArtifactView(c echo.Context) error {
+	ctx := c.Request().Context()
+	artifactID := c.Param("id")
+
+	artifact, err := s.DB.GetSwarmArtifact(ctx, artifactID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return echo.NewHTTPError(http.StatusNotFound, "artifact not found")
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get artifact")
+	}
+
+	// Resolve file path relative to the repo root (one level up from DataDir).
+	repoRoot := filepath.Dir(s.DataDir)
+	fullPath := filepath.Join(repoRoot, artifact.FilePath)
+
+	// Security: ensure resolved path stays within repo root.
+	absPath, err := filepath.Abs(fullPath)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to resolve path")
+	}
+	absRoot, _ := filepath.Abs(repoRoot)
+	if !strings.HasPrefix(absPath, absRoot) {
+		return echo.NewHTTPError(http.StatusForbidden, "path traversal")
+	}
+
+	return c.File(absPath)
 }
 
 // handleSwarmChatMessage handles user chat messages on the swarm dashboard.
@@ -353,7 +525,7 @@ func (s *Server) handleSwarmChatMessage(c echo.Context) error {
 	if err := s.DB.CreateSwarmTaskMessage(ctx, sqlc.CreateSwarmTaskMessageParams{
 		ID:        msgID,
 		TaskID:    task.ID,
-		Role:      "user",
+		Role:      sqlc.MessageRoleUser,
 		Content:   chatText,
 		CreatedAt: now,
 	}); err != nil {

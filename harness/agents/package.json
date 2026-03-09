@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "postinstall": "bash scripts/postinstall.sh",
     "lint": "eslint .",
     "lint:fix": "eslint --fix ."
   },

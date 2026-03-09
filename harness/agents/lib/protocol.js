@@ -35,8 +35,9 @@ export function sendQuestion(id, text) {
   process.stdout.write(JSON.stringify({ type: 'question', id, text }) + '\n');
 }
 
-export function sendResult(data) {
-  process.stdout.write(JSON.stringify({ type: 'result', data }) + '\n');
+export function closeProtocol() {
+  stopHeartbeat();
+  if (rl) rl.close();
 }
 
 // Periodic heartbeat so the Go orchestrator knows the agent is alive

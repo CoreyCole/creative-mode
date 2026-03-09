@@ -41,6 +41,10 @@ FROM swarm_research_questions WHERE task_id = ? ORDER BY agent_index;
 INSERT INTO swarm_artifacts (id, task_id, artifact_type, file_path, created_at)
 VALUES (?, ?, ?, ?, ?);
 
+-- name: GetSwarmArtifact :one
+SELECT id, task_id, artifact_type, file_path, created_at
+FROM swarm_artifacts WHERE id = ?;
+
 -- name: GetSwarmArtifactsByTask :many
 SELECT id, task_id, artifact_type, file_path, created_at
 FROM swarm_artifacts WHERE task_id = ? ORDER BY created_at;
@@ -60,6 +64,21 @@ WHERE id = ?;
 UPDATE swarm_spans
 SET status = 'failed', error_message = ?, ended_at = ?, duration_ms = ?
 WHERE id = ?;
+
+-- name: CompleteSwarmSpanWithMetadata :exec
+UPDATE swarm_spans
+SET status = 'completed', output_json = ?, ended_at = ?, duration_ms = ?, metadata_json = ?
+WHERE id = ?;
+
+-- name: FailSwarmSpanWithMetadata :exec
+UPDATE swarm_spans
+SET status = 'failed', error_message = ?, ended_at = ?, duration_ms = ?, metadata_json = ?
+WHERE id = ?;
+
+-- name: FailRunningSpansByTask :exec
+UPDATE swarm_spans
+SET status = 'failed', error_message = ?, ended_at = datetime('now'), duration_ms = 0
+WHERE task_id = ? AND status = 'running';
 
 -- name: GetSwarmSpan :one
 SELECT id, task_id, parent_span_id, span_type, name, status, input_json, output_json,

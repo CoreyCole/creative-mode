@@ -85,14 +85,14 @@ func (o *Orchestrator) HandlePrompt(
 
 	// Look up world template type.
 	w, wErr := o.db.GetWorld(ctx, worldID)
-	templateType := "3d"
+	templateType := sqlc.TemplateType3D
 	if wErr == nil {
 		templateType = w.TemplateType
 	}
 
 	// Start dev server (cargo watch) — non-fatal if it fails. Only for 3D.
 	var extraEnv []string
-	if templateType == "3d" {
+	if templateType == sqlc.TemplateType3D {
 		devSrv, devErr := o.worldManager.GameServers.ConnectDev(
 			worldID,
 			cp.ID,
@@ -156,7 +156,7 @@ func (o *Orchestrator) BuildCheckpoint(worldID, cpID string) {
 
 	// Look up world template type.
 	w, wErr := o.db.GetWorld(ctx, worldID)
-	templateType := "3d"
+	templateType := sqlc.TemplateType3D
 	if wErr == nil {
 		templateType = w.TemplateType
 	}
@@ -169,10 +169,10 @@ func (o *Orchestrator) BuildCheckpoint(worldID, cpID string) {
 
 	// Build (server binary + WASM client).
 	isInitial := !cp.ParentCheckpointID.Valid
-	if buildErr := o.bld.Build(&cp, isInitial, templateType); buildErr != nil {
+	if buildErr := o.bld.Build(&cp, isInitial, string(templateType)); buildErr != nil {
 		o.logger.Error("build failed", "cpID", cpID, "error", buildErr)
 		_, _ = o.db.UpdateCheckpointStatus(ctx, sqlc.UpdateCheckpointStatusParams{
-			Status:   "failed",
+			Status:   sqlc.CheckpointStatusFailed,
 			BuildLog: sql.NullString{String: buildErr.Error(), Valid: true},
 			ID:       cpID,
 		})
@@ -199,7 +199,7 @@ func (o *Orchestrator) BuildCheckpoint(worldID, cpID string) {
 
 	// Update status to ready.
 	_, _ = o.db.UpdateCheckpointStatus(ctx, sqlc.UpdateCheckpointStatusParams{
-		Status: "ready",
+		Status: sqlc.CheckpointStatusReady,
 		ID:     cpID,
 	})
 	if cp.WasmPath.Valid {
@@ -211,7 +211,7 @@ func (o *Orchestrator) BuildCheckpoint(worldID, cpID string) {
 
 	// Start game server (3D only).
 	var serverPort int
-	if templateType == "3d" {
+	if templateType == sqlc.TemplateType3D {
 		// Stop old game servers for this world before starting the new one.
 		o.worldManager.GameServers.StopByWorldExcept(worldID, cpID)
 
@@ -330,8 +330,8 @@ func (o *Orchestrator) ReapOrphanedSessions() {
 			continue
 		}
 
-		if cp.Status != "building" {
-			o.killTmuxSession(line, "checkpoint status: "+cp.Status)
+		if cp.Status != sqlc.CheckpointStatusBuilding {
+			o.killTmuxSession(line, "checkpoint status: "+string(cp.Status))
 		}
 	}
 }
@@ -348,7 +348,7 @@ func (o *Orchestrator) killTmuxSession(name, reason string) {
 // markCheckpointFailed updates a checkpoint to "failed" status.
 func (o *Orchestrator) markCheckpointFailed(ctx context.Context, cpID, reason string) {
 	_, _ = o.db.UpdateCheckpointStatus(ctx, sqlc.UpdateCheckpointStatusParams{
-		Status:   "failed",
+		Status:   sqlc.CheckpointStatusFailed,
 		BuildLog: sql.NullString{String: reason, Valid: true},
 		ID:       cpID,
 	})

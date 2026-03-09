@@ -98,7 +98,7 @@ func (m *Manager) ProvisionFromWebhook(
 		Name:         worldName,
 		Description:  sql.NullString{String: "Created via Meet the Mayor", Valid: true},
 		CreatedBy:    sql.NullString{String: creatorID, Valid: creatorID != ""},
-		TemplateType: "2d", // Default to 2D for mayor-managed worlds
+		TemplateType: sqlc.TemplateType2D, // Default to 2D for mayor-managed worlds
 	}); err != nil {
 		return fmt.Errorf("creating world: %w", err)
 	}

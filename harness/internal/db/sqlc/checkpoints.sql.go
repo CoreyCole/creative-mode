@@ -32,7 +32,7 @@ type CreateCheckpointParams struct {
 	ParentCheckpointID sql.NullString
 	Name               sql.NullString
 	Prompt             sql.NullString
-	Status             string
+	Status             CheckpointStatus
 	DirPath            string
 	CreatedBy          sql.NullString
 }
@@ -173,7 +173,7 @@ UPDATE checkpoints SET status = ?, build_log = ? WHERE id = ?
 `
 
 type UpdateCheckpointStatusParams struct {
-	Status   string
+	Status   CheckpointStatus
 	BuildLog sql.NullString
 	ID       string
 }

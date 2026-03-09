@@ -108,12 +108,13 @@ func (m *Manager) CreateWorld(
 
 	qtx := m.db.WithTx(tx)
 
+	tt := sqlc.TemplateType(templateType)
 	if err := qtx.CreateWorld(ctx, sqlc.CreateWorldParams{
 		ID:           worldID,
 		Name:         name,
 		Description:  sql.NullString{String: description, Valid: description != ""},
 		CreatedBy:    sql.NullString{String: userID, Valid: userID != ""},
-		TemplateType: templateType,
+		TemplateType: tt,
 	}); err != nil {
 		_ = os.RemoveAll(worldDir)
 		return nil, fmt.Errorf("inserting world: %w", err)
@@ -122,13 +123,13 @@ func (m *Manager) CreateWorld(
 	cp := &sqlc.Checkpoint{
 		ID:      cpID,
 		WorldID: worldID,
-		Status:  "ready",
+		Status:  sqlc.CheckpointStatusReady,
 		DirPath: cpDir,
 	}
 	if err := qtx.CreateCheckpoint(ctx, sqlc.CreateCheckpointParams{
 		ID:        cpID,
 		WorldID:   worldID,
-		Status:    "ready",
+		Status:    sqlc.CheckpointStatusReady,
 		DirPath:   cpDir,
 		CreatedBy: sql.NullString{String: userID, Valid: userID != ""},
 	}); err != nil {
@@ -164,7 +165,7 @@ func (m *Manager) CreateWorld(
 				buildErr,
 			)
 			_, _ = m.db.UpdateCheckpointStatus(bgCtx, sqlc.UpdateCheckpointStatusParams{
-				Status:   "failed",
+				Status:   sqlc.CheckpointStatusFailed,
 				BuildLog: sql.NullString{String: buildErr.Error(), Valid: true},
 				ID:       cpID,
 			})
@@ -173,7 +174,7 @@ func (m *Manager) CreateWorld(
 		}
 
 		_, _ = m.db.UpdateCheckpointStatus(bgCtx, sqlc.UpdateCheckpointStatusParams{
-			Status: "ready",
+			Status: sqlc.CheckpointStatusReady,
 			ID:     cpID,
 		})
 		if cp.WasmPath.Valid {
@@ -185,7 +186,7 @@ func (m *Manager) CreateWorld(
 		m.Builder.PostBuild(cp)
 
 		// Client-only templates have no game server.
-		if templateType == "2d" || templateType == "boardgame" {
+		if tt == sqlc.TemplateType2D || tt == sqlc.TemplateTypeBoardgame {
 			return
 		}
 
@@ -215,7 +216,7 @@ func (m *Manager) CreateWorld(
 		Name:         name,
 		Description:  sql.NullString{String: description, Valid: description != ""},
 		CreatedBy:    sql.NullString{String: userID, Valid: userID != ""},
-		TemplateType: templateType,
+		TemplateType: tt,
 	}, nil
 }
 
@@ -269,7 +270,7 @@ func (m *Manager) ForkCheckpoint(
 		WorldID:            worldID,
 		ParentCheckpointID: sql.NullString{String: sourceCPID, Valid: true},
 		Prompt:             sql.NullString{String: prompt, Valid: prompt != ""},
-		Status:             "building",
+		Status:             sqlc.CheckpointStatusBuilding,
 		DirPath:            newDir,
 		CreatedBy:          sql.NullString{String: userID, Valid: userID != ""},
 	}); err != nil {
@@ -302,7 +303,7 @@ func (m *Manager) ForkCheckpoint(
 	return &sqlc.Checkpoint{
 		ID:      newID,
 		WorldID: worldID,
-		Status:  "building",
+		Status:  sqlc.CheckpointStatusBuilding,
 		DirPath: newDir,
 	}, nil
 }
@@ -432,7 +433,7 @@ func (m *Manager) createTemplateWorldDev(
 			String: "Auto-provisioned " + templateType + " template world",
 			Valid:  true,
 		},
-		TemplateType: templateType,
+		TemplateType: sqlc.TemplateType(templateType),
 	}); err != nil {
 		return "", fmt.Errorf("inserting world: %w", err)
 	}
@@ -440,7 +441,7 @@ func (m *Manager) createTemplateWorldDev(
 	if err := qtx.CreateCheckpoint(ctx, sqlc.CreateCheckpointParams{
 		ID:      cpID,
 		WorldID: worldID,
-		Status:  "ready",
+		Status:  sqlc.CheckpointStatusReady,
 		DirPath: templateDir,
 	}); err != nil {
 		return "", fmt.Errorf("inserting root checkpoint: %w", err)

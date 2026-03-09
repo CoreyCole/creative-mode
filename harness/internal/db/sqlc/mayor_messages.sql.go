@@ -19,7 +19,7 @@ type CreateMayorMessageParams struct {
 	ID               string
 	WorldID          string
 	DiscordMessageID sql.NullString
-	AuthorType       string
+	AuthorType       AuthorType
 	AuthorName       string
 	Content          string
 }

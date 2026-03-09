@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -26,6 +27,7 @@ import (
 	discordlistener "creative-mode/harness/internal/discord"
 	"creative-mode/harness/internal/events"
 	"creative-mode/harness/internal/gemini"
+	"creative-mode/harness/internal/linear"
 	"creative-mode/harness/internal/logging"
 	"creative-mode/harness/internal/mayor"
 	"creative-mode/harness/internal/president"
@@ -79,7 +81,13 @@ func main() {
 			if rdErr != nil {
 				continue
 			}
-			_ = os.WriteFile(dst, data, 0o600)
+			if writeErr := os.WriteFile(dst, data, 0o600); writeErr != nil {
+				log.Printf(
+					"WARNING: failed to seed room file %s: %v",
+					entry.Name(),
+					writeErr,
+				)
+			}
 		}
 	}
 
@@ -129,7 +137,9 @@ func main() {
 
 	// Periodically clean up old swarm JSONL logs (7-day retention).
 	swarmLogDir := filepath.Join(dataDir, "logs", "swarm")
-	_ = os.MkdirAll(swarmLogDir, 0o750)
+	if mkErr := os.MkdirAll(swarmLogDir, 0o750); mkErr != nil {
+		logger.Warn("failed to create swarm log directory", "error", mkErr)
+	}
 	go func() {
 		const swarmLogMaxAge = 7 * 24 * time.Hour
 		ticker := time.NewTicker(swarmLogMaxAge / 7) //nolint:mnd // daily = maxAge/7
@@ -323,22 +333,7 @@ func main() {
 	}
 
 	// Set up swarm manager (optional — requires CM_SWARM_TEMPORAL=true + Temporal server).
-	var swarmManager *swarmorch.SwarmManager
-	if os.Getenv("CM_SWARM_TEMPORAL") == "true" {
-		repoRoot, repoErr := filepath.Abs("..")
-		if repoErr != nil {
-			logger.Error("failed to resolve repo root for swarm", "error", repoErr)
-		} else {
-			agentsDir := filepath.Join(repoRoot, "harness", "agents")
-			var smErr error
-			swarmManager, smErr = swarmorch.NewSwarmManager(
-				database, eventBus, repoRoot, agentsDir, logger,
-			)
-			if smErr != nil {
-				logger.Error("failed to create swarm manager", "error", smErr)
-			}
-		}
-	}
+	swarmManager := initSwarmManager(database, eventBus, logger)
 
 	// Set up Echo server.
 	e := echo.New()
@@ -368,7 +363,9 @@ func main() {
 		}
 
 		if discordListener != nil {
-			_ = discordListener.Stop()
+			if stopErr := discordListener.Stop(); stopErr != nil {
+				logger.Warn("failed to stop discord listener", "error", stopErr)
+			}
 		}
 
 		if shutdownErr := e.Shutdown(context.Background()); shutdownErr != nil {
@@ -495,6 +492,62 @@ func initPresidentManager(
 		logger.Error("failed to provision president agent", "error", err)
 	} else {
 		logger.Info("President agent ready", "channel_id", presidentChannelID)
+	}
+	return mgr
+}
+
+func initSwarmManager(
+	database *db.DB,
+	eventBus *events.EventBus,
+	logger *slog.Logger,
+) *swarmorch.SwarmManager {
+	if os.Getenv("CM_SWARM_TEMPORAL") != "true" {
+		return nil
+	}
+
+	repoRoot, repoErr := filepath.Abs("..")
+	if repoErr != nil {
+		logger.Error("failed to resolve repo root for swarm", "error", repoErr)
+		return nil
+	}
+
+	agentsDir := filepath.Join(repoRoot, "harness", "agents")
+
+	toolCallLimit := 100
+	if v := os.Getenv("CM_SWARM_TOOL_CALL_LIMIT"); v != "" {
+		if parsed, parseErr := strconv.Atoi(v); parseErr == nil && parsed > 0 {
+			toolCallLimit = parsed
+		}
+	}
+	model := os.Getenv("CM_SWARM_MODEL")
+	if model == "" {
+		model = "openai-codex:gpt-5.3-codex"
+	}
+
+	// Initialize Linear client if linear-cli is available.
+	var linearClient *linear.Client
+	linearBin := "/home/deploy/.cargo/bin/linear-cli"
+	linearTeam := os.Getenv("LINEAR_TEAM_KEY")
+	if linearTeam != "" {
+		linearClient = linear.NewClient(linearBin, linearTeam)
+		logger.Info("linear client initialized", "team", linearTeam)
+	}
+
+	harnessURL := os.Getenv("HARNESS_URL")
+
+	mgr, err := swarmorch.NewSwarmManager(
+		database, eventBus, repoRoot, agentsDir,
+		swarmorch.SwarmConfig{
+			ToolCallLimit: toolCallLimit,
+			Model:         model,
+			HarnessURL:    harnessURL,
+		},
+		logger,
+		linearClient,
+	)
+	if err != nil {
+		logger.Error("failed to create swarm manager", "error", err)
+		return nil
 	}
 	return mgr
 }

@@ -62,7 +62,7 @@ func MayorChatMessage(msg sqlc.MayorMessage) templ.Component {
 			templ_7745c5c3_Var2 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		var templ_7745c5c3_Var3 = []any{"text-[13px] leading-snug px-2 py-1 rounded", mayorMessageClass(msg.AuthorType)}
+		var templ_7745c5c3_Var3 = []any{"text-[13px] leading-snug px-2 py-1 rounded", mayorMessageClass(string(msg.AuthorType))}
 		templ_7745c5c3_Err = templ.RenderCSSItems(ctx, templ_7745c5c3_Buffer, templ_7745c5c3_Var3...)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
@@ -84,7 +84,7 @@ func MayorChatMessage(msg sqlc.MayorMessage) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		var templ_7745c5c3_Var5 = []any{"font-semibold mr-1.5", mayorAuthorColor(msg.AuthorType)}
+		var templ_7745c5c3_Var5 = []any{"font-semibold mr-1.5", mayorAuthorColor(string(msg.AuthorType))}
 		templ_7745c5c3_Err = templ.RenderCSSItems(ctx, templ_7745c5c3_Buffer, templ_7745c5c3_Var5...)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err

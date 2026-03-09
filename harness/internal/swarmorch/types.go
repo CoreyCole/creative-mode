@@ -1,14 +1,25 @@
 package swarmorch
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"creative-mode/harness/internal/db/sqlc"
+)
 
 // --- JSONL Protocol Messages ---
 
+// AgentConfig holds optional runtime configuration passed to agents.
+type AgentConfig struct {
+	Model string `json:"model,omitempty"` // "provider:model" format
+}
+
 // StartMessage is sent from Go to agent on stdin
 type StartMessage struct {
-	Type         string          `json:"type"` // always "start"
-	Task         json.RawMessage `json:"task"`
-	SystemPrompt string          `json:"systemPrompt,omitempty"`
+	Type           string          `json:"type"` // always "start"
+	Task           json.RawMessage `json:"task"`
+	SystemPrompt   string          `json:"systemPrompt,omitempty"`
+	ProjectContext string          `json:"projectContext,omitempty"`
+	Config         *AgentConfig    `json:"config,omitempty"`
 }
 
 // AnswerMessage is sent from Go to agent in response to a question
@@ -18,12 +29,22 @@ type AnswerMessage struct {
 	Text string `json:"text"`
 }
 
+// AgentEventName identifies the kind of event in the JSONL agent protocol.
+type AgentEventName string
+
+const (
+	AgentEventToolStart      AgentEventName = "tool_execution_start"
+	AgentEventToolEnd        AgentEventName = "tool_execution_end"
+	AgentEventInferenceStart AgentEventName = "inference_start"
+	AgentEventInferenceEnd   AgentEventName = "inference_end"
+)
+
 // AgentMessage is a generic message received from agent on stdout
 type AgentMessage struct {
-	Type       string          `json:"type"`                 // "event", "question", "result"
-	Event      string          `json:"event,omitempty"`      // for type=event
+	Type       string          `json:"type"`                 // "event", "question", "heartbeat"
+	Event      AgentEventName  `json:"event,omitempty"`      // for type=event
 	Tool       string          `json:"tool,omitempty"`       // for type=event
-	Data       json.RawMessage `json:"data,omitempty"`       // for type=event or type=result
+	Data       json.RawMessage `json:"data,omitempty"`       // for type=event
 	ToolCallID string          `json:"toolCallID,omitempty"` // for type=event
 	ID         string          `json:"id,omitempty"`         // for type=question
 	Text       string          `json:"text,omitempty"`       // for type=question
@@ -36,6 +57,7 @@ type GenerateQuestionsInput struct {
 	RequestText  string `json:"requestText"`
 	RepoRoot     string `json:"repoRoot"`
 	MaxQuestions int    `json:"maxQuestions"`
+	OutputPath   string `json:"outputPath"`
 }
 
 type ResearchAgentInput struct {
@@ -43,6 +65,7 @@ type ResearchAgentInput struct {
 	Question   string `json:"question"`
 	RepoRoot   string `json:"repoRoot"`
 	AgentIndex int    `json:"agentIndex"`
+	OutputPath string `json:"outputPath"`
 }
 
 type SynthesizeInput struct {
@@ -57,6 +80,7 @@ type ClassifyInput struct {
 	RequestText     string `json:"requestText"`
 	ResearchDocPath string `json:"researchDocPath"`
 	RepoRoot        string `json:"repoRoot"`
+	OutputPath      string `json:"outputPath"`
 }
 
 type SpecialistInput struct {
@@ -66,6 +90,7 @@ type SpecialistInput struct {
 	RequestText string `json:"requestText"`
 	ResearchDoc string `json:"researchDoc"`
 	RepoRoot    string `json:"repoRoot"`
+	OutputPath  string `json:"outputPath"`
 }
 
 type PlanSynthesizeInput struct {
@@ -111,12 +136,13 @@ type ClassifyResult struct {
 }
 
 type PlannerOutput struct {
-	Domain             string   `json:"domain"`
-	PlanSection        string   `json:"planSection"`
-	FilesAffected      []string `json:"filesAffected"`
-	VerificationChecks []string `json:"verificationChecks"`
-	Risks              []string `json:"risks"`
-	Dependencies       []string `json:"dependencies"`
+	Domain                string   `json:"domain"`
+	PlanSection           string   `json:"planSection"`
+	FilesAffected         []string `json:"filesAffected"`
+	AutomatedVerification []string `json:"automatedVerification"`
+	ManualVerification    []string `json:"manualVerification"`
+	Risks                 []string `json:"risks"`
+	Dependencies          []string `json:"dependencies"`
 }
 
 type PlanSynthesizeResult struct {
@@ -126,13 +152,49 @@ type PlanSynthesizeResult struct {
 	OutputPath string   `json:"outputPath"`
 }
 
+// --- LLM Usage / Span Metadata ---
+
+// LLMUsage holds token counts from a single LLM call.
+type LLMUsage struct {
+	Input       int     `json:"input"`
+	Output      int     `json:"output"`
+	CacheRead   int     `json:"cacheRead"`
+	CacheWrite  int     `json:"cacheWrite"`
+	TotalTokens int     `json:"totalTokens"`
+	Cost        LLMCost `json:"cost"`
+}
+
+// LLMCost holds cost breakdown for a single LLM call.
+type LLMCost struct {
+	Input      float64 `json:"input"`
+	Output     float64 `json:"output"`
+	CacheRead  float64 `json:"cacheRead"`
+	CacheWrite float64 `json:"cacheWrite"`
+	Total      float64 `json:"total"`
+}
+
+// SpanMetadata is stored in metadata_json on swarm_spans.
+type SpanMetadata struct {
+	Model      string    `json:"model,omitempty"`
+	Provider   string    `json:"provider,omitempty"`
+	StopReason string    `json:"stopReason,omitempty"`
+	Usage      *LLMUsage `json:"usage,omitempty"`
+	Stderr     string    `json:"stderr,omitempty"`
+	// Aggregates (for agent-level spans)
+	TotalInputTokens  int     `json:"totalInputTokens,omitempty"`
+	TotalOutputTokens int     `json:"totalOutputTokens,omitempty"`
+	TotalCost         float64 `json:"totalCost,omitempty"`
+	ToolCallCount     int     `json:"toolCallCount,omitempty"`
+	LLMCallCount      int     `json:"llmCallCount,omitempty"`
+}
+
 // --- Span Helper Types ---
 
 type SpanParams struct {
 	ID           string          `json:"id"`
 	TaskID       string          `json:"taskID"`
 	ParentSpanID string          `json:"parentSpanID,omitempty"`
-	SpanType     string          `json:"spanType"`
+	SpanType     sqlc.SpanType   `json:"spanType"`
 	Name         string          `json:"name"`
 	InputJSON    json.RawMessage `json:"inputJSON,omitempty"`
 	StartedAt    string          `json:"startedAt"`

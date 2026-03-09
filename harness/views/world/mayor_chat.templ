@@ -14,8 +14,8 @@ templ MayorChatPanel(worldID string) {
 
 // MayorChatMessage renders a single mayor chat message (SSE fragment).
 templ MayorChatMessage(msg sqlc.MayorMessage) {
-	<div class={ "text-[13px] leading-snug px-2 py-1 rounded", mayorMessageClass(msg.AuthorType) }>
-		<span class={ "font-semibold mr-1.5", mayorAuthorColor(msg.AuthorType) }>
+	<div class={ "text-[13px] leading-snug px-2 py-1 rounded", mayorMessageClass(string(msg.AuthorType)) }>
+		<span class={ "font-semibold mr-1.5", mayorAuthorColor(string(msg.AuthorType)) }>
 			{ msg.AuthorName }
 		</span>
 		<span class="break-words whitespace-pre-wrap">{ msg.Content }</span>

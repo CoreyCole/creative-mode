@@ -65,7 +65,7 @@ func (s *Server) handlePresidentMayorStatus(c echo.Context) error {
 			WorldID:      w.ID,
 			WorldName:    w.Name,
 			MayorName:    w.MayorName.String,
-			TemplateType: w.TemplateType,
+			TemplateType: string(w.TemplateType),
 			ChannelID:    w.DiscordChannelID.String,
 		}
 
@@ -74,7 +74,7 @@ func (s *Server) handlePresidentMayorStatus(c echo.Context) error {
 			ws.Checkpoints = len(checkpoints)
 			if len(checkpoints) > 0 {
 				latest := checkpoints[len(checkpoints)-1]
-				ws.LatestStatus = latest.Status
+				ws.LatestStatus = string(latest.Status)
 				if s.WorldManager != nil {
 					if gs := s.WorldManager.GameServers.GetServer(
 						w.ID,

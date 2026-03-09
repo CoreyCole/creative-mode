@@ -12,6 +12,7 @@ import (
 
 	"creative-mode/harness/internal/db"
 	"creative-mode/harness/internal/events"
+	"creative-mode/harness/internal/linear"
 )
 
 // Temporal service configuration.
@@ -41,7 +42,9 @@ func NewSwarmManager(
 	eventBus *events.EventBus,
 	repoRoot string,
 	agentsDir string,
+	config SwarmConfig,
 	logger *slog.Logger,
+	linearClient *linear.Client,
 ) (*SwarmManager, error) {
 	c, err := client.Dial(client.Options{
 		HostPort:  temporalHostPort,
@@ -58,8 +61,9 @@ func NewSwarmManager(
 	}
 
 	activities := NewSwarmActivities(
-		database, eventBus, repoRoot, agentsDir, runner, logger,
+		database, eventBus, repoRoot, agentsDir, runner, config, logger,
 	)
+	activities.LinearClient = linearClient
 
 	w := worker.New(c, taskQueue, worker.Options{})
 	w.RegisterWorkflow(ResearchWorkflow)
@@ -90,6 +94,7 @@ func (m *SwarmManager) StartResearch(
 	ctx context.Context,
 	taskID string,
 	requestText string,
+	ticketID string,
 ) (string, error) {
 	workflowID := "swarm-research-" + taskID
 	opts := client.StartWorkflowOptions{
@@ -100,9 +105,10 @@ func (m *SwarmManager) StartResearch(
 
 	_, err := m.client.ExecuteWorkflow(ctx, opts, ResearchWorkflow,
 		ResearchWorkflowInput{
-			TaskID:      taskID,
-			RequestText: requestText,
-			RepoRoot:    m.repoRoot,
+			TaskID:        taskID,
+			RequestText:   requestText,
+			RepoRoot:      m.repoRoot,
+			LinearIssueID: ticketID,
 		},
 	)
 	if err != nil {
@@ -112,6 +118,7 @@ func (m *SwarmManager) StartResearch(
 	m.logger.Info("started research workflow",
 		"workflowID", workflowID,
 		"taskID", taskID,
+		"ticketID", ticketID,
 	)
 	return workflowID, nil
 }
@@ -121,6 +128,7 @@ func (m *SwarmManager) StartCodePlan(
 	ctx context.Context,
 	taskID string,
 	requestText string,
+	ticketID string,
 ) (string, error) {
 	workflowID := "swarm-codeplan-" + taskID
 	opts := client.StartWorkflowOptions{
@@ -131,9 +139,10 @@ func (m *SwarmManager) StartCodePlan(
 
 	_, err := m.client.ExecuteWorkflow(ctx, opts, CodeChangePlanWorkflow,
 		CodeChangePlanWorkflowInput{
-			TaskID:      taskID,
-			RequestText: requestText,
-			RepoRoot:    m.repoRoot,
+			TaskID:        taskID,
+			RequestText:   requestText,
+			RepoRoot:      m.repoRoot,
+			LinearIssueID: ticketID,
 		},
 	)
 	if err != nil {
@@ -143,6 +152,7 @@ func (m *SwarmManager) StartCodePlan(
 	m.logger.Info("started code plan workflow",
 		"workflowID", workflowID,
 		"taskID", taskID,
+		"ticketID", ticketID,
 	)
 	return workflowID, nil
 }

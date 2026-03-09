@@ -77,4 +77,38 @@ sql:
               type: "Time"
             nullable: true
           - column: "checkpoints.status"
-            go_type: "string"
+            go_type:
+              type: "CheckpointStatus"
+          - column: "mayor_builds.status"
+            go_type:
+              type: "CheckpointStatus"
+          - column: "swarm_spans.span_type"
+            go_type:
+              type: "SpanType"
+          - column: "swarm_spans.status"
+            go_type:
+              type: "SpanStatus"
+          - column: "swarm_tasks.status"
+            go_type:
+              type: "TaskStatus"
+          - column: "swarm_tasks.primitive_type"
+            go_type:
+              type: "PrimitiveType"
+          - column: "swarm_artifacts.artifact_type"
+            go_type:
+              type: "ArtifactType"
+          - column: "swarm_task_messages.role"
+            go_type:
+              type: "MessageRole"
+          - column: "swarm_research_questions.status"
+            go_type:
+              type: "QuestionStatus"
+          - column: "users.role"
+            go_type:
+              type: "UserRole"
+          - column: "worlds.template_type"
+            go_type:
+              type: "TemplateType"
+          - column: "mayor_messages.author_type"
+            go_type:
+              type: "AuthorType"

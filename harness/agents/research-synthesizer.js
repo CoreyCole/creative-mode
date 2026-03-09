@@ -1,21 +1,8 @@
 import { runAgent } from './lib/agent-factory.js';
-import { Type } from '@mariozechner/pi-ai';
 
 await runAgent({
   withFileTools: false,
   withSearchContext: false,
-  artifactSchema: Type.Object({
-    document: Type.String({ description: 'The full research document in markdown' }),
-    summary: Type.String({ description: 'A 2-3 sentence summary of key findings' }),
-    outputPath: Type.String({ description: 'Path where the document should be written' }),
-  }),
-  validate: (artifact) => {
-    const errors = [];
-    if (!artifact.document || artifact.document.length < 200) errors.push('Document must be substantive (200+ chars)');
-    if (!artifact.summary || artifact.summary.length < 50) errors.push('Summary must be at least 50 chars');
-    if (!artifact.outputPath) errors.push('Must specify outputPath');
-    return errors;
-  },
   systemPrompt: `You are a research synthesizer. Your job is to combine multiple parallel research findings into a single coherent research document.
 
 Guidelines:
@@ -26,12 +13,32 @@ Guidelines:
 - Include a summary section at the top
 - Flag any gaps or areas where findings were low-confidence
 
-When done, call submit_artifact with the document, summary, and output_path.`,
+## Output Format
+
+When done, use the write tool to write your output to the path specified in the task's outputPath field. The file must use YAML front matter followed by the markdown document:
+
+\`\`\`
+---
+summary: "A 2-3 sentence summary of key findings"
+tags:
+  - "relevant-tag-1"
+  - "relevant-tag-2"
+---
+
+# Research Document
+
+Your full research document in markdown here.
+Must be at least 200 characters of substantive content.
+\`\`\`
+
+The markdown body after the front matter becomes the document field.
+
+Choose 2-5 tags from: database, api, temporal, ui, bevy, wasm, discord, auth, migration, config, build, testing, or other relevant terms.`,
   prompt: (task) => `Synthesize these research findings into a unified document.
 
 Original request: ${task.requestText}
 
-Output path: ${task.outputPath}
+Write your output to: ${task.outputPath}
 
 Findings:
 ${JSON.stringify(task.findings, null, 2)}`,

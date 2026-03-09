@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
@@ -11,22 +12,24 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"creative-mode/harness/internal/db/sqlc"
+	"creative-mode/harness/internal/swarmorch"
 )
 
 // workflowStarter abstracts the SwarmManager method used to start a workflow.
-type workflowStarter func(ctx context.Context, taskID, requestText string) (string, error)
+type workflowStarter func(ctx context.Context, taskID, requestText, ticketID string) (string, error)
 
 // startSwarmTask validates the request, creates a task, starts the workflow,
 // and returns 202 with the taskID and workflowID.
 func (s *Server) startSwarmTask(
 	c echo.Context,
-	primitiveType string,
+	primitiveType sqlc.PrimitiveType,
 	start workflowStarter,
 ) error {
 	ctx := c.Request().Context()
 
 	var req struct {
 		RequestText string `json:"requestText"`
+		TicketID    string `json:"ticketID"`
 	}
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
@@ -42,7 +45,8 @@ func (s *Server) startSwarmTask(
 		ID:            taskID,
 		PrimitiveType: primitiveType,
 		RequestText:   req.RequestText,
-		Status:        "pending",
+		Status:        sqlc.TaskStatusPending,
+		LinearIssueID: sql.NullString{String: req.TicketID, Valid: req.TicketID != ""},
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}); err != nil {
@@ -50,16 +54,24 @@ func (s *Server) startSwarmTask(
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create task")
 	}
 
-	workflowID, err := start(ctx, taskID, req.RequestText)
+	workflowID, err := start(ctx, taskID, req.RequestText, req.TicketID)
 	if err != nil {
 		s.Logger.Error("failed to start workflow",
 			"type", primitiveType, "taskID", taskID, "error", err)
 		// Mark the task as failed so it doesn't stay orphaned in "pending".
-		_ = s.DB.UpdateSwarmTaskStatus(ctx, sqlc.UpdateSwarmTaskStatusParams{
-			Status:    "failed",
+		if statusErr := s.DB.UpdateSwarmTaskStatus(ctx, sqlc.UpdateSwarmTaskStatusParams{
+			Status:    sqlc.TaskStatusFailed,
 			UpdatedAt: time.Now().UTC().Format(time.RFC3339),
 			ID:        taskID,
-		})
+		}); statusErr != nil {
+			s.Logger.Error(
+				"failed to mark task as failed",
+				"taskID",
+				taskID,
+				"error",
+				statusErr,
+			)
+		}
 		return echo.NewHTTPError(
 			http.StatusInternalServerError,
 			"failed to start workflow",
@@ -67,11 +79,17 @@ func (s *Server) startSwarmTask(
 	}
 
 	// Store workflow ID on the task.
-	_ = s.DB.UpdateSwarmTaskWorkflowID(ctx, sqlc.UpdateSwarmTaskWorkflowIDParams{
+	if err := s.DB.UpdateSwarmTaskWorkflowID(ctx, sqlc.UpdateSwarmTaskWorkflowIDParams{
 		WorkflowID: sql.NullString{String: workflowID, Valid: true},
 		UpdatedAt:  time.Now().UTC().Format(time.RFC3339),
 		ID:         taskID,
-	})
+	}); err != nil {
+		s.Logger.Error("failed to persist workflow ID", "taskID", taskID, "error", err)
+		return echo.NewHTTPError(
+			http.StatusInternalServerError,
+			"failed to persist workflow",
+		)
+	}
 
 	return c.JSON(http.StatusAccepted, map[string]string{
 		"taskID":     taskID,
@@ -87,7 +105,7 @@ func (s *Server) handleSwarmStartResearch(c echo.Context) error {
 			"swarm manager not configured",
 		)
 	}
-	return s.startSwarmTask(c, "research", s.SwarmManager.StartResearch)
+	return s.startSwarmTask(c, sqlc.PrimitiveTypeResearch, s.SwarmManager.StartResearch)
 }
 
 // handleSwarmStartCodePlan creates a code change plan task and starts the workflow.
@@ -98,7 +116,11 @@ func (s *Server) handleSwarmStartCodePlan(c echo.Context) error {
 			"swarm manager not configured",
 		)
 	}
-	return s.startSwarmTask(c, "code_change_plan", s.SwarmManager.StartCodePlan)
+	return s.startSwarmTask(
+		c,
+		sqlc.PrimitiveTypeCodeChangePlan,
+		s.SwarmManager.StartCodePlan,
+	)
 }
 
 // handleSwarmGetTask returns a task with its artifacts and span tree.
@@ -114,8 +136,17 @@ func (s *Server) handleSwarmGetTask(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get task")
 	}
 
-	artifacts, _ := s.DB.GetSwarmArtifactsByTask(ctx, taskID)
-	spans, _ := s.DB.GetSwarmSpanTree(ctx, taskID)
+	artifacts, err := s.DB.GetSwarmArtifactsByTask(ctx, taskID)
+	if err != nil {
+		return echo.NewHTTPError(
+			http.StatusInternalServerError,
+			"failed to load artifacts",
+		)
+	}
+	spans, err := s.DB.GetSwarmSpanTree(ctx, taskID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to load spans")
+	}
 
 	return c.JSON(http.StatusOK, map[string]any{
 		"task":      task,
@@ -164,4 +195,96 @@ func (s *Server) handleSwarmCancelTask(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, map[string]string{"status": "canceled"})
+}
+
+// handleSwarmListTasks returns all tasks as JSON.
+func (s *Server) handleSwarmListTasks(c echo.Context) error {
+	ctx := c.Request().Context()
+	tasks, err := s.DB.ListSwarmTasks(ctx, defaultQueryLimit)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to list tasks")
+	}
+	return c.JSON(http.StatusOK, tasks)
+}
+
+// handleSwarmGetTaskSpans returns the full span tree for a task.
+func (s *Server) handleSwarmGetTaskSpans(c echo.Context) error {
+	ctx := c.Request().Context()
+	taskID := c.Param("taskID")
+
+	spans, err := s.DB.GetSwarmSpanTree(ctx, taskID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get spans")
+	}
+	return c.JSON(http.StatusOK, spans)
+}
+
+// handleSwarmGetTaskMetrics returns aggregate metrics for a task.
+func (s *Server) handleSwarmGetTaskMetrics(c echo.Context) error {
+	ctx := c.Request().Context()
+	taskID := c.Param("taskID")
+
+	task, err := s.DB.GetSwarmTask(ctx, taskID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return echo.NewHTTPError(http.StatusNotFound, "task not found")
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get task")
+	}
+
+	spans, err := s.DB.GetSwarmSpanTree(ctx, taskID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to load spans")
+	}
+	metrics := computeTaskMetricsAPI(spans)
+
+	// Add task-level info.
+	metrics["taskID"] = task.ID
+	metrics["status"] = task.Status
+	metrics["primitiveType"] = task.PrimitiveType
+
+	return c.JSON(http.StatusOK, metrics)
+}
+
+// computeTaskMetricsAPI aggregates metrics from span metadata into a JSON-friendly map.
+func computeTaskMetricsAPI(spans []sqlc.GetSwarmSpanTreeRow) map[string]any {
+	var (
+		agents     int
+		tools      int
+		llmCalls   int
+		tokens     int
+		cost       float64
+		durationMs int64
+	)
+
+	for _, s := range spans {
+		switch s.SpanType {
+		case "agent":
+			agents++
+			if !s.MetadataJSON.Valid || s.MetadataJSON.String == "" {
+				break
+			}
+			var meta swarmorch.SpanMetadata
+			if json.Unmarshal([]byte(s.MetadataJSON.String), &meta) != nil {
+				break
+			}
+			tokens += meta.TotalInputTokens + meta.TotalOutputTokens
+			cost += meta.TotalCost
+			tools += meta.ToolCallCount
+			llmCalls += meta.LLMCallCount
+		case "workflow":
+			if s.DurationMs.Valid && s.DurationMs.Int64 > durationMs {
+				durationMs = s.DurationMs.Int64
+			}
+		}
+	}
+
+	return map[string]any{
+		"agents":      agents,
+		"tools":       tools,
+		"llmCalls":    llmCalls,
+		"totalTokens": tokens,
+		"totalCost":   cost,
+		"durationMs":  durationMs,
+	}
 }

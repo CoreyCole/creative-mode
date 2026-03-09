@@ -164,7 +164,7 @@ UPDATE users SET role = ? WHERE id = ?
 `
 
 type UpdateUserRoleParams struct {
-	Role string
+	Role UserRole
 	ID   string
 }
 
@@ -186,7 +186,7 @@ type UpsertUserParams struct {
 	DiscordID       string
 	DiscordUsername string
 	AvatarURL       sql.NullString
-	Role            string
+	Role            UserRole
 }
 
 func (q *Queries) UpsertUser(ctx context.Context, arg UpsertUserParams) error {

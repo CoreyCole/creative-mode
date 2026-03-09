@@ -142,7 +142,7 @@ func (s *Server) handleMayorBuild(c echo.Context) error {
 	// Use the most recent ready checkpoint, or the last one if none are ready.
 	var sourceCPID string
 	for i := len(checkpoints) - 1; i >= 0; i-- {
-		if checkpoints[i].Status == "ready" {
+		if checkpoints[i].Status == sqlc.CheckpointStatusReady {
 			sourceCPID = checkpoints[i].ID
 			break
 		}

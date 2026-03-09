@@ -20,7 +20,7 @@ type CreateWorldParams struct {
 	Name         string
 	Description  sql.NullString
 	CreatedBy    sql.NullString
-	TemplateType string
+	TemplateType TemplateType
 }
 
 func (q *Queries) CreateWorld(ctx context.Context, arg CreateWorldParams) error {

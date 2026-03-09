@@ -20,7 +20,7 @@ type CreateMayorBuildParams struct {
 	WorldID      string
 	CheckpointID sql.NullString
 	Prompt       string
-	Status       string
+	Status       CheckpointStatus
 }
 
 func (q *Queries) CreateMayorBuild(ctx context.Context, arg CreateMayorBuildParams) error {
@@ -124,7 +124,7 @@ WHERE id = ?
 `
 
 type UpdateMayorBuildStatusParams struct {
-	Status       string
+	Status       CheckpointStatus
 	ErrorMessage sql.NullString
 	ID           string
 }

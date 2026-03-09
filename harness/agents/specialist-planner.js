@@ -1,42 +1,54 @@
 import { runAgent } from './lib/agent-factory.js';
-import { Type } from '@mariozechner/pi-ai';
-
-const SELF_REFLECTION = `Before starting work:
-1. Reflect on what aspects of this codebase you need to understand for this task
-2. Call search_context with your requirements to discover relevant skills and patterns
-3. Use read to load the full content of any matched skills
-4. Then proceed with your planning`;
+import { selfReflection } from './lib/prompts.js';
 
 await runAgent({
-  artifactSchema: Type.Object({
-    domain: Type.String({ description: 'The specialist domain this plan covers' }),
-    planSection: Type.String({ description: 'Detailed implementation plan in markdown' }),
-    filesAffected: Type.Array(Type.String(), { description: 'Files that will be created or modified' }),
-    verificationChecks: Type.Array(Type.String(), { description: 'Commands or checks to verify the implementation' }),
-    risks: Type.Array(Type.String(), { description: 'Known risks or concerns' }),
-    dependencies: Type.Array(Type.String(), { description: 'Dependencies on other domains or external systems' }),
-  }),
-  validate: (artifact) => {
-    const errors = [];
-    if (!artifact.domain) errors.push('Must specify domain');
-    if (!artifact.planSection || artifact.planSection.length < 100) errors.push('Plan section must be substantive (100+ chars)');
-    if (!artifact.filesAffected || artifact.filesAffected.length === 0) errors.push('Must list affected files');
-    if (!artifact.verificationChecks || artifact.verificationChecks.length === 0) errors.push('Must include verification checks');
-    return errors;
-  },
   systemPrompt: `You are a specialist planner. Your job is to produce a detailed implementation plan for your assigned domain.
 
-${SELF_REFLECTION}
+${selfReflection('your planning')}
 
 Guidelines:
-- Load the skill file for your domain (e.g., search for "database conventions" or "api conventions")
+- Read the skill file for your domain from the skills manifest in your context (e.g., database-conventions.md, api-conventions.md)
 - Read actual source code to verify your assumptions — do not guess file structures
 - Include specific file paths, function names, and line references
-- List verification checks (commands to run, tests to pass)
+- List verification checks: separate automated (commands to run, tests to pass) from manual (human testing steps)
 - Note dependencies on other domains
 - Flag risks that could affect the plan
+- Flag items that are explicitly out of scope for your domain
 
-When done, call submit_artifact with your plan section and metadata.`,
+## Output Format
+
+When done, use the write tool to write your output to the path specified in the task's outputPath field. The file must use YAML front matter followed by the markdown plan:
+
+\`\`\`
+---
+domain: "the specialist domain"
+tags:
+  - "relevant-tag-1"
+  - "relevant-tag-2"
+filesAffected:
+  - "path/to/file1.go"
+  - "path/to/file2.go"
+automatedVerification:
+  - "just check"
+  - "go test ./..."
+manualVerification:
+  - "Verify the UI renders correctly"
+  - "Test edge case: empty input"
+risks:
+  - "Description of a risk"
+dependencies:
+  - "Depends on database migration"
+---
+
+# Implementation Plan
+
+Your detailed plan section in markdown here.
+Must be at least 100 characters of substantive content.
+\`\`\`
+
+The markdown body after the front matter becomes the planSection field.
+
+Choose 2-5 tags from: database, api, temporal, ui, bevy, wasm, discord, auth, migration, config, build, testing, or other relevant terms.`,
   prompt: (task) => `Create a detailed implementation plan for the **${task.domain}** domain.
 
 Focus: ${task.focus}
@@ -44,5 +56,7 @@ Focus: ${task.focus}
 Change request: ${task.requestText}
 
 Research context:
-${task.researchDoc}`,
+${task.researchDoc}
+
+Write your output to: ${task.outputPath}`,
 });

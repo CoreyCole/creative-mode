@@ -329,7 +329,7 @@ func (s *Server) handleWorldEvent(
 		authorName, _ := e["author_name"].(string)
 		content, _ := e["content"].(string)
 		msg := sqlc.MayorMessage{
-			AuthorType: authorType,
+			AuthorType: sqlc.AuthorType(authorType),
 			AuthorName: authorName,
 			Content:    content,
 			CreatedAt:  time.Now(),

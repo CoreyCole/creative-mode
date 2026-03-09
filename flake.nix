@@ -20,7 +20,11 @@
             go_1_24 golangci-lint gcc pkg-config
             openssl.dev
             tmux sqlc nodejs_22
-            python3 uv bubblewrap temporal-cli
+            (python3.withPackages (ps: with ps; [
+              mdformat
+              mdformat-frontmatter
+            ]))
+            uv bubblewrap temporal-cli
           ];
         };
 
@@ -55,7 +59,10 @@
             nodejs_22
 
             # Python + uv (Claude Code hook scripts use `uv run`, debug.sh JSON processing)
-            python3
+            (python3.withPackages (ps: with ps; [
+              mdformat
+              mdformat-frontmatter
+            ]))
             uv
           ];
 

@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -39,17 +38,21 @@ const (
 
 // runAgentParams holds the parameters for a single agent invocation.
 type runAgentParams struct {
-	script       string
-	taskID       string
-	parentSpanID string
-	input        any
-	systemPrompt string
-	repoRoot     string
-	runner       AgentRunner
-	database     *db.DB
-	eventBus     *events.EventBus
-	logger       *slog.Logger
-	heartbeat    func(details any) // Temporal heartbeat callback
+	script         string
+	taskID         string
+	parentSpanID   string
+	input          any
+	systemPrompt   string
+	projectContext string // deterministic project docs prepended to system prompt
+	repoRoot       string
+	outputPath     string // file path where agent writes its output
+	runner         AgentRunner
+	database       *db.DB
+	eventBus       *events.EventBus
+	logger         *slog.Logger
+	heartbeat      func(details any) // Temporal heartbeat callback
+	toolCallLimit  int               // 0 means use default (100)
+	agentConfig    *AgentConfig      // optional config sent to agent
 }
 
 // runAgentResult contains the raw artifact JSON returned by the agent.
@@ -64,11 +67,11 @@ func runAgent(ctx context.Context, p runAgentParams) (*runAgentResult, error) {
 	// Create the agent-level span.
 	agentSpanID := uuid.NewString()
 	now := time.Now().UTC()
-	createSpan(ctx, p.database, p.eventBus, SpanParams{
+	createSpan(ctx, p.database, p.eventBus, p.logger, SpanParams{
 		ID:           agentSpanID,
 		TaskID:       p.taskID,
 		ParentSpanID: p.parentSpanID,
-		SpanType:     "agent",
+		SpanType:     sqlc.SpanTypeAgent,
 		Name:         p.script,
 		InputJSON:    marshal(p.input),
 		StartedAt:    now.Format(time.RFC3339),
@@ -80,6 +83,7 @@ func runAgent(ctx context.Context, p runAgentParams) (*runAgentResult, error) {
 			ctx,
 			p.database,
 			p.eventBus,
+			p.logger,
 			agentSpanID,
 			now,
 			fmt.Errorf("marshal input: %w", err),
@@ -94,13 +98,13 @@ func runAgent(ctx context.Context, p runAgentParams) (*runAgentResult, error) {
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		failSpan(ctx, p.database, p.eventBus, agentSpanID, now, err)
+		failSpan(ctx, p.database, p.eventBus, p.logger, agentSpanID, now, err)
 		return nil, fmt.Errorf("stdin pipe: %w", err)
 	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		failSpan(ctx, p.database, p.eventBus, agentSpanID, now, err)
+		failSpan(ctx, p.database, p.eventBus, p.logger, agentSpanID, now, err)
 		return nil, fmt.Errorf("stdout pipe: %w", err)
 	}
 
@@ -109,87 +113,176 @@ func runAgent(ctx context.Context, p runAgentParams) (*runAgentResult, error) {
 	cmd.Stderr = &stderrBuf
 
 	if startErr := cmd.Start(); startErr != nil {
-		failSpan(ctx, p.database, p.eventBus, agentSpanID, now, startErr)
+		failSpan(ctx, p.database, p.eventBus, p.logger, agentSpanID, now, startErr)
 		return nil, fmt.Errorf("start agent %s: %w", p.script, startErr)
 	}
 
 	// Send the start message.
 	startMsg := StartMessage{
-		Type:         "start",
-		Task:         inputJSON,
-		SystemPrompt: p.systemPrompt,
+		Type:           "start",
+		Task:           inputJSON,
+		SystemPrompt:   p.systemPrompt,
+		ProjectContext: p.projectContext,
+		Config:         p.agentConfig,
 	}
 	if writeErr := writeJSONLine(stdin, startMsg); writeErr != nil {
-		failSpan(ctx, p.database, p.eventBus, agentSpanID, now, writeErr)
+		failSpan(ctx, p.database, p.eventBus, p.logger, agentSpanID, now, writeErr)
 		return nil, fmt.Errorf("write start message: %w", writeErr)
 	}
 
+	// Resolve tool call limit (0 means default).
+	toolLimit := p.toolCallLimit
+	if toolLimit <= 0 {
+		toolLimit = toolCallKillThreshold
+	}
+	warnAt := toolLimit / 2 //nolint:mnd // warn at half the limit
+
 	// Read JSONL from stdout.
-	result, loopErr := readAgentLoop(ctx, agentLoopParams{
-		stdout:      stdout,
-		stdin:       stdin,
-		agentSpanID: agentSpanID,
-		taskID:      p.taskID,
-		repoRoot:    p.repoRoot,
-		database:    p.database,
-		eventBus:    p.eventBus,
-		logger:      p.logger,
-		heartbeat:   p.heartbeat,
-		startedAt:   now,
-		cmd:         cmd,
-	})
+	loopParams := agentLoopParams{
+		stdout:        stdout,
+		stdin:         stdin,
+		agentSpanID:   agentSpanID,
+		taskID:        p.taskID,
+		repoRoot:      p.repoRoot,
+		database:      p.database,
+		eventBus:      p.eventBus,
+		logger:        p.logger,
+		heartbeat:     p.heartbeat,
+		startedAt:     now,
+		cmd:           cmd,
+		toolCallLimit: toolLimit,
+		toolCallWarn:  warnAt,
+	}
+	loopErr := readAgentLoop(ctx, &loopParams)
 
 	// Wait for process exit.
 	waitErr := cmd.Wait()
+	stderr := strings.TrimSpace(stderrBuf.String())
 
 	if loopErr != nil {
-		failSpan(ctx, p.database, p.eventBus, agentSpanID, now, loopErr)
-		failOrphanedChildSpans(ctx, p.database, p.eventBus, p.taskID, agentSpanID)
+		failSpanWithMetadata(
+			ctx,
+			p.database,
+			p.eventBus,
+			p.logger,
+			agentSpanID,
+			now,
+			loopErr,
+			&loopParams,
+			stderr,
+		)
+		failOrphanedChildSpans(
+			ctx,
+			p.database,
+			p.eventBus,
+			p.logger,
+			p.taskID,
+			agentSpanID,
+		)
 		return nil, fmt.Errorf("agent %s loop: %w", p.script, loopErr)
 	}
 
-	if waitErr != nil && result == nil {
-		stderr := truncate(stderrBuf.String(), maxJSONLen)
-		err := fmt.Errorf("agent %s exited: %w (stderr: %s)", p.script, waitErr, stderr)
-		failSpan(ctx, p.database, p.eventBus, agentSpanID, now, err)
-		failOrphanedChildSpans(ctx, p.database, p.eventBus, p.taskID, agentSpanID)
+	if waitErr != nil {
+		errStr := truncate(stderr, maxJSONLen)
+		err := fmt.Errorf("agent %s exited: %w (stderr: %s)", p.script, waitErr, errStr)
+		failSpanWithMetadata(
+			ctx,
+			p.database,
+			p.eventBus,
+			p.logger,
+			agentSpanID,
+			now,
+			err,
+			&loopParams,
+			stderr,
+		)
+		failOrphanedChildSpans(
+			ctx,
+			p.database,
+			p.eventBus,
+			p.logger,
+			p.taskID,
+			agentSpanID,
+		)
 		return nil, err
 	}
 
-	// Complete the agent span.
-	completeSpan(ctx, p.database, p.eventBus, agentSpanID, now,
-		truncateJSON(result.ArtifactJSON))
+	// Read output file written by the agent.
+	outputData, readErr := os.ReadFile(p.outputPath)
+	if readErr != nil {
+		err := fmt.Errorf(
+			"agent %s output file missing (%s): %w",
+			p.script,
+			p.outputPath,
+			readErr,
+		)
+		failSpanWithMetadata(ctx, p.database, p.eventBus, p.logger, agentSpanID, now,
+			err, &loopParams, stderr)
+		failOrphanedChildSpans(
+			ctx,
+			p.database,
+			p.eventBus,
+			p.logger,
+			p.taskID,
+			agentSpanID,
+		)
+		return nil, err
+	}
+
+	result := &runAgentResult{ArtifactJSON: outputData}
+
+	// Complete the agent span with aggregate metadata.
+	agentMeta := SpanMetadata{
+		TotalInputTokens:  loopParams.totalInputTokens,
+		TotalOutputTokens: loopParams.totalOutputTokens,
+		TotalCost:         loopParams.totalCost,
+		ToolCallCount:     loopParams.toolCallCount,
+		LLMCallCount:      loopParams.llmCallCount,
+	}
+	completeSpanWithMetadata(ctx, p.database, p.eventBus, p.logger, agentSpanID, now,
+		truncate(string(outputData), maxJSONLen), &agentMeta)
 
 	return result, nil
 }
 
 // agentLoopParams holds the parameters for the main agent read loop.
 type agentLoopParams struct {
-	stdout      io.Reader
-	stdin       io.WriteCloser
-	agentSpanID string
-	taskID      string
-	repoRoot    string
-	database    *db.DB
-	eventBus    *events.EventBus
-	logger      *slog.Logger
-	heartbeat   func(details any)
-	startedAt   time.Time
-	cmd         *exec.Cmd
+	stdout        io.Reader
+	stdin         io.WriteCloser
+	agentSpanID   string
+	taskID        string
+	repoRoot      string
+	database      *db.DB
+	eventBus      *events.EventBus
+	logger        *slog.Logger
+	heartbeat     func(details any)
+	startedAt     time.Time
+	cmd           *exec.Cmd
+	toolCallLimit int // kill threshold
+	toolCallWarn  int // warning threshold
+	// Running totals for agent-level aggregate metadata.
+	totalInputTokens  int
+	totalOutputTokens int
+	totalCost         float64
+	toolCallCount     int
+	llmCallCount      int
 }
 
 // readAgentLoop reads JSONL messages from the agent's stdout and dispatches
-// them to the appropriate handler.
+// them to the appropriate handler. EOF is treated as normal — the agent
+// writes its output to a file, so we read it after the process exits.
 func readAgentLoop(
 	ctx context.Context,
-	p agentLoopParams,
-) (*runAgentResult, error) {
+	p *agentLoopParams,
+) error {
 	scanner := bufio.NewScanner(p.stdout)
 	scanner.Buffer(make([]byte, scannerBufferSize), scannerBufferSize)
 
 	toolCallCount := 0
 	// Track open tool call spans for completion on tool_execution_end.
 	openToolSpans := make(map[string]toolSpanInfo)
+	// Track the current inference span (one at a time).
+	var inferenceSpan *toolSpanInfo
 
 	for scanner.Scan() {
 		// Heartbeat on each line read.
@@ -207,26 +300,32 @@ func readAgentLoop(
 		var loopErr error
 		switch msg.Type {
 		case "event":
-			toolCallCount, loopErr = handleToolEvent(
-				ctx, p, msg, toolCallCount, openToolSpans,
+			toolCallCount, inferenceSpan, loopErr = handleToolEvent(
+				ctx, p, msg, toolCallCount, openToolSpans, inferenceSpan,
 			)
 
 		case "question":
-			loopErr = handleQuestion(ctx, p, msg)
+			loopErr = handleQuestion(ctx, *p, msg)
 
-		case "result":
-			return &runAgentResult{ArtifactJSON: msg.Data}, nil
+		case "heartbeat":
+			// No-op — already heartbeated above on line read.
 		}
 		if loopErr != nil {
-			return nil, loopErr
+			return loopErr
 		}
+	}
+
+	// Close any open inference span after EOF.
+	if inferenceSpan != nil {
+		completeSpan(ctx, p.database, p.eventBus, p.logger, inferenceSpan.spanID,
+			inferenceSpan.startedAt, "")
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scanner error: %w", err)
+		return fmt.Errorf("scanner error: %w", err)
 	}
 
-	return nil, errors.New("agent exited without result")
+	return nil // EOF is normal — agent wrote output to file
 }
 
 // toolSpanInfo tracks an open tool call span.
@@ -235,26 +334,29 @@ type toolSpanInfo struct {
 	startedAt time.Time
 }
 
-// handleToolEvent processes tool_execution_start and tool_execution_end events.
+// handleToolEvent processes tool_execution_start/end and inference_start/end events.
 func handleToolEvent(
 	ctx context.Context,
-	p agentLoopParams,
+	p *agentLoopParams,
 	msg AgentMessage,
 	toolCallCount int,
 	openToolSpans map[string]toolSpanInfo,
-) (int, error) {
+	inferenceSpan *toolSpanInfo,
+) (int, *toolSpanInfo, error) {
 	switch msg.Event {
-	case "tool_execution_start":
+	case AgentEventToolStart:
 		toolCallCount++
+		p.toolCallCount++
 
-		if toolCallCount == toolCallWarnThreshold {
+		if toolCallCount == p.toolCallWarn {
 			p.logger.Warn("agent approaching tool call limit",
 				"count", toolCallCount,
+				"limit", p.toolCallLimit,
 				"taskID", p.taskID)
 		}
-		if toolCallCount >= toolCallKillThreshold {
-			return toolCallCount, fmt.Errorf(
-				"agent exceeded %d tool calls", toolCallKillThreshold)
+		if toolCallCount >= p.toolCallLimit {
+			return toolCallCount, inferenceSpan, fmt.Errorf(
+				"agent exceeded %d tool calls", p.toolCallLimit)
 		}
 
 		spanID := uuid.NewString()
@@ -263,25 +365,86 @@ func handleToolEvent(
 			spanID:    spanID,
 			startedAt: now,
 		}
-		createSpan(ctx, p.database, p.eventBus, SpanParams{
+		createSpan(ctx, p.database, p.eventBus, p.logger, SpanParams{
 			ID:           spanID,
 			TaskID:       p.taskID,
 			ParentSpanID: p.agentSpanID,
-			SpanType:     "tool_call",
+			SpanType:     sqlc.SpanTypeToolCall,
 			Name:         msg.Tool,
 			InputJSON:    msg.Data,
 			StartedAt:    now.Format(time.RFC3339),
 		})
 
-	case "tool_execution_end":
+	case AgentEventToolEnd:
 		if info, ok := openToolSpans[msg.ToolCallID]; ok {
-			completeSpan(ctx, p.database, p.eventBus, info.spanID,
+			completeSpan(ctx, p.database, p.eventBus, p.logger, info.spanID,
 				info.startedAt, truncateJSON(msg.Data))
 			delete(openToolSpans, msg.ToolCallID)
 		}
+
+	case AgentEventInferenceStart:
+		// Close any previous inference span that wasn't ended.
+		if inferenceSpan != nil {
+			completeSpan(ctx, p.database, p.eventBus, p.logger, inferenceSpan.spanID,
+				inferenceSpan.startedAt, "")
+		}
+		spanID := uuid.NewString()
+		now := time.Now().UTC()
+		inferenceSpan = &toolSpanInfo{spanID: spanID, startedAt: now}
+
+		// Extract model from inference_start data.
+		name := "llm"
+		if len(msg.Data) > 0 {
+			var meta SpanMetadata
+			if json.Unmarshal(msg.Data, &meta) == nil && meta.Model != "" {
+				name = meta.Model
+			}
+		}
+
+		createSpan(ctx, p.database, p.eventBus, p.logger, SpanParams{
+			ID:           spanID,
+			TaskID:       p.taskID,
+			ParentSpanID: p.agentSpanID,
+			SpanType:     sqlc.SpanTypeLLMCall,
+			Name:         name,
+			InputJSON:    msg.Data,
+			StartedAt:    now.Format(time.RFC3339),
+		})
+
+	case AgentEventInferenceEnd:
+		if inferenceSpan == nil {
+			break
+		}
+		p.llmCallCount++
+
+		// Parse metadata from inference_end data for token tracking.
+		var meta *SpanMetadata
+		if len(msg.Data) > 0 {
+			var m SpanMetadata
+			if json.Unmarshal(msg.Data, &m) == nil {
+				meta = &m
+				if m.Usage != nil {
+					p.totalInputTokens += m.Usage.Input
+					p.totalOutputTokens += m.Usage.Output
+					p.totalCost += m.Usage.Cost.Total
+				}
+			}
+		}
+
+		if meta != nil {
+			completeSpanWithMetadata(ctx, p.database, p.eventBus, p.logger,
+				inferenceSpan.spanID, inferenceSpan.startedAt,
+				truncateJSON(msg.Data), meta)
+		} else {
+			completeSpan(ctx, p.database, p.eventBus, p.logger, inferenceSpan.spanID,
+				inferenceSpan.startedAt, truncateJSON(msg.Data))
+		}
+		inferenceSpan = nil
+	default:
+		// Unknown event type — ignore.
 	}
 
-	return toolCallCount, nil
+	return toolCallCount, inferenceSpan, nil
 }
 
 // handleQuestion processes a question from the agent and sends an answer.
@@ -292,11 +455,11 @@ func handleQuestion(
 ) error {
 	spanID := uuid.NewString()
 	now := time.Now().UTC()
-	createSpan(ctx, p.database, p.eventBus, SpanParams{
+	createSpan(ctx, p.database, p.eventBus, p.logger, SpanParams{
 		ID:           spanID,
 		TaskID:       p.taskID,
 		ParentSpanID: p.agentSpanID,
-		SpanType:     "question",
+		SpanType:     sqlc.SpanTypeQuestion,
 		Name:         truncate(msg.Text, truncateSpanNameLen),
 		InputJSON:    marshal(map[string]string{"question": msg.Text}),
 		StartedAt:    now.Format(time.RFC3339),
@@ -308,6 +471,7 @@ func handleQuestion(
 		ctx,
 		p.database,
 		p.eventBus,
+		p.logger,
 		spanID,
 		now,
 		truncateJSON(
@@ -342,6 +506,7 @@ func answerQuestion(repoRoot, question string, logger *slog.Logger) string {
 
 	skillsDir := filepath.Join(repoRoot, "harness", "agents", "skills")
 	harnessDir := filepath.Join(repoRoot, "harness")
+	templatesDir := filepath.Join(repoRoot, "templates")
 
 	for _, kw := range keywords {
 		// Search skills directory for full matches.
@@ -360,26 +525,28 @@ func answerQuestion(repoRoot, question string, logger *slog.Logger) string {
 				fmt.Sprintf("=== %s ===\n%s", relPath, string(content)))
 		}
 
-		// Search harness source for truncated matches.
-		srcFiles := grepFiles(harnessDir, kw, maxFilesPerKeyword)
-		for _, f := range srcFiles {
-			if seen[f] {
-				continue
+		// Search harness and templates source for truncated matches.
+		for _, dir := range []string{harnessDir, templatesDir} {
+			srcFiles := grepFiles(dir, kw, maxFilesPerKeyword)
+			for _, f := range srcFiles {
+				if seen[f] {
+					continue
+				}
+				// Skip non-source files.
+				ext := filepath.Ext(f)
+				if ext != ".go" && ext != ".sql" && ext != ".templ" && ext != ".rs" {
+					continue
+				}
+				seen[f] = true
+				content, err := os.ReadFile(f)
+				if err != nil {
+					continue
+				}
+				relPath, _ := filepath.Rel(repoRoot, f)
+				sections = append(sections,
+					fmt.Sprintf("=== %s ===\n%s",
+						relPath, truncate(string(content), maxFileContentLen)))
 			}
-			// Skip non-source files.
-			ext := filepath.Ext(f)
-			if ext != ".go" && ext != ".sql" && ext != ".templ" {
-				continue
-			}
-			seen[f] = true
-			content, err := os.ReadFile(f)
-			if err != nil {
-				continue
-			}
-			relPath, _ := filepath.Rel(repoRoot, f)
-			sections = append(sections,
-				fmt.Sprintf("=== %s ===\n%s",
-					relPath, truncate(string(content), maxFileContentLen)))
 		}
 	}
 
@@ -407,6 +574,7 @@ func grepFiles(dir, pattern string, maxResults int) []string {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "grep", "-ril", "--include=*.go",
 		"--include=*.md", "--include=*.sql", "--include=*.templ",
+		"--include=*.rs",
 		pattern, dir)
 	out, err := cmd.Output()
 	if err != nil {
@@ -449,20 +617,21 @@ func createSpan(
 	ctx context.Context,
 	database *db.DB,
 	eventBus *events.EventBus,
+	logger *slog.Logger,
 	p SpanParams,
 ) {
-	err := database.CreateSwarmSpan(ctx, sqlc.CreateSwarmSpanParams{
+	if err := database.CreateSwarmSpan(ctx, sqlc.CreateSwarmSpanParams{
 		ID:           p.ID,
 		TaskID:       p.TaskID,
 		ParentSpanID: toNullString(p.ParentSpanID),
 		SpanType:     p.SpanType,
 		Name:         p.Name,
-		Status:       "running",
+		Status:       sqlc.SpanStatusRunning,
 		InputJSON:    sqlNullJSON(p.InputJSON),
 		StartedAt:    p.StartedAt,
-	})
-	if err != nil {
-		return // best-effort
+	}); err != nil {
+		logger.Warn("failed to create span", "spanID", p.ID, "name", p.Name, "error", err)
+		return
 	}
 
 	if eventBus != nil {
@@ -481,6 +650,7 @@ func completeSpan(
 	ctx context.Context,
 	database *db.DB,
 	eventBus *events.EventBus,
+	logger *slog.Logger,
 	spanID string,
 	startedAt time.Time,
 	outputJSON string,
@@ -488,12 +658,15 @@ func completeSpan(
 	now := time.Now().UTC()
 	durationMs := now.Sub(startedAt).Milliseconds()
 
-	_ = database.CompleteSwarmSpan(ctx, sqlc.CompleteSwarmSpanParams{
+	if err := database.CompleteSwarmSpan(ctx, sqlc.CompleteSwarmSpanParams{
 		OutputJSON: toNullString(outputJSON),
 		EndedAt:    toNullString(now.Format(time.RFC3339)),
 		DurationMs: sql.NullInt64{Int64: durationMs, Valid: true},
 		ID:         spanID,
-	})
+	}); err != nil {
+		logger.Warn("failed to complete span", "spanID", spanID, "error", err)
+		return
+	}
 
 	if eventBus != nil {
 		eventBus.Publish("swarm", map[string]any{
@@ -504,11 +677,114 @@ func completeSpan(
 	}
 }
 
+// completeSpanWithMetadata marks a span as completed with metadata_json.
+func completeSpanWithMetadata(
+	ctx context.Context,
+	database *db.DB,
+	eventBus *events.EventBus,
+	logger *slog.Logger,
+	spanID string,
+	startedAt time.Time,
+	outputJSON string,
+	meta *SpanMetadata,
+) {
+	now := time.Now().UTC()
+	durationMs := now.Sub(startedAt).Milliseconds()
+
+	metaJSON := ""
+	if meta != nil {
+		if b, err := json.Marshal(meta); err == nil {
+			metaJSON = string(b)
+		}
+	}
+
+	if err := database.CompleteSwarmSpanWithMetadata(
+		ctx,
+		sqlc.CompleteSwarmSpanWithMetadataParams{
+			OutputJSON:   toNullString(outputJSON),
+			EndedAt:      toNullString(now.Format(time.RFC3339)),
+			DurationMs:   sql.NullInt64{Int64: durationMs, Valid: true},
+			MetadataJSON: toNullString(metaJSON),
+			ID:           spanID,
+		},
+	); err != nil {
+		logger.Warn(
+			"failed to complete span with metadata",
+			"spanID",
+			spanID,
+			"error",
+			err,
+		)
+		return
+	}
+
+	if eventBus != nil {
+		eventBus.Publish("swarm", map[string]any{
+			"event":      events.EventSpanCompleted,
+			"spanID":     spanID,
+			"durationMs": durationMs,
+		})
+	}
+}
+
+// failSpanWithMetadata marks a span as failed and writes aggregate metadata + stderr.
+func failSpanWithMetadata(
+	ctx context.Context,
+	database *db.DB,
+	eventBus *events.EventBus,
+	logger *slog.Logger,
+	spanID string,
+	startedAt time.Time,
+	spanErr error,
+	lp *agentLoopParams,
+	stderr string,
+) {
+	meta := SpanMetadata{
+		TotalInputTokens:  lp.totalInputTokens,
+		TotalOutputTokens: lp.totalOutputTokens,
+		TotalCost:         lp.totalCost,
+		ToolCallCount:     lp.toolCallCount,
+		LLMCallCount:      lp.llmCallCount,
+		Stderr:            truncate(stderr, maxJSONLen),
+	}
+
+	now := time.Now().UTC()
+	durationMs := now.Sub(startedAt).Milliseconds()
+
+	metaJSON := ""
+	if b, err := json.Marshal(meta); err == nil {
+		metaJSON = string(b)
+	}
+
+	if err := database.FailSwarmSpanWithMetadata(
+		ctx,
+		sqlc.FailSwarmSpanWithMetadataParams{
+			ErrorMessage: toNullString(spanErr.Error()),
+			EndedAt:      toNullString(now.Format(time.RFC3339)),
+			DurationMs:   sql.NullInt64{Int64: durationMs, Valid: true},
+			MetadataJSON: toNullString(metaJSON),
+			ID:           spanID,
+		},
+	); err != nil {
+		logger.Warn("failed to fail span with metadata", "spanID", spanID, "error", err)
+		return
+	}
+
+	if eventBus != nil {
+		eventBus.Publish("swarm", map[string]any{
+			"event":  events.EventSpanFailed,
+			"spanID": spanID,
+			"error":  spanErr.Error(),
+		})
+	}
+}
+
 // failSpan marks a span as failed in the DB and publishes an event.
 func failSpan(
 	ctx context.Context,
 	database *db.DB,
 	eventBus *events.EventBus,
+	logger *slog.Logger,
 	spanID string,
 	startedAt time.Time,
 	spanErr error,
@@ -516,12 +792,15 @@ func failSpan(
 	now := time.Now().UTC()
 	durationMs := now.Sub(startedAt).Milliseconds()
 
-	_ = database.FailSwarmSpan(ctx, sqlc.FailSwarmSpanParams{
+	if err := database.FailSwarmSpan(ctx, sqlc.FailSwarmSpanParams{
 		ErrorMessage: toNullString(spanErr.Error()),
 		EndedAt:      toNullString(now.Format(time.RFC3339)),
 		DurationMs:   sql.NullInt64{Int64: durationMs, Valid: true},
 		ID:           spanID,
-	})
+	}); err != nil {
+		logger.Warn("failed to fail span", "spanID", spanID, "error", err)
+		return
+	}
 
 	if eventBus != nil {
 		eventBus.Publish("swarm", map[string]any{
@@ -538,19 +817,27 @@ func failOrphanedChildSpans(
 	ctx context.Context,
 	database *db.DB,
 	eventBus *events.EventBus,
+	logger *slog.Logger,
 	taskID string,
 	parentSpanID string,
 ) {
 	spans, err := database.GetSwarmSpansByTask(ctx, taskID)
 	if err != nil {
+		logger.Warn(
+			"failed to query spans for orphan cleanup",
+			"taskID",
+			taskID,
+			"error",
+			err,
+		)
 		return
 	}
 
 	now := time.Now().UTC()
 	for _, s := range spans {
 		if s.ParentSpanID.Valid && s.ParentSpanID.String == parentSpanID &&
-			s.Status == "running" {
-			failSpan(ctx, database, eventBus, s.ID, now,
+			s.Status == sqlc.SpanStatusRunning {
+			failSpan(ctx, database, eventBus, logger, s.ID, now,
 				fmt.Errorf("orphaned: parent span %s failed", parentSpanID))
 		}
 	}

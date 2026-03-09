@@ -153,13 +153,13 @@ func (l *Listener) onMessageCreate(_ *discordgo.Session, m *discordgo.MessageCre
 }
 
 // classifyMessage determines the author type based on the message source.
-func classifyMessage(m *discordgo.MessageCreate, botUserID string) string {
+func classifyMessage(m *discordgo.MessageCreate, botUserID string) sqlc.AuthorType {
 	if m.Author.ID != botUserID {
-		return "user"
+		return sqlc.AuthorTypeUser
 	}
 	// Bot messages: check for system prefixes.
 	if strings.HasPrefix(m.Content, "[BUILD") || strings.HasPrefix(m.Content, "[SYSTEM") {
-		return "system"
+		return sqlc.AuthorTypeSystem
 	}
-	return "mayor"
+	return sqlc.AuthorTypeMayor
 }

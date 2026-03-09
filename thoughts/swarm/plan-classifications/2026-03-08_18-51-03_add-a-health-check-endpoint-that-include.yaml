@@ -1,0 +1,9 @@
+---
+planners:
+  - type: api
+    focus: Design and implement additive /health response changes while preserving existing GET /health 200 + top-level status compatibility for current callers; define response shape/naming and handler updates.
+  - type: temporal
+    focus: Define how Temporal worker state should be surfaced (disabled vs init-failed vs initialized), including what can be reliably inferred today and what extra manager instrumentation/status accessors are needed for true runtime worker health.
+  - type: general
+    focus: Validate cross-cutting compatibility with monitor/scripts and document health semantics (liveness vs component status), rollout expectations, and any constraints/limitations in reported Temporal health fidelity.
+---

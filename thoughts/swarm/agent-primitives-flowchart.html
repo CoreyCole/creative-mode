@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Chestnut Agent Primitives — System Flowchart</title>
+<title>Agent Primitives — System Flowchart</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -178,7 +178,7 @@
 <div class="header">
   <div class="label">Agent Primitives Architecture</div>
   <h1><span class="dot">●</span> Build the Machine <span>That Builds the Machine</span></h1>
-  <p>How the Chestnut agent swarm turns high-level goals into deployed software through seven composable primitives and a two-level orchestration model.</p>
+  <p>How the agent swarm turns high-level goals into deployed software through seven composable primitives and a two-level orchestration model.</p>
 </div>
 
 <div class="legend">
@@ -512,7 +512,7 @@
 <!-- ============================================================ -->
 <div class="diagram-section">
   <h2>6 7 Orchestration Heartbeat Loops</h2>
-  <p class="subtitle">Two-level orchestration — Lead FDE oversees all projects, Project Orchestrators manage individual workstreams</p>
+  <p class="subtitle">Two-level orchestration — president oversees all projects, world mayors manage individual workstreams</p>
 
   <div class="flow-container">
     <div class="flow-row" style="gap:40px; align-items:flex-start; flex-wrap:wrap; justify-content:center;">
@@ -521,7 +521,7 @@
       <div style="display:flex;flex-direction:column;align-items:center;gap:0;">
         <div class="node n-entry" style="min-width:180px;border-width:3px;">
           OpenClaw
-          <small>Human interface to Lead FDE</small>
+          <small>Human interface to president</small>
         </div>
         <div class="arrow-down">↓</div>
         <div class="flow-row">
@@ -530,15 +530,15 @@
         </div>
       </div>
 
-      <!-- Lead FDE -->
+      <!-- president -->
       <div style="display:flex;flex-direction:column;align-items:center;gap:0;">
         <div class="node n-orch" style="min-width:220px;border-width:3px;">
           <div class="num">7</div>
-          Lead FDE Heartbeat
+          president Heartbeat
           <small>Mayor of the system</small>
         </div>
         <div class="arrow-down">↓</div>
-        <div class="node n-orch">Check on each<br>Project Lead FDE</div>
+        <div class="node n-orch">Check on each<br>Project president</div>
         <div class="arrow-down">↓</div>
         <div class="flow-row" style="gap:8px;">
           <div class="node n-orch" style="min-width:100px;">Reprompt<br>stalled leads</div>
@@ -547,11 +547,11 @@
         </div>
       </div>
 
-      <!-- Project Orchestrator -->
+      <!-- world mayor -->
       <div style="display:flex;flex-direction:column;align-items:center;gap:0;">
         <div class="node n-orch" style="min-width:220px;border-width:3px;">
           <div class="num">6</div>
-          Project Orchestrator<br>Heartbeat
+          world mayor<br>Heartbeat
         </div>
         <div class="arrow-down">↓</div>
         <div class="node n-orch">Check on project<br>Keep it moving forward</div>
@@ -581,10 +581,6 @@
     <div class="node n-entry" style="min-width:140px;">Linear is the<br>source of truth</div>
     <div class="node n-entry" style="min-width:140px;">Slack only for<br>critical human<br>input needs</div>
   </div>
-</div>
-
-<div style="text-align:center; padding:32px 0; color:#8B6914; font-size:11px; letter-spacing:3px; text-transform:uppercase; font-weight:700;">
-  Chestnut
 </div>
 
 </body>

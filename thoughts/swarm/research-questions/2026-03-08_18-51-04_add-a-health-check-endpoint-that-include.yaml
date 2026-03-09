@@ -1,0 +1,33 @@
+---
+questions:
+  - question: How is the harness /health endpoint currently implemented, and what JSON response shape/status-code conventions should be preserved when adding Temporal worker status?
+    rationale: Establishes the exact baseline contract for health checks so the new worker status field can be added without breaking existing consumers or middleware assumptions.
+    suggestedFiles:
+      - harness/internal/server/server.go
+
+  - question: Where and how is SwarmManager (Temporal client/worker) initialized, attached to the HTTP server, and optionally disabled via environment flags, and what does that imply for reporting worker status in health responses?
+    rationale: Worker status reporting must correctly handle both enabled and disabled Temporal configurations; this requires understanding initialization flow and nilability of SwarmManager.
+    suggestedFiles:
+      - harness/main.go
+      - harness/internal/server/server.go
+
+  - question: What internal state and lifecycle hooks exist in swarmorch.SwarmManager (startup, running, stop, errors), and what additional state would be needed to expose a reliable worker health signal?
+    rationale: The current manager may not expose an explicit running/healthy flag; identifying lifecycle signals is necessary to design a robust status check rather than a brittle nil check.
+    suggestedFiles:
+      - harness/internal/swarmorch/manager.go
+
+  - question: Are there existing health/status endpoint patterns in the repo (site health checks, world status, monitor polling) that define preferred field naming and semantics for component-level health reporting?
+    rationale: Reusing established response patterns improves consistency and reduces ambiguity for operators and UI consumers that may later consume Temporal worker status.
+    suggestedFiles:
+      - site/internal/webhook/handler.go
+      - site/internal/monitor/handler.go
+      - harness/internal/server/server.go
+
+  - question: Which existing clients or polling code currently call harness /health, and what compatibility constraints do they impose on extending the response with Temporal worker status?
+    rationale: 'Prevents accidental regressions by identifying consumers that may expect specific payload structure (e.g., only {status: ok}) or only HTTP status checks.'
+    suggestedFiles:
+      - site/internal/monitor/handler.go
+      - site/pages/status_fragments_templ.go
+      - site/pages/status_templ.go
+      - harness/internal/mayor/openclaw.go
+---

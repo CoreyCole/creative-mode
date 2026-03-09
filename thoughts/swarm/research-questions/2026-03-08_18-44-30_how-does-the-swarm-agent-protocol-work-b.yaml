@@ -1,0 +1,36 @@
+---
+questions:
+  - question: What are the exact JSONL message types, fields, and directionality defined for Go ↔ JS communication in the current swarm agent protocol?
+    rationale: This establishes the protocol contract itself (what can be sent, by whom, and with which payload schema), which is the foundation for understanding all higher-level behavior.
+    suggestedFiles:
+      - harness/internal/swarmorch/types.go
+      - harness/agents/lib/protocol.js
+
+  - question: How does the Go runner (`runAgent` path) orchestrate JS subprocess lifecycle and protocol IO, including stdin writes, stdout reads, and parsing/dispatch of incoming JSONL messages?
+    rationale: The runtime mechanics in Go determine how protocol messages are consumed and acted on, including process startup, message loop behavior, and termination semantics.
+    suggestedFiles:
+      - harness/internal/swarmorch/agent.go
+      - harness/internal/swarmorch/types.go
+
+  - question: How are interactive question/answer exchanges implemented between JS agents and Go (question IDs, blocking waits, and answer routing)?
+    rationale: Bidirectional Q/A is a key differentiator from fire-and-forget execution; understanding correlation and control flow is essential to explain protocol behavior.
+    suggestedFiles:
+      - harness/agents/lib/orchestrator-tools.js
+      - harness/agents/lib/protocol.js
+      - harness/internal/swarmorch/agent.go
+
+  - question: How are tool execution events (start/end, toolCallId, payload fields) emitted in JS and transformed into Go-side spans/observability records?
+    rationale: Tool-call events are the main structured telemetry crossing the protocol boundary; this reveals event semantics, correlation strategy, and how protocol data maps to tracing.
+    suggestedFiles:
+      - harness/agents/lib/agent-factory.js
+      - harness/agents/lib/protocol.js
+      - harness/internal/swarmorch/agent.go
+      - harness/internal/swarmorch/types.go
+
+  - question: What liveness and failure-handling rules does the protocol implement (heartbeat cadence, stdin close behavior, timeouts, malformed JSON, and crash detection), and where are they enforced on each side?
+    rationale: Protocol robustness depends on these edge-case paths; they explain how Go and JS detect stalls/failures and recover or fail fast.
+    suggestedFiles:
+      - harness/agents/lib/protocol.js
+      - harness/internal/swarmorch/agent.go
+      - harness/agents/lib/agent-factory.js
+---

@@ -1,0 +1,42 @@
+---
+questions:
+  - question: "What are the canonical message/event types and payload schemas used by the swarm protocol in Go, and where are they defined (including any JSON tags or versioning fields)?"
+    rationale: "Understanding the exact wire-level contract on the Go side is the foundation for mapping interoperability with JS and identifying required/optional fields."
+    suggestedFiles:
+      - "pkg/"
+      - "harness/"
+      - "site/internal/"
+      - "CLAUDE.md"
+
+  - question: "Where does Go send and receive swarm protocol messages over transport (HTTP, SSE, WebSocket, stdin/stdout, or files), and what framing/stream semantics does it enforce?"
+    rationale: "Protocol behavior depends not just on payload schema but on transport framing, streaming boundaries, heartbeats, and reconnect behavior that JS must match."
+    suggestedFiles:
+      - "harness/internal/server/"
+      - "site/internal/"
+      - "pkg/mayorchat/stream.go"
+      - "DEVELOPMENT.md"
+
+  - question: "How does the JavaScript side implement the same protocol contract (serialization/deserialization, event routing, and state transitions), and where can mismatches with Go occur?"
+    rationale: "A side-by-side contract check requires locating JS protocol handlers and comparing parsing/encoding assumptions to Go definitions."
+    suggestedFiles:
+      - "site/"
+      - "templates/"
+      - ".claude/hooks/"
+      - "templates/**/.claude/hooks/"
+
+  - question: "What is the end-to-end orchestration path for a swarm task from API entrypoint in Go through orchestration/agent runner to JS agent execution and back, including correlation IDs and lifecycle states?"
+    rationale: "This reveals the practical protocol sequence (request, ack, progress, completion/error) and how both runtimes coordinate multi-step work."
+    suggestedFiles:
+      - "harness/internal/server/"
+      - "pkg/"
+      - "context/"
+      - "README.md"
+
+  - question: "What error handling, retries, timeouts, and backward-compatibility logic exist in the Go↔JS swarm protocol path (including fallback parsing and legacy format support)?"
+    rationale: "Reliability and compatibility rules are often protocol-critical and explain how the system behaves under partial failure or mixed-version agents."
+    suggestedFiles:
+      - "pkg/mayorchat/stream.go"
+      - "pkg/mayorchat/conversation.go"
+      - "harness/internal/server/"
+      - "E2E_ONBOARDING.md"
+---

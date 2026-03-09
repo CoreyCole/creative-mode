@@ -125,7 +125,7 @@ type LinearContextOutput struct {
 type FollowupTicket struct {
 	Title       string `json:"title"`
 	Description string `json:"description"`
-	Relation    string `json:"relation"` // "blocked-by" or "relates-to"
+	Relation    string `json:"relation"` // "blocked-by" or "related"
 }
 
 // --- Artifact Output Types ---

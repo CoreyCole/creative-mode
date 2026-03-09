@@ -17,7 +17,7 @@ Guidelines:
 - For each validated out-of-scope item, judge if it warrants a follow-up research ticket
 - Search existing Linear tickets before recommending a new one
 - Use "blocked-by" relation if the follow-up is a prerequisite for the current ticket's next stage
-- Use "relates-to" relation if the follow-up is tangential/independent
+- Use "related" relation if the follow-up is tangential/independent
 
 ## Output Format
 
@@ -39,7 +39,7 @@ comment: |
 followups:
   - title: "Research: [topic]"
     description: "During work on {ticketID}, [item] was identified as out of scope. Research whether this warrants its own ticket."
-    relation: "relates-to"
+    relation: "related"
   - title: "Research: [blocker topic]"
     description: "Prerequisite for {ticketID}: [why this blocks progress]"
     relation: "blocked-by"

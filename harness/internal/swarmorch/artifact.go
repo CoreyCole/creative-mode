@@ -298,7 +298,7 @@ func validateLinearContextOutput(a LinearContextOutput) error {
 	if a.Comment == "" {
 		return errors.New("must produce a comment")
 	}
-	validRelations := map[string]bool{"blocked-by": true, "relates-to": true}
+	validRelations := map[string]bool{"blocked-by": true, "related": true}
 	for i, f := range a.Followups {
 		if f.Title == "" {
 			return fmt.Errorf("followup[%d] missing title", i)

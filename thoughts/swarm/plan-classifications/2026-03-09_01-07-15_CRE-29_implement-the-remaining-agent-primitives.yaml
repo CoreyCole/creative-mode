@@ -1,0 +1,11 @@
+---
+planners:
+  - type: temporal
+    focus: Design and implement new Temporal workflows/child workflows for task classification routing, plan revision loops, implementation↔verification retry loop, PR-creation stage, human review gate waits/resume paths, and project-level decomposition/dependency orchestration using existing span/stage/activity patterns.
+  - type: api
+    focus: Add/adjust API and dashboard entrypoints to replace manual primitive selection with classifier-driven routing; expose human gate actions (approve, request revision, restart, resume) and wire them to workflow signals/starts; keep auth/middleware and SSE/event behavior consistent with current conventions.
+  - type: database
+    focus: 'Evolve swarm persistence for lifecycle gating and lineage: extend task status/state modeling for awaiting-approval/review and resumable revisions, and define revision/version linkage across attempts/artifacts/tickets (while reusing existing Linear follow-up relations where appropriate).'
+  - type: general
+    focus: 'Plan cross-cutting integrations: new agents/ JS scripts contract updates in agents/, Linear ticket lifecycle usage for revisions/restarts, and introducing GitHub PR integration (client wrapper, config/env, activities, summaries) plus operational/documentation updates.'
+---

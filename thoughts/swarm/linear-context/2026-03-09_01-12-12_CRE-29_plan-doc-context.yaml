@@ -1,0 +1,16 @@
+---
+comment: |
+  ## Context
+  - The plan sequences CRE-29 into a dependency-aware rollout: data model/migrations first, then Temporal workflow primitives and signal semantics, then unified classification/routing API, then lifecycle loops (plan revision, implementation/verification, PR creation, human PR gate), followed by project workflow and rollout/deprecation cleanup.
+  - The implementation explicitly maps to the ticket’s required primitives: Plan Revision Loop (with human gate + Linear-linked revision tickets), Implementation & Verification Loop (bounded retries with failure context), PR Creation (new GitHub integration + persisted PR metadata), Human Review Gate (merge/revision/full restart outcomes), Project Workflow (decomposition + dependency DAG + child orchestration), and Task Classification & Routing (new unified endpoint with legacy shims).
+  - Architectural alignment is preserved with existing constraints: extend `internal/swarmorch/`, add JS agents under `harness/agents/`, keep Linear operations on existing `linear.Client`, use feature flags for staged enablement, and retain compatibility endpoints until classifier routing is stable.
+  - Cross-cutting technical decisions are called out as first-class: additive DB migration with backfill defaults, expanded waiting/revision states, deterministic Temporal signal handling, continue-as-new for long waits/history control, and idempotent human gate transitions.
+
+  ## Out of Scope
+  - Full dashboard UX redesign beyond the minimum controls/status visibility required for new gate interactions.
+  - Deep prompt-quality tuning for classifier/reviewer/implementation agents beyond functional contract correctness.
+  - Detailed Graphite execution automation internals beyond generating stack/dependency planning artifacts.
+  - Replacing the existing `linear.Client` wrapper.
+  - Immediate removal of legacy `/research` and `/code-change-plan` entrypoints (kept as staged deprecation aliases).
+followups: []
+---

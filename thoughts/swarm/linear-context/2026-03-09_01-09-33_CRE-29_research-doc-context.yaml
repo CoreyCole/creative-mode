@@ -1,0 +1,24 @@
+---
+comment: |
+  ## Context
+  - Existing swarm orchestration primitives are a strong base for CRE-29: workflows already provide deterministic lifecycle handling, stage spans, child-workflow composition, fan-out/fan-in, agent script execution, artifact writing, and Linear side effects.
+  - The largest concrete platform gap versus ticket requirements is lifecycle state modeling for human gates: current swarm task statuses only cover pending/running/completed/failed/canceled, with no persisted awaiting-approval/review or revision-requested/resume semantics.
+  - Linear integration is already mature and reusable for revision lineage (including follow-up issue creation and relations), while GitHub PR integration is currently absent (no wrapper/auth/activity path), making PR Creation the clearest missing integration surface.
+  - Task classification/routing can be inserted at existing API/dashboard branch points that currently hard-select research vs code-change-plan workflows.
+  - Plan revision and human review loops are feasible with existing Temporal orchestration patterns, but require explicit decisions on persisted review/revision state representation and lineage modeling.
+
+  ## Out of Scope
+  - Detailed GitHub PR integration implementation shape (client wrapper, auth/config wiring, workflow activities) was identified as not present and therefore unresolved in this research artifact.
+  - Final persistence design choice for human gate/revision semantics (status enum extension vs separate review/event model) remains unresolved.
+  - Revision/version lineage persistence granularity inside swarm DB (artifact/task parent linkage beyond chronological ordering) remains unresolved.
+followups:
+  - title: 'Research: GitHub PR integration architecture for swarm workflows'
+    description: During work on CRE-29, PR Creation was identified as blocked by missing GitHub integration primitives (client wrapper, auth/config wiring, and workflow activities). Research an implementation architecture aligned with existing internal/linear patterns and swarm activity boundaries.
+    relation: blocked-by
+  - title: 'Research: Swarm human-gate state model (approval/review/resume)'
+    description: During work on CRE-29, persisted lifecycle semantics for plan approval and PR review gates were identified as out of scope in the artifact. Research whether to extend swarm task status enums or introduce separate review/event persistence to support await/revise/resume flows.
+    relation: blocked-by
+  - title: 'Research: Revision lineage persistence for v1/v2/v3 plan loops'
+    description: During work on CRE-29, revision lineage was noted as only partially represented (chronological artifacts + Linear relations). Research whether explicit parent/version linkage is needed in swarm persistence for iterative plan and restart loops.
+    relation: related
+---

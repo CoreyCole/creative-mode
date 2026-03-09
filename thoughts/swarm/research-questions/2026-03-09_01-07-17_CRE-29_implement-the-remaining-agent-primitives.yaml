@@ -1,0 +1,56 @@
+---
+questions:
+  - question: How are the existing ResearchWorkflow and CodeChangePlanWorkflow implemented end-to-end in internal/swarmorch (workflow stages, activity calls, status transitions, artifact writes, and span/event emission), and which reusable orchestration patterns already exist for adding new primitives?
+    rationale: Establishes the current Temporal + agent orchestration baseline so new primitives can follow the same concrete execution and persistence patterns.
+    suggestedFiles:
+      - harness/internal/swarmorch/workflows.go
+      - harness/internal/swarmorch/activities.go
+      - harness/internal/swarmorch/types.go
+      - harness/internal/swarmorch/agent.go
+      - harness/internal/swarmorch/artifact.go
+      - harness/internal/swarmorch/manager.go
+
+  - question: What is the current API surface and request-routing path for swarm tasks (including endpoint handlers, task-type selection, DB record creation, and SSE/UI update plumbing), and where would automatic task classification and routing hook into that flow?
+    rationale: Task classification replaces manual endpoint selection, so we need a precise map of today’s API entrypoints and task dispatch lifecycle.
+    suggestedFiles:
+      - harness/internal/server/server.go
+      - harness/internal/server/swarm_handlers.go
+      - harness/internal/db/queries/swarm.sql
+      - harness/internal/db/models.go
+      - harness/internal/events/
+      - harness/internal/swarmorch/manager.go
+
+  - question: How do current JS swarm agent scripts and the shared agent runtime contract work (input schema, JSONL protocol events/questions, output file schema/paths), and what script interfaces would be required to support plan-review/revision, implementation-verification looping, PR generation, and project decomposition agents?
+    rationale: The new primitives require additional agent roles; this identifies the exact existing script contract and extension points they must conform to.
+    suggestedFiles:
+      - harness/agents/lib/agent-factory.js
+      - harness/agents/research-questions.js
+      - harness/agents/research-agent.js
+      - harness/agents/research-synthesizer.js
+      - harness/agents/plan-orchestrator.js
+      - harness/agents/specialist-planner.js
+      - harness/agents/plan-synthesizer.js
+      - harness/internal/swarmorch/types.go
+      - harness/internal/swarmorch/agent.go
+
+  - question: What Linear and GitHub integration capabilities already exist in the codebase (client wrappers, auth/config, ticket/linking operations, and any PR-related helpers), and how are these integrations currently invoked from workflows or activities?
+    rationale: Plan revision loops and PR creation depend on existing external-service abstractions; documenting current operations clarifies what can be reused directly.
+    suggestedFiles:
+      - harness/internal/linear/
+      - harness/internal/github/
+      - harness/internal/swarmorch/activities.go
+      - harness/internal/swarmorch/types.go
+      - harness/internal/config/
+      - harness/internal/server/
+
+  - question: What current mechanisms exist for human gates and lifecycle state transitions (e.g., awaiting approval/review, resume/retry/cancel actions, parent-child task linkage, and versioned artifact lineage), and how are those states represented in DB schema, Temporal workflow inputs, and UI views?
+    rationale: Plan revision, human review, and restart paths require explicit gate and lineage semantics; this captures how comparable stateful pauses/transitions are represented today.
+    suggestedFiles:
+      - harness/internal/db/migrations/
+      - harness/internal/db/queries/swarm.sql
+      - harness/internal/db/models.go
+      - harness/internal/swarmorch/types.go
+      - harness/internal/swarmorch/workflows.go
+      - harness/internal/server/swarm_handlers.go
+      - harness/internal/ui/pages/swarm/
+---

@@ -8,14 +8,21 @@ Two combined efforts:
 
 2. **Linear integration** (Phases 1-6) — Add Linear tracking so Temporal workflows push status updates, labels, structured comments, artifact links, and follow-up tickets. All Linear operations use the `linear-cli` Rust binary (already installed) via `exec.CommandContext` — no Go SDK needed.
 
-## Current State
+## Current State (updated 2026-03-09)
 
-- `linear-cli` is installed at `/home/deploy/.cargo/bin/linear-cli`, workspace `creative-mode` configured with `LINEAR_API_KEY`
-- `swarm_tasks` table has `linear_issue_id` column but it's never populated (always NULL)
-- Workflow inputs have `LinearIssueID string` field but it's always empty
-- No labels exist in Linear. Default workflow states: Backlog, Todo, In Progress, In Review, Done, Canceled, Duplicate
-- No Linear API calls anywhere in the codebase
-- Agent prompts lack documentarian constraints, verification split, scope exclusions, tags, and a deeper thinking step
+**Completed** (committed as `d23b4e7` on `feat/agent-primitives`):
+- Phase 0: All 5 prompt improvements applied, Go compiles, JS parses
+- Phase 1: `harness/internal/linear/` package created, 7 labels exist in Linear
+- Phase 2: 7 Linear activities on `SwarmActivities`, all nil-safe
+- Phase 4 (partial): Basic Linear activities wired at stage boundaries (status, labels, simple comments, artifact links)
+- Phase 5: Artifact URL route + `GetSwarmArtifact` query
+- Phase 6: Linear client initialized from env, `HarnessURL` on `SwarmConfig`
+
+**Not yet started**:
+- Phase 2.5: Review fixes (artifactURL nil deref bug, tags cleanup, path separator, LookPath)
+- Phase 3: Post-processor agent, ticket context injection, full workflow wiring (FetchLinearTicket, follow-ups)
+
+**Known bug**: `artifactURL` panics at runtime — see Phase 2.5a
 
 ## Design Decisions
 
@@ -292,7 +299,143 @@ func (a *SwarmActivities) SearchLinearIssues(ctx context.Context, query string) 
 
 Activity options: infrastructure tier (30s timeout, 3 retries) — these are fast CLI calls.
 
-### Phase 3: Post-processor agent
+### Phase 2.5: Review fixes (bugs and hardening from staff eng review)
+
+Addresses critical bug and concerns from `thoughts/CoreyCole/reviews/2026-03-09_00-22-17_linear-integration-plan_review.md`.
+
+#### 2.5a. Fix `artifactURL` nil pointer dereference — CRITICAL
+
+**Bug**: `artifactURL(a, researchArtifactID)` at `workflows.go:525` and `workflows.go:784` accesses `a.config.HarnessURL` where `a` is the nil `*SwarmActivities` pointer used for Temporal activity references. This panics at runtime whenever an artifact ID is non-empty.
+
+**Fix**: Add `HarnessURL` field to both workflow input structs and thread it from `SwarmManager`:
+
+```go
+// workflows.go — add to both input structs
+type ResearchWorkflowInput struct {
+    TaskID        string `json:"taskID"`
+    RequestText   string `json:"requestText"`
+    RepoRoot      string `json:"repoRoot"`
+    ParentSpanID  string `json:"parentSpanID,omitempty"`
+    LinearIssueID string `json:"linearIssueID,omitempty"`
+    HarnessURL    string `json:"harnessURL,omitempty"`
+}
+
+type CodeChangePlanWorkflowInput struct {
+    TaskID        string `json:"taskID"`
+    RequestText   string `json:"requestText"`
+    RepoRoot      string `json:"repoRoot"`
+    LinearIssueID string `json:"linearIssueID,omitempty"`
+    HarnessURL    string `json:"harnessURL,omitempty"`
+}
+```
+
+Change `artifactURL` to a pure function:
+
+```go
+func artifactURL(harnessURL, artifactID string) string {
+    if harnessURL == "" {
+        return "/swarm/artifacts/" + artifactID + "/view"
+    }
+    return strings.TrimRight(harnessURL, "/") + "/swarm/artifacts/" + artifactID + "/view"
+}
+```
+
+Update callers:
+- `workflows.go:525`: `artifactURL(input.HarnessURL, researchArtifactID)`
+- `workflows.go:784`: `artifactURL(input.HarnessURL, planArtifactID)`
+
+Thread `HarnessURL` from `SwarmConfig` through `SwarmManager.StartResearch` and `StartCodePlan`:
+
+```go
+// manager.go — pass config.HarnessURL into workflow inputs
+_, err := m.client.ExecuteWorkflow(ctx, opts, ResearchWorkflow,
+    ResearchWorkflowInput{
+        TaskID:        taskID,
+        RequestText:   requestText,
+        RepoRoot:      m.repoRoot,
+        LinearIssueID: ticketID,
+        HarnessURL:    m.config.HarnessURL,
+    },
+)
+```
+
+Also pass `HarnessURL` when `CodeChangePlanWorkflow` spawns the child `ResearchWorkflow`:
+
+```go
+// workflows.go — child workflow call
+childInput := ResearchWorkflowInput{
+    TaskID:        input.TaskID,
+    RequestText:   input.RequestText,
+    RepoRoot:      input.RepoRoot,
+    ParentSpanID:  spanID,
+    LinearIssueID: input.LinearIssueID,
+    HarnessURL:    input.HarnessURL,
+}
+```
+
+**Files**: `workflows.go`, `manager.go`
+
+#### 2.5b. Remove orphaned `tags` from agent prompts
+
+The `tags` field is instructed in all agent output formats but no Go struct has a `Tags` field — data is silently dropped. Also missing from `yamlMultiKeyRe`. Rather than adding dead weight to every artifact, remove `tags` from agent prompts until we have a consumer (e.g., search/filter on dashboard).
+
+**Remove** the `tags:` block and tag guidance line from:
+- `harness/agents/research-agent.js`
+- `harness/agents/research-synthesizer.js`
+- `harness/agents/specialist-planner.js`
+- `harness/agents/plan-synthesizer.js`
+
+**Files**: 4 agent JS files
+
+#### 2.5c. Fix path traversal separator in artifact handler
+
+**`harness/internal/server/swarm_dashboard.go`** — change:
+
+```go
+// Before
+if !strings.HasPrefix(absPath, absRoot) {
+
+// After
+if !strings.HasPrefix(absPath, absRoot+string(os.PathSeparator)) {
+```
+
+Matches the pattern used by `handleWASMArtifacts` in the same file.
+
+**Files**: `swarm_dashboard.go`
+
+#### 2.5d. Use `exec.LookPath` for `linear-cli` binary
+
+**`harness/main.go`** — replace hardcoded path with env var + PATH lookup:
+
+```go
+linearBin := os.Getenv("LINEAR_CLI")
+if linearBin == "" {
+    var err error
+    linearBin, err = exec.LookPath("linear-cli")
+    if err != nil {
+        logger.Warn("linear-cli not found in PATH, Linear integration disabled")
+    }
+}
+```
+
+**Files**: `main.go`
+
+#### Phase 2.5 files changed
+
+- `harness/internal/swarmorch/workflows.go` — fix `artifactURL`, add `HarnessURL` to input structs
+- `harness/internal/swarmorch/manager.go` — thread `HarnessURL` into workflow inputs
+- `harness/agents/research-agent.js` — remove tags
+- `harness/agents/research-synthesizer.js` — remove tags
+- `harness/agents/specialist-planner.js` — remove tags
+- `harness/agents/plan-synthesizer.js` — remove tags
+- `harness/internal/server/swarm_dashboard.go` — path separator fix
+- `harness/main.go` — `exec.LookPath` for linear-cli
+
+### Phase 3: Post-processor agent + ticket context injection + workflow wiring
+
+Phase 3 now includes the post-processor agent, ticket context injection (originally Phase 4), and wiring the currently-uncalled activities (`FetchLinearTicket`, `CreateLinearFollowup`, `SearchLinearIssues`) into workflows.
+
+#### 3a. Post-processor agent
 
 **New file**: `harness/agents/linear-context-processor.js`
 
@@ -365,7 +508,9 @@ Write your output to: ${task.outputPath}`,
 });
 ```
 
-**New types in `types.go`**:
+#### 3b. New Go types
+
+**`harness/internal/swarmorch/types.go`** — add:
 
 ```go
 type LinearContextInput struct {
@@ -379,8 +524,8 @@ type LinearContextInput struct {
 }
 
 type LinearContextOutput struct {
-    Comment   string             `json:"comment"`
-    Followups []FollowupTicket   `json:"followups"`
+    Comment   string           `json:"comment"`
+    Followups []FollowupTicket `json:"followups"`
 }
 
 type FollowupTicket struct {
@@ -390,7 +535,9 @@ type FollowupTicket struct {
 }
 ```
 
-**New activity**:
+#### 3c. New activity + validation
+
+**`harness/internal/swarmorch/activities.go`** — add:
 
 ```go
 func (a *SwarmActivities) RunLinearContextProcessor(ctx context.Context, input LinearContextInput) (LinearContextOutput, error)
@@ -398,7 +545,7 @@ func (a *SwarmActivities) RunLinearContextProcessor(ctx context.Context, input L
 
 Uses the same `runAgentActivity[LinearContextOutput]` pattern as other agents. Agent tier activity options (20min timeout).
 
-**New validation**:
+**`harness/internal/swarmorch/artifact.go`** — add validation:
 
 ```go
 func validateLinearContextOutput(a LinearContextOutput) error {
@@ -418,139 +565,105 @@ func validateLinearContextOutput(a LinearContextOutput) error {
 }
 ```
 
-### Phase 4: Wire into workflows
+#### 3d. Ticket context injection into agents
 
-**Modified file**: `harness/internal/swarmorch/workflows.go`
+The `FetchLinearTicket` activity returns the ticket data. Format it as markdown context and inject alongside `projectContext` into agent inputs.
 
-#### Accept ticket_id from API
-
-**Modified file**: `harness/internal/server/swarm_api.go`
-
-Update the request struct to accept `ticket_id`:
+**`harness/internal/swarmorch/types.go`** — add optional field to agent inputs that receive external context:
 
 ```go
-type swarmTaskRequest struct {
-    RequestText   string `json:"request_text"`
-    TicketID      string `json:"ticket_id"`       // Linear identifier, e.g. "CRE-15"
-}
-```
-
-Pass `TicketID` through to `CreateSwarmTaskParams.LinearIssueID` and workflow inputs.
-
-**Modified file**: `harness/internal/server/swarm_dashboard.go`
-
-Add `ticket_id` signal to the dashboard start form so tickets can be linked from the UI.
-
-#### Research workflow Linear integration
-
-Insert Linear activities into `ResearchWorkflow` (standalone mode only — skip when running as child workflow):
-
-```
-[existing] Create workflow span, set task to running
-[NEW]      FetchLinearTicket → snapshot + inject into agent context
-[NEW]      UpdateLinearStatus("In Progress")
-[NEW]      UpdateLinearLabels(["type:research", "swarm:research"])
-[existing] runResearchSteps() — question generation, parallel research, synthesis
-[existing] WriteDocument + PersistArtifact
-[NEW]      FetchLinearTicket → re-read for latest comments
-[NEW]      RunLinearContextProcessor → structured comment + followups
-[NEW]      AddLinearComment(comment)
-[NEW]      LinkArtifactToLinear("Research Doc", artifactURL)
-[NEW]      For each followup: SearchLinearIssues, CreateLinearFollowup if not duplicate
-[NEW]      UpdateLinearLabels(["type:research"]) — remove swarm:research
-[NEW]      UpdateLinearStatus("Done")
-[existing] Set task status to completed
-```
-
-#### Code change plan workflow Linear integration
-
-Insert Linear activities into `CodeChangePlanWorkflow`:
-
-```
-[existing] Create workflow span, set task to running
-[NEW]      FetchLinearTicket → snapshot
-[NEW]      UpdateLinearStatus("In Progress")
-[NEW]      UpdateLinearLabels(["type:code-change", "swarm:research"])
-[existing] Execute ResearchWorkflow as child (no Linear ops — child mode)
-[NEW]      FetchLinearTicket → re-read for latest comments
-[NEW]      RunLinearContextProcessor → comment + followups for research
-[NEW]      AddLinearComment(comment)
-[NEW]      LinkArtifactToLinear("Research Doc", researchArtifactURL)
-[NEW]      For each followup: SearchLinearIssues, CreateLinearFollowup
-[NEW]      UpdateLinearLabels(["type:code-change", "swarm:planning"])
-[existing] Planning stages — classify, specialist planners, synthesize
-[existing] WriteDocument + PersistArtifact
-[NEW]      FetchLinearTicket → re-read again
-[NEW]      RunLinearContextProcessor → comment + followups for plan
-[NEW]      AddLinearComment(comment)
-[NEW]      LinkArtifactToLinear("Implementation Plan", planArtifactURL)
-[NEW]      For each followup: SearchLinearIssues, CreateLinearFollowup
-[NEW]      UpdateLinearLabels(["type:code-change"]) — remove swarm:planning
-[NEW]      UpdateLinearStatus("In Review") — plan ready for human review
-[existing] Set task status to completed
-```
-
-#### Ticket context injection into agents
-
-The `FetchLinearTicket` activity returns the ticket markdown snapshot. This gets passed alongside `projectContext` to agent inputs. Modify agent input types to include optional `ticketContext`:
-
-```go
-// Add to ResearchAgentInput, SpecialistInput, etc.
+// Add to GenerateQuestionsInput, ResearchAgentInput, ClassifyInput, SpecialistInput
 TicketContext string `json:"ticketContext,omitempty"`
 ```
 
-Agent system prompts reference it:
+Agent system prompts reference it (append to system prompt when non-empty):
 ```
 If ticket context is provided, use it to understand the original problem statement,
 any human comments with steering instructions, and linked research/plans.
 ```
 
-### Phase 5: Artifact URL generation
+#### 3e. Wire into workflows — complete Linear lifecycle
 
-Artifacts are written to `thoughts/swarm/research/...` and `thoughts/swarm/project-plans/...`. To link them in Linear, we need a URL. Options:
+Replace the simplified Phase 4 wiring with the full lifecycle including `FetchLinearTicket`, post-processor, and follow-up creation.
 
-1. **GitHub URL** — if `thoughts/` is committed and pushed, use `https://github.com/org/repo/blob/main/thoughts/swarm/...`
-2. **Harness URL** — serve artifact files via a new route `GET /swarm/artifacts/:id/view`
-3. **Relative path** — just store the file path as the attachment title (no clickable link)
+**Research workflow** (standalone mode only — skip when `isChild`):
 
-Recommend option 2 — add a simple handler that reads the artifact file path from DB and serves it. This keeps artifacts accessible even before they're committed to git.
-
-**New route**: `GET /swarm/artifacts/:id/view` — looks up `swarm_artifacts.file_path`, reads and serves the markdown file.
-
-The URL passed to `LinkArtifactToLinear` would be: `{HARNESS_URL}/swarm/artifacts/{artifactID}/view`
-
-### Phase 6: Manager initialization
-
-**Modified file**: `harness/main.go`
-
-Initialize the Linear client in `initSwarmManager()`:
-
-```go
-linearClient := linear.NewClient(
-    "/home/deploy/.cargo/bin/linear-cli",  // or discover via which
-    os.Getenv("LINEAR_TEAM_KEY"),          // "CRE"
-)
+```
+[existing] Create workflow span, set task to running
+[NEW]      FetchLinearTicket → ticket data for context injection
+[existing] UpdateLinearStatus("In Progress")     — already wired
+[existing] UpdateLinearLabels(["type:research", "swarm:research"]) — already wired
+[existing] runResearchSteps() — question generation, parallel research, synthesis
+           (inject ticketContext into GenerateQuestionsInput + ResearchAgentInput)
+[existing] WriteDocument + PersistArtifact
+[NEW]      FetchLinearTicket → re-read for latest comments
+[NEW]      RunLinearContextProcessor → structured comment + followups
+[UPDATE]   AddLinearComment — use post-processor comment instead of hardcoded template
+[existing] LinkArtifactToLinear("Research Doc", artifactURL) — already wired
+[NEW]      For each followup: SearchLinearIssues, CreateLinearFollowup if not duplicate
+[existing] UpdateLinearLabels(["type:research"]) — already wired
+[existing] UpdateLinearStatus("Done") — already wired
+[existing] Set task status to completed
 ```
 
-Pass to `SwarmActivities`. The client is nil-safe — all activities no-op when client is nil or ticket ID is empty.
+**Code change plan workflow**:
+
+```
+[existing] Create workflow span, set task to running
+[NEW]      FetchLinearTicket → ticket data for context injection
+[existing] UpdateLinearStatus("In Progress") — already wired
+[existing] UpdateLinearLabels(["type:code-change", "swarm:research"]) — already wired
+[existing] Execute ResearchWorkflow as child (no Linear ops — child mode)
+[NEW]      FetchLinearTicket → re-read for latest comments
+[NEW]      RunLinearContextProcessor → comment + followups for research
+[UPDATE]   AddLinearComment — use post-processor comment
+[existing] LinkArtifactToLinear("Research Doc", researchArtifactURL) — already wired (fix from 2.5a)
+[NEW]      For each followup: SearchLinearIssues, CreateLinearFollowup
+[existing] UpdateLinearLabels(["type:code-change", "swarm:planning"]) — already wired
+[existing] Planning stages — classify, specialist planners, synthesize
+           (inject ticketContext into ClassifyInput + SpecialistInput)
+[existing] WriteDocument + PersistArtifact
+[NEW]      FetchLinearTicket → re-read again
+[NEW]      RunLinearContextProcessor → comment + followups for plan
+[UPDATE]   AddLinearComment — use post-processor comment
+[existing] LinkArtifactToLinear("Implementation Plan", planArtifactURL) — already wired (fix from 2.5a)
+[NEW]      For each followup: SearchLinearIssues, CreateLinearFollowup
+[existing] UpdateLinearLabels(["type:code-change"]) — already wired
+[existing] UpdateLinearStatus("In Review") — already wired
+[existing] Set task status to completed
+```
+
+#### Phase 3 files changed
+
+- `harness/agents/linear-context-processor.js` — NEW: post-processor agent
+- `harness/internal/swarmorch/types.go` — LinearContextInput/Output, FollowupTicket, TicketContext on agent inputs
+- `harness/internal/swarmorch/activities.go` — RunLinearContextProcessor activity
+- `harness/internal/swarmorch/artifact.go` — validateLinearContextOutput
+- `harness/internal/swarmorch/workflows.go` — FetchLinearTicket calls, post-processor calls, follow-up creation loops, ticket context injection
 
 ## Verification
 
 ### Automated
-- [ ] Go compiles: `cd harness && go build ./...`
-- [ ] All 7 agent scripts parse (no JS syntax errors)
+- [ ] Go compiles: `just vps-build` from `harness/`
+- [ ] All agent scripts parse (no JS syntax errors)
 - [ ] Linear labels created: `linear-cli labels list --type issue --output json`
 
 ### Manual — Phase 0 (prompt improvements)
-- [ ] Start a research workflow: output contains `tags:` in frontmatter, no improvement suggestions in findings
+- [ ] Start a research workflow: output contains no improvement suggestions in findings
 - [ ] Start a code_change_plan workflow: specialist plans have `automatedVerification`/`manualVerification`, final plan has "What We're NOT Doing" section
 
-### Manual — Phases 1-6 (Linear integration)
-- [ ] Start a research task with `ticket_id`: verify Linear status changes to In Progress then Done, labels swap, comment posted, artifact linked
-- [ ] Start a code_change_plan task with `ticket_id`: verify full lifecycle — research comment, plan comment, status ends at "In Review"
+### Manual — Phase 2.5 (review fixes)
+- [ ] `artifactURL` no longer panics: start a workflow with `ticketID` and verify artifact URL is constructed correctly
+- [ ] `linear-cli` found via PATH: restart harness with `LINEAR_CLI` unset, verify it still finds the binary
+- [ ] Tags removed: start a workflow and verify agent output no longer includes `tags:` in frontmatter
+
+### Manual — Phase 3 (post-processor + ticket context + full wiring)
+- [ ] Start a research task with `ticket_id`: verify Linear status changes to In Progress then Done, labels swap, post-processor comment posted, artifact linked
+- [ ] Start a code_change_plan task with `ticket_id`: verify full lifecycle — post-processor research comment, post-processor plan comment, status ends at "In Review"
 - [ ] Start a task WITHOUT `ticket_id`: verify no Linear errors, all activities no-op gracefully
 - [ ] Post-processor creates follow-up ticket: verify search dedup works, relation created
 - [ ] Artifact URL works: click link in Linear → see rendered markdown
+- [ ] Ticket context injection: verify agents receive ticket description/comments when `ticketID` is provided
 
 ## Files Changed
 
@@ -561,33 +674,49 @@ Pass to `SwarmActivities`. The client is nil-safe — all activities no-op when 
 - `harness/scripts/setup-linear.sh` — label creation script
 
 ### Modified files (Phase 0 — prompt improvements)
-- `harness/agents/research-agent.js` — documentarian CRITICAL block + tags
+- `harness/agents/research-agent.js` — documentarian CRITICAL block
 - `harness/agents/research-questions.js` — factual questions constraint
-- `harness/agents/specialist-planner.js` — verification split + tags + scope exclusions
-- `harness/agents/plan-synthesizer.js` — preserve verification split + "What We're NOT Doing" + tags
-- `harness/agents/research-synthesizer.js` — tags
+- `harness/agents/specialist-planner.js` — verification split + scope exclusions
+- `harness/agents/plan-synthesizer.js` — preserve verification split + "What We're NOT Doing"
+- `harness/agents/research-synthesizer.js`
 - `harness/agents/lib/prompts.js` — thinking step in selfReflection()
 - `harness/internal/swarmorch/types.go` — PlannerOutput verification split
 - `harness/internal/swarmorch/artifact.go` — validation + yamlMultiKeyRe update
 
-### Modified files (Phases 1-6 — Linear integration)
-- `harness/internal/swarmorch/activities.go` — new Linear activities + LinearClient on struct
-- `harness/internal/swarmorch/types.go` — LinearContextInput/Output, FollowupTicket, ticketContext on agent inputs
-- `harness/internal/swarmorch/artifact.go` — validation for LinearContextOutput
-- `harness/internal/swarmorch/workflows.go` — insert Linear activities at stage boundaries
-- `harness/internal/server/swarm_api.go` — accept ticket_id in request, pass to workflow input
-- `harness/internal/server/swarm_dashboard.go` — ticket_id signal in start form, artifact view route
-- `harness/main.go` — initialize Linear client, pass to SwarmActivities
+### Modified files (Phase 2.5 — review fixes)
+- `harness/internal/swarmorch/workflows.go` — fix `artifactURL` nil deref, add `HarnessURL` to input structs
+- `harness/internal/swarmorch/manager.go` — thread `HarnessURL` into workflow inputs
+- `harness/agents/research-agent.js` — remove tags
+- `harness/agents/research-synthesizer.js` — remove tags
+- `harness/agents/specialist-planner.js` — remove tags
+- `harness/agents/plan-synthesizer.js` — remove tags
+- `harness/internal/server/swarm_dashboard.go` — path separator fix
+- `harness/main.go` — `exec.LookPath` for linear-cli
+
+### Modified files (Phase 3 — post-processor + wiring)
+- `harness/internal/swarmorch/types.go` — LinearContextInput/Output, FollowupTicket, TicketContext on agent inputs
+- `harness/internal/swarmorch/activities.go` — RunLinearContextProcessor activity
+- `harness/internal/swarmorch/artifact.go` — validateLinearContextOutput
+- `harness/internal/swarmorch/workflows.go` — FetchLinearTicket, post-processor, follow-ups, ticket context injection
+
+### Modified files (Phases 1-6 — Linear integration, already committed)
+- `harness/internal/swarmorch/activities.go` — Linear activities + LinearClient on struct
+- `harness/internal/swarmorch/workflows.go` — Linear activities at stage boundaries
+- `harness/internal/server/swarm_api.go` — accept ticket_id in request
+- `harness/internal/server/swarm_dashboard.go` — ticket_id signal, artifact view route
+- `harness/main.go` — initialize Linear client
 
 ## Dependencies
 
-- `linear-cli` binary at `/home/deploy/.cargo/bin/linear-cli`
+- `linear-cli` binary (found via `exec.LookPath` or `LINEAR_CLI` env var)
 - `LINEAR_API_KEY` in `.env` (already present)
 - `LINEAR_TEAM_KEY=CRE` in `.env` (already present)
+- `HARNESS_URL` in `.env` (for absolute artifact URLs in Linear)
 - Workspace `creative-mode` configured (already done)
 
 ## References
 
+- Staff eng review: `thoughts/CoreyCole/reviews/2026-03-09_00-22-17_linear-integration-plan_review.md`
 - HumanLayer Linear integration research: `thoughts/CoreyCole/research/2026-03-08_22-02-53_humanlayer-linear-context-threading.md`
 - Agent primitives flowchart: `thoughts/swarm/agent-primitives-flowchart.html`
 - Prior swarm prompt improvements plan: `thoughts/CoreyCole/plans/2026-03-09_04-59-36_swarm-prompt-humanlayer-improvements.md`

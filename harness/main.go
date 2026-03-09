@@ -333,8 +333,11 @@ func main() {
 		}
 	}
 
+	// Initialize Linear client (shared between swarm manager and server).
+	linearClient := initLinearClient(logger)
+
 	// Set up swarm manager (optional — requires CM_SWARM_TEMPORAL=true + Temporal server).
-	swarmManager := initSwarmManager(database, eventBus, logger)
+	swarmManager := initSwarmManager(database, eventBus, linearClient, logger)
 
 	// Set up Echo server.
 	e := echo.New()
@@ -348,6 +351,7 @@ func main() {
 	srv.PresidentManager = presidentManager
 	srv.DataDir = dataDir
 	srv.SwarmManager = swarmManager
+	srv.LinearClient = linearClient
 	srv.CreateConvMgr = createConvMgr
 	srv.CreateClaudeClient = createClaudeClient
 	srv.CreateMDRenderer = mdRenderer
@@ -497,9 +501,30 @@ func initPresidentManager(
 	return mgr
 }
 
+// initLinearClient creates a Linear CLI client from env vars. Returns nil if unavailable.
+func initLinearClient(logger *slog.Logger) *linear.Client {
+	linearBin := os.Getenv("LINEAR_CLI")
+	if linearBin == "" {
+		var lookErr error
+		linearBin, lookErr = exec.LookPath("linear-cli")
+		if lookErr != nil {
+			logger.Warn("linear-cli not found in PATH, Linear integration disabled")
+			return nil
+		}
+	}
+	linearTeam := os.Getenv("LINEAR_TEAM_KEY")
+	if linearBin == "" || linearTeam == "" {
+		return nil
+	}
+	c := linear.NewClient(linearBin, linearTeam)
+	logger.Info("linear client initialized", "team", linearTeam, "bin", linearBin)
+	return c
+}
+
 func initSwarmManager(
 	database *db.DB,
 	eventBus *events.EventBus,
+	linearClient *linear.Client,
 	logger *slog.Logger,
 ) *swarmorch.SwarmManager {
 	if os.Getenv("CM_SWARM_TEMPORAL") != "true" {
@@ -523,22 +548,6 @@ func initSwarmManager(
 	model := os.Getenv("CM_SWARM_MODEL")
 	if model == "" {
 		model = "openai-codex:gpt-5.3-codex"
-	}
-
-	// Initialize Linear client if linear-cli is available.
-	var linearClient *linear.Client
-	linearBin := os.Getenv("LINEAR_CLI")
-	if linearBin == "" {
-		var lookErr error
-		linearBin, lookErr = exec.LookPath("linear-cli")
-		if lookErr != nil {
-			logger.Warn("linear-cli not found in PATH, Linear integration disabled")
-		}
-	}
-	linearTeam := os.Getenv("LINEAR_TEAM_KEY")
-	if linearBin != "" && linearTeam != "" {
-		linearClient = linear.NewClient(linearBin, linearTeam)
-		logger.Info("linear client initialized", "team", linearTeam, "bin", linearBin)
 	}
 
 	harnessURL := os.Getenv("HARNESS_URL")

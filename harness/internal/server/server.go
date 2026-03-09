@@ -29,6 +29,7 @@ import (
 	"creative-mode/harness/internal/db/sqlc"
 	"creative-mode/harness/internal/events"
 	"creative-mode/harness/internal/gemini"
+	"creative-mode/harness/internal/linear"
 	"creative-mode/harness/internal/mayor"
 	"creative-mode/harness/internal/president"
 	"creative-mode/harness/internal/swarmorch"
@@ -58,6 +59,7 @@ type Server struct {
 	MayorManager     *mayor.Manager
 	PresidentManager *president.Manager
 	SwarmManager     *swarmorch.SwarmManager
+	LinearClient     *linear.Client
 	DataDir          string
 	dev              *devState // nil when DEV_MODE is not set
 

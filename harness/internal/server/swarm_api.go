@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"creative-mode/harness/internal/db/sqlc"
+	"creative-mode/harness/internal/linear"
 	"creative-mode/harness/internal/swarmorch"
 )
 
@@ -36,6 +38,29 @@ func (s *Server) startSwarmTask(
 	}
 	if req.RequestText == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "requestText is required")
+	}
+
+	// Auto-create a Linear ticket if none was provided.
+	if req.TicketID == "" && s.LinearClient != nil {
+		labels := labelsForPrimitive(primitiveType)
+		identifier, createErr := s.LinearClient.CreateIssue(
+			ctx,
+			req.RequestText,
+			linear.CreateOpts{
+				Labels: labels,
+				State:  "In Progress",
+			},
+		)
+		if createErr != nil {
+			s.Logger.Error("failed to auto-create Linear ticket", "error", createErr)
+			return echo.NewHTTPError(
+				http.StatusInternalServerError,
+				"failed to create Linear ticket",
+			)
+		}
+		req.TicketID = identifier
+		s.Logger.Info("auto-created Linear ticket",
+			"ticketID", identifier, "type", primitiveType)
 	}
 
 	taskID := uuid.NewString()[:8]
@@ -94,6 +119,7 @@ func (s *Server) startSwarmTask(
 	return c.JSON(http.StatusAccepted, map[string]string{
 		"taskID":     taskID,
 		"workflowID": workflowID,
+		"ticketID":   req.TicketID,
 	})
 }
 
@@ -286,5 +312,17 @@ func computeTaskMetricsAPI(spans []sqlc.GetSwarmSpanTreeRow) map[string]any {
 		"totalTokens": tokens,
 		"totalCost":   cost,
 		"durationMs":  durationMs,
+	}
+}
+
+// labelsForPrimitive returns the Linear labels to apply when auto-creating a ticket.
+func labelsForPrimitive(pt sqlc.PrimitiveType) []string {
+	switch pt {
+	case sqlc.PrimitiveTypeResearch:
+		return []string{"type:research", "swarm:research"}
+	case sqlc.PrimitiveTypeCodeChangePlan:
+		return []string{"type:code-change", "swarm:planning"}
+	default:
+		return []string{fmt.Sprintf("type:%s", pt)}
 	}
 }

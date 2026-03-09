@@ -24,7 +24,7 @@
               mdformat
               mdformat-frontmatter
             ]))
-            uv bubblewrap temporal-cli
+            uv bubblewrap temporal-cli gh
           ];
         };
 
